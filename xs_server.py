@@ -153,6 +153,21 @@ def api_week():
                     "week_total_min": sum(d["total_min"] for d in days)})
 
 
+@app.get("/api/range")
+def api_range():
+    """Restituisce tutti i giorni da 'start' a 'end' (inclusi). Usato per
+    precaricare un intero mese e rendere istantaneo il cambio settimana."""
+    ensure_login()
+    start = parse_date(request.args["start"])
+    end = parse_date(request.args["end"])
+    days = {}
+    d = start
+    while d <= end:
+        days[d.isoformat()] = day_payload(d)
+        d += dt.timedelta(days=1)
+    return jsonify(days)
+
+
 @app.post("/api/add")
 def api_add():
     ensure_login()
@@ -456,7 +471,8 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
 <script>
 const WD_LONG=["lunedì","martedì","mercoledì","giovedì","venerdì","sabato","domenica"];
 const WD_SHORT=["lun","mar","mer","gio","ven","sab","dom"];
-let catalog=[], monday=null, currentDays=[], openDate=null;
+let catalog=[], currentMonday=null, currentDays=[], openDate=null;
+let cache={}, loaded=new Set();
 
 function fmtMin(m){const h=Math.floor(m/60),r=m%60;return h+"h"+(r?" "+(r<10?"0":"")+r+"m":"");}
 function entryMin(e){try{const h=parseInt(e.total.split("h")[0]||0);const m=parseInt((e.total.split("h")[1]||"").replace("m","").trim()||0);return h*60+m;}catch(_){return 0;}}
@@ -467,15 +483,39 @@ function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t
 async function loadCatalog(){catalog=await(await fetch("/api/catalog")).json();}
 async function loadMe(){const me=await(await fetch("/api/me")).json();document.getElementById("set-username").value=me.username||"";}
 
-async function loadWeek(start, dir){
-  if(start===undefined||start===null) start=null;
-  document.getElementById("list").innerHTML='<div class="loading">Carico la settimana…</div>';
-  const data=await(await fetch(start?"/api/week?start="+start:"/api/week")).json();
-  monday=data.monday; currentDays=data.days;
-  const t=todayISO(), inWeek=data.days.some(d=>d.date===t);
-  openDate = inWeek ? t : data.days[0].date;
+function weekMonday(d){const x=new Date(d);const wd=(x.getDay()+6)%7;x.setDate(x.getDate()-wd);x.setHours(0,0,0,0);return x;}
+function monthKey(iso){return iso.slice(0,7);}
+function monthSpan(year,monthIdx){const first=new Date(year,monthIdx,1);const last=new Date(year,monthIdx+1,0);
+  const s=weekMonday(first);const e=weekMonday(last);e.setDate(e.getDate()+6);return [isoLocal(s),isoLocal(e)];}
+
+async function ensureMonth(iso){
+  const key=monthKey(iso); if(loaded.has(key))return;
+  const [y,m]=key.split("-").map(Number); const [s,e]=monthSpan(y,m-1);
+  const data=await(await fetch("/api/range?start="+s+"&end="+e)).json();
+  Object.assign(cache,data); loaded.add(key);
+}
+async function ensureWeek(mondayISO){
+  const mo=new Date(mondayISO+"T00:00"); const su=new Date(mo); su.setDate(su.getDate()+6);
+  await ensureMonth(isoLocal(mo)); await ensureMonth(isoLocal(su));
+}
+function weekData(mondayISO){
+  const mo=new Date(mondayISO+"T00:00"); const days=[]; let tot=0;
+  for(let i=0;i<7;i++){const d=new Date(mo);d.setDate(d.getDate()+i);const iso=isoLocal(d);
+    const dp=cache[iso]||{date:iso,weekday:(d.getDay()+6)%7,entries:[],total_min:0};
+    days.push(dp); tot+=dp.total_min||0;}
+  return {monday:mondayISO,days,week_total_min:tot};
+}
+async function showWeek(mondayISO, dir){
+  currentMonday=mondayISO;
+  const mo=new Date(mondayISO+"T00:00"); const su=new Date(mo); su.setDate(su.getDate()+6);
+  const cached = loaded.has(monthKey(mondayISO)) && loaded.has(monthKey(isoLocal(su)));
+  if(!cached) document.getElementById("list").innerHTML='<div class="loading">Carico il mese…</div>';
+  await ensureWeek(mondayISO);
+  const data=weekData(mondayISO); currentDays=data.days;
+  const t=todayISO(); openDate = data.days.some(d=>d.date===t) ? t : data.days[0].date;
   renderWeek(data, dir||0);
 }
+function rerenderCurrent(){const data=weekData(currentMonday); currentDays=data.days; renderWeek(data,0);}
 
 function renderWeek(data, dir){
   const m=new Date(data.monday+"T00:00"),end=new Date(m);end.setDate(end.getDate()+6);
@@ -570,20 +610,17 @@ function wireForm(i, date, box){
   save.onclick=async()=>{save.disabled=true;save.textContent="Salvo…";
     const b={date,client_id:cSel.value,proj_id:pSel.value,task_id:tSel.value,start:sIn.value,end:eIn.value,note:box.querySelector(".f-note").value};
     try{const r=await fetch("/api/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});if(!r.ok)throw 0;
-      currentDays[i]=await r.json();toast("Ore salvate");await refresh();}
+      const fresh=await r.json();cache[fresh.date]=fresh;toast("Ore salvate");rerenderCurrent();}
     catch(e){toast("Errore nel salvataggio");save.disabled=false;save.textContent="Salva le ore";}};
 }
 
 async function deleteEntry(i,date,trans_num){
   if(!confirm("Eliminare questa registrazione?"))return;
   try{const r=await fetch("/api/delete",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({date,trans_num})});if(!r.ok)throw 0;
-    toast("Registrazione eliminata");await refresh();}catch(e){toast("Errore nell'eliminazione");}
+    const fresh=await r.json();cache[fresh.date]=fresh;toast("Registrazione eliminata");rerenderCurrent();}catch(e){toast("Errore nell'eliminazione");}
 }
 
-async function refresh(){
-  const data=await(await fetch("/api/week?start="+monday)).json();
-  currentDays=data.days; renderWeek(data,0);
-}
+
 
 function renderSummary(data){
   const box=document.getElementById("summary");
@@ -619,13 +656,13 @@ document.getElementById("relogin").onclick=async()=>{
   const u=document.getElementById("set-username").value,p=document.getElementById("set-password").value;
   if(!u||!p){toast("Inserisci username e password");return;}
   const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username:u,password:p})});
-  if(r.ok){toast("Accesso aggiornato");document.getElementById("set-password").value="";hide("set");await loadCatalog();await loadWeek(monday,0);}else{toast("Login fallito");}};
+  if(r.ok){toast("Accesso aggiornato");document.getElementById("set-password").value="";hide("set");cache={};loaded.clear();await loadCatalog();await showWeek(currentMonday||isoLocal(weekMonday(new Date())),0);}else{toast("Login fallito");}};
 
 /* nav */
-function shift(days){const m=new Date(monday+"T00:00");m.setDate(m.getDate()+days);loadWeek(isoLocal(m), days>0?1:-1);}
+function shift(days){const m=new Date(currentMonday+"T00:00");m.setDate(m.getDate()+days);showWeek(isoLocal(m), days>0?1:-1);}
 document.getElementById("prev").onclick=()=>shift(-7);
 document.getElementById("next").onclick=()=>shift(7);
-document.getElementById("now").onclick=()=>loadWeek(null,0);
+document.getElementById("now").onclick=()=>showWeek(isoLocal(weekMonday(new Date())),0);
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"){document.querySelectorAll(".overlay.open").forEach(o=>{if(o.id!=="pin-overlay")o.classList.remove("open");});return;}
   if(document.querySelector(".overlay.open"))return;
@@ -641,7 +678,7 @@ listEl.addEventListener("touchend",e=>{const dx=e.changedTouches[0].clientX-sx,d
 
 /* pin + boot */
 if('serviceWorker' in navigator){try{navigator.serviceWorker.register('/sw.js').catch(()=>{});}catch(e){}}
-async function start(){await loadMe();await loadCatalog();await loadWeek(null,0);}
+async function start(){await loadMe();await loadCatalog();await showWeek(isoLocal(weekMonday(new Date())),0);}
 function showPin(){document.getElementById('pin-overlay').classList.add('open');setTimeout(()=>document.getElementById('pin-input').focus(),60);}
 async function unlock(){const pin=document.getElementById('pin-input').value;
   const r=await fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
