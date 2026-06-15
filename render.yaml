@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: le-mie-ore
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 xs_server:app
+    envVars:
+      - key: XS_USER
+        sync: false
+      - key: XS_PASS
+        sync: false
+      - key: APP_PIN
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
