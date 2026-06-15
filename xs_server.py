@@ -297,21 +297,33 @@ def _alias_map():
 
 @app.get("/oauth/start")
 def oauth_start():
-    from google_auth_oauthlib.flow import Flow
-    flow = Flow.from_client_config(_google_client_config(), scopes=GSCOPES,
-                                   redirect_uri=_google_redirect_uri())
-    auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent",
-                                         include_granted_scopes="true")
-    return redirect(auth_url)
+    from urllib.parse import urlencode
+    params = {
+        "client_id": os.environ.get("GOOGLE_CLIENT_ID", ""),
+        "redirect_uri": _google_redirect_uri(),
+        "response_type": "code",
+        "scope": " ".join(GSCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+    }
+    return redirect("https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params))
 
 
 @app.get("/oauth/callback")
 def oauth_callback():
-    from google_auth_oauthlib.flow import Flow
-    flow = Flow.from_client_config(_google_client_config(), scopes=GSCOPES,
-                                   redirect_uri=_google_redirect_uri())
-    flow.fetch_token(authorization_response=request.url.replace("http://", "https://"))
-    rt = flow.credentials.refresh_token
+    import requests as _rq
+    code = request.args.get("code")
+    if not code:
+        return Response("Autorizzazione annullata o codice mancante.", mimetype="text/plain"), 400
+    tok = _rq.post("https://oauth2.googleapis.com/token", data={
+        "code": code,
+        "client_id": os.environ.get("GOOGLE_CLIENT_ID", ""),
+        "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+        "redirect_uri": _google_redirect_uri(),
+        "grant_type": "authorization_code",
+    }, timeout=30).json()
+    rt = tok.get("refresh_token")
     if rt:
         _gstate["refresh"] = rt
     body = (
