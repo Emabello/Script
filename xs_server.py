@@ -14,8 +14,9 @@ Poi apri:  http://127.0.0.1:5000
 
 import datetime as dt
 import os
+os.environ.setdefault('OAUTHLIB_RELAX_TOKEN_SCOPE','1')
 from datetime import timedelta
-from flask import Flask, request, jsonify, Response, session
+from flask import Flask, request, jsonify, Response, session, redirect
 from xs_client import XSClient, _get_credentials
 
 app = Flask(__name__)
@@ -49,7 +50,7 @@ def ensure_login():
         client.login(u, p)
 
 ALLOW_NO_PIN = {'index', 'manifest', 'icon192', 'icon512', 'appleicon',
-                'sw', 'api_status', 'api_unlock'}
+                'sw', 'api_status', 'api_unlock', 'oauth_start', 'oauth_callback'}
 
 @app.before_request
 def _gate():
@@ -231,6 +232,191 @@ def sw():
     return Response(js, mimetype="application/javascript")
 
 
+# ===================== Integrazione Google Calendar =====================
+GSCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+_gstate = {"refresh": None, "calendar_id": os.environ.get("GOOGLE_CALENDAR_ID")}
+
+
+def _google_redirect_uri():
+    if os.environ.get("GOOGLE_REDIRECT_URI"):
+        return os.environ["GOOGLE_REDIRECT_URI"]
+    return request.url_root.replace("http://", "https://").rstrip("/") + "/oauth/callback"
+
+
+def _google_client_config():
+    return {"web": {
+        "client_id": os.environ.get("GOOGLE_CLIENT_ID", ""),
+        "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }}
+
+
+def _google_refresh_token():
+    return _gstate["refresh"] or os.environ.get("GOOGLE_TOKEN")
+
+
+def _google_service():
+    rt = _google_refresh_token()
+    if not rt:
+        return None
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    creds = Credentials(
+        None, refresh_token=rt,
+        client_id=os.environ.get("GOOGLE_CLIENT_ID"),
+        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+        token_uri="https://oauth2.googleapis.com/token", scopes=GSCOPES,
+    )
+    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+
+def _norm(s):
+    return " ".join((s or "").split()).casefold()
+
+
+def _alias_map():
+    """Mappa varie forme di titolo -> (client_id, proj_id, task_id, nomi)."""
+    m = {}
+    for c in catalog_to_json():
+        for p in c["projects"]:
+            tasks = p["tasks"]
+            code = p["name"].split(" - ")[0]
+            for t in tasks:
+                trip = (c["id"], p["id"], t["id"], c["name"], p["name"], t["name"])
+                m[_norm(f'{c["name"]} - {p["name"]} - {t["name"]}')] = trip
+                if len(tasks) > 1:
+                    m[_norm(f'{p["name"]} - {t["name"]}')] = trip
+            if len(tasks) == 1:
+                t = tasks[0]
+                trip = (c["id"], p["id"], t["id"], c["name"], p["name"], t["name"])
+                for k in (f'{c["name"]} - {p["name"]}', p["name"], code):
+                    m[_norm(k)] = trip
+    return m
+
+
+@app.get("/oauth/start")
+def oauth_start():
+    from google_auth_oauthlib.flow import Flow
+    flow = Flow.from_client_config(_google_client_config(), scopes=GSCOPES,
+                                   redirect_uri=_google_redirect_uri())
+    auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent",
+                                         include_granted_scopes="true")
+    return redirect(auth_url)
+
+
+@app.get("/oauth/callback")
+def oauth_callback():
+    from google_auth_oauthlib.flow import Flow
+    flow = Flow.from_client_config(_google_client_config(), scopes=GSCOPES,
+                                   redirect_uri=_google_redirect_uri())
+    flow.fetch_token(authorization_response=request.url.replace("http://", "https://"))
+    rt = flow.credentials.refresh_token
+    if rt:
+        _gstate["refresh"] = rt
+    body = (
+        "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<style>body{font-family:system-ui;background:#0d1211;color:#f2ede1;padding:30px;line-height:1.6}"
+        "code{background:#16201e;padding:10px;border-radius:8px;display:block;word-break:break-all;color:#c9ad74;margin:12px 0}"
+        "a{color:#c9ad74}</style></head><body>"
+        "<h2>Google collegato \u2713</h2>"
+    )
+    if rt:
+        body += ("<p>Per rendere il collegamento <b>permanente</b> (resiste ai riavvii del server), "
+                 "copia questo valore e mettilo su Render come variabile d'ambiente "
+                 "<b>GOOGLE_TOKEN</b>:</p><code>" + rt + "</code>"
+                 "<p>Per ora funziona gi\u00e0 anche senza, fino al prossimo riavvio.</p>")
+    else:
+        body += ("<p>Collegamento riuscito, ma Google non ha restituito un nuovo token "
+                 "(probabilmente era gi\u00e0 autorizzato). Se serve, revoca l'accesso e riprova.</p>")
+    body += "<p><a href='/'>\u2190 Torna all'app</a></p></body></html>"
+    return Response(body, mimetype="text/html")
+
+
+@app.get("/api/google/status")
+def g_status():
+    return jsonify({"connected": bool(_google_refresh_token()),
+                    "calendar_id": _gstate["calendar_id"]})
+
+
+@app.get("/api/google/calendars")
+def g_calendars():
+    svc = _google_service()
+    if not svc:
+        return jsonify({"connected": False}), 400
+    items = svc.calendarList().list().execute().get("items", [])
+    cals = [{"id": c["id"], "summary": c.get("summary", c["id"]),
+             "primary": c.get("primary", False)} for c in items]
+    return jsonify({"connected": True, "calendars": cals,
+                    "selected": _gstate["calendar_id"]})
+
+
+@app.post("/api/google/select_calendar")
+def g_select():
+    _gstate["calendar_id"] = request.get_json(force=True).get("calendar_id")
+    return jsonify({"ok": True, "calendar_id": _gstate["calendar_id"]})
+
+
+@app.get("/api/google/preview")
+def g_preview():
+    ensure_login()
+    svc = _google_service()
+    if not svc:
+        return jsonify({"connected": False}), 400
+    cal = _gstate["calendar_id"] or "primary"
+    start = parse_date(request.args["start"])
+    end = parse_date(request.args["end"])
+    tmin = (start - dt.timedelta(days=1)).isoformat() + "T00:00:00Z"
+    tmax = (end + dt.timedelta(days=1)).isoformat() + "T00:00:00Z"
+    ev = svc.events().list(calendarId=cal, timeMin=tmin, timeMax=tmax,
+                           singleEvents=True, orderBy="startTime").execute()
+    amap = _alias_map()
+    from datetime import datetime as _dtm
+    out = []
+    for e in ev.get("items", []):
+        s = e.get("start", {}).get("dateTime")
+        en = e.get("end", {}).get("dateTime")
+        title = (e.get("summary") or "").strip()
+        if not s or not en:
+            continue  # eventi 'tutto il giorno' senza orario: saltati
+        sd = _dtm.fromisoformat(s)
+        ed = _dtm.fromisoformat(en)
+        date = sd.date().isoformat()
+        if not (start.isoformat() <= date <= end.isoformat()):
+            continue
+        trip = amap.get(_norm(title))
+        row = {"title": title, "date": date,
+               "start": sd.strftime("%H:%M"), "end": ed.strftime("%H:%M")}
+        if trip:
+            row.update({"ok": True, "client_id": trip[0], "proj_id": trip[1],
+                        "task_id": trip[2], "client": trip[3], "project": trip[4],
+                        "task": trip[5]})
+        else:
+            row.update({"ok": False, "reason": "titolo non riconosciuto"})
+        out.append(row)
+    return jsonify({"connected": True, "events": out})
+
+
+@app.post("/api/google/import")
+def g_import():
+    ensure_login()
+    items = request.get_json(force=True).get("items", [])
+    results = []
+    for it in items:
+        try:
+            sh, sm = map(int, it["start"].split(":"))
+            eh, em = map(int, it["end"].split(":"))
+            sm = round(sm / 5) * 5 % 60
+            em = round(em / 5) * 5 % 60
+            d = parse_date(it["date"])
+            client.add_entry(d.year, d.month, d.day, it["client_id"], it["proj_id"],
+                             it["task_id"], sh, sm, eh, em, log_message=it.get("note", ""))
+            results.append({"date": it["date"], "ok": True})
+        except Exception as ex:
+            results.append({"date": it.get("date"), "ok": False, "error": str(ex)})
+    return jsonify({"results": results})
+
+
 @app.get("/")
 def index():
     return Response(PAGE, mimetype="text/html")
@@ -401,6 +587,17 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
 .seg2 button.active{background:linear-gradient(180deg,var(--gold),var(--gold-deep));color:var(--on-gold);font-weight:600}
 .hint{font-size:11.5px;color:var(--faint);margin-top:8px}
 
+.importbtn{width:100%;margin-bottom:18px;padding:12px;border:1px solid var(--line-strong);border-radius:var(--r-sm);color:var(--gold);font-size:13.5px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;transition:.2s}
+.importbtn:hover{background:rgba(201,173,116,.06);border-color:var(--gold)}
+.importbtn:active{transform:scale(.99)}
+.imp{display:flex;align-items:center;gap:11px;padding:11px 0;border-top:1px solid var(--line)}
+.imp input{width:19px;height:19px;accent-color:var(--gold);flex:none}
+.imp .t{font-family:Fraunces,serif;font-size:15px;white-space:nowrap}
+.imp .info{flex:1;min-width:0}
+.imp .info .ti{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.imp .info .mt{font-size:11.5px;color:var(--emerald);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.imp.bad{opacity:.55}.imp.bad .info .mt{color:var(--danger)}
+.gstatus{font-size:13px;color:var(--ink-dim);margin-bottom:10px}
 .toast{position:fixed;left:50%;bottom:26px;transform:translate(-50%,14px);opacity:0;background:var(--panel);border:1px solid var(--gold-deep);color:var(--ink);padding:12px 20px;border-radius:999px;font-size:13.5px;transition:.25s;pointer-events:none;z-index:60;box-shadow:var(--shadow)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .loading{text-align:center;color:var(--muted);padding:50px 0;font-style:italic}
@@ -429,6 +626,7 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
   </div>
   <div class="range" id="range"></div>
   <div class="weekstrip" id="weekstrip"></div>
+  <button class="importbtn" id="import-google"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg> Importa da Google</button>
 
   <div class="list" id="list"><div class="loading">Carico la settimana…</div></div>
 
@@ -451,6 +649,11 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
       <div class="field"><label>Password</label><input type="password" id="set-password" placeholder="•••••••• (per cambiare utente)"></div>
       <button class="btn" style="border:1px solid var(--line);color:var(--muted);width:100%" id="relogin">Accedi con questo utente</button>
       <p class="hint">Le credenziali restano sul server, protette dal PIN.</p>
+      <div class="section-label"><span class="eyebrow">Google Calendar</span><span class="l"></span></div>
+      <div class="gstatus" id="g-status">—</div>
+      <a class="btn" style="border:1px solid var(--line);color:var(--gold);width:100%;display:block;text-align:center;text-decoration:none" href="/oauth/start">Collega / ricollega Google</a>
+      <div class="field" style="margin-top:12px"><label>Calendario di lavoro</label><select id="g-cal"><option value="">—</option></select></div>
+      <p class="hint">Per rendere il collegamento permanente, segui le istruzioni mostrate dopo "Collega Google" (variabile GOOGLE_TOKEN su Render).</p>
     </div>
   </div>
 </div>
@@ -462,6 +665,18 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
       <div class="field"><label>PIN</label><input type="password" id="pin-input" inputmode="numeric" placeholder="••••" autocomplete="off"></div>
       <div class="warn" id="pin-warn">PIN errato, riprova.</div>
       <div class="actions"><button class="btn btn-gold" id="pin-go" style="width:100%">Entra</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="imp-overlay">
+  <div class="sheet">
+    <div class="sheet-head"><div><div class="eyebrow">Google Calendar</div><h2 class="serif">Anteprima</h2></div>
+      <button class="close" data-close="imp"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
+    <div class="sheet-body">
+      <div id="imp-list"></div>
+      <div class="actions"><button class="btn btn-gold" id="imp-confirm" disabled>Scrivi su XS</button></div>
+      <p class="hint" id="imp-hint"></p>
     </div>
   </div>
 </div>
@@ -676,9 +891,58 @@ listEl.addEventListener("touchstart",e=>{sx=e.touches[0].clientX;sy=e.touches[0]
 listEl.addEventListener("touchend",e=>{const dx=e.changedTouches[0].clientX-sx,dy=e.changedTouches[0].clientY-sy;
   if(Math.abs(dx)>70&&Math.abs(dx)>Math.abs(dy)*1.6){shift(dx<0?7:-7);}},{passive:true});
 
+/* google */
+let gConnected=false;
+async function gStatus(){try{const s=await(await fetch('/api/google/status')).json();gConnected=s.connected;const el=document.getElementById('g-status');if(el)el.textContent=s.connected?'Collegato':'Non collegato';}catch(e){}}
+async function loadCalendars(){if(!gConnected)return;try{const d=await(await fetch('/api/google/calendars')).json();const sel=document.getElementById('g-cal');if(!sel)return;sel.innerHTML='';(d.calendars||[]).forEach(c=>{const o=new Option(c.summary,c.id);if(c.id===d.selected)o.selected=true;sel.add(o);});}catch(e){}}
+document.getElementById('open-settings').addEventListener('click',()=>{gStatus().then(loadCalendars);});
+document.getElementById('g-cal').onchange=async(e)=>{await fetch('/api/google/select_calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({calendar_id:e.target.value})});toast('Calendario impostato');};
+
+let _impEvents=[];
+async function importGoogle(){
+  if(!gConnected){toast('Collega Google nelle impostazioni');show('set');return;}
+  const su=new Date(currentMonday+'T00:00');su.setDate(su.getDate()+6);
+  document.getElementById('imp-confirm').disabled=true;
+  document.getElementById('imp-list').innerHTML='<div class="empty">Leggo gli eventi da Google…</div>';
+  document.getElementById('imp-hint').textContent='';
+  show('imp');
+  let d;try{const r=await fetch('/api/google/preview?start='+currentMonday+'&end='+isoLocal(su));if(!r.ok)throw 0;d=await r.json();}
+  catch(e){document.getElementById('imp-list').innerHTML='<div class="empty">Errore nella lettura del calendario.</div>';return;}
+  renderPreview(d.events||[]);
+}
+function renderPreview(events){
+  _impEvents=events; const box=document.getElementById('imp-list');
+  if(!events.length){box.innerHTML='<div class="empty">Nessun evento con orario in questa settimana.</div>';document.getElementById('imp-hint').textContent='';return;}
+  box.innerHTML='';
+  events.forEach((e,i)=>{
+    const row=document.createElement('label'); row.className='imp'+(e.ok?'':' bad');
+    const day=new Date(e.date+'T00:00').toLocaleDateString('it-IT',{weekday:'short',day:'numeric'});
+    row.innerHTML=`<input type="checkbox" ${e.ok?'checked':'disabled'} data-i="${i}">
+      <div class="t tnum">${e.start}–${e.end}</div>
+      <div class="info"><div class="ti">${day} · ${e.title||'(senza titolo)'}</div>
+        <div class="mt">${e.ok?('→ '+e.client+' / '+e.project+' / '+e.task):('✕ '+(e.reason||'non riconosciuto'))}</div></div>`;
+    box.appendChild(row);
+  });
+  const okc=events.filter(e=>e.ok).length;
+  document.getElementById('imp-confirm').disabled=okc===0;
+  document.getElementById('imp-hint').textContent=okc+' su '+events.length+' riconosciuti. Gli altri si correggono nel titolo dell\'evento su Google.';
+}
+document.getElementById('imp-confirm').onclick=async()=>{
+  const items=[...document.querySelectorAll('#imp-list input:checked')].map(c=>_impEvents[+c.dataset.i]).filter(Boolean)
+    .map(e=>({date:e.date,client_id:e.client_id,proj_id:e.proj_id,task_id:e.task_id,start:e.start,end:e.end,note:''}));
+  if(!items.length){toast('Niente da importare');return;}
+  const btn=document.getElementById('imp-confirm');btn.disabled=true;btn.textContent='Scrivo su XS…';
+  try{const r=await fetch('/api/google/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});const res=await r.json();
+    const ok=res.results.filter(x=>x.ok).length;toast(ok+' '+(ok===1?'ora scritta':'ore scritte')+' su XS');hide('imp');
+    cache={};loaded.clear();await showWeek(currentMonday,0);}
+  catch(e){toast('Errore importazione');}
+  btn.textContent='Scrivi su XS';
+};
+document.getElementById('import-google').onclick=importGoogle;
+
 /* pin + boot */
 if('serviceWorker' in navigator){try{navigator.serviceWorker.register('/sw.js').catch(()=>{});}catch(e){}}
-async function start(){await loadMe();await loadCatalog();await showWeek(isoLocal(weekMonday(new Date())),0);}
+async function start(){await loadMe();await loadCatalog();gStatus();await showWeek(isoLocal(weekMonday(new Date())),0);}
 function showPin(){document.getElementById('pin-overlay').classList.add('open');setTimeout(()=>document.getElementById('pin-input').focus(),60);}
 async function unlock(){const pin=document.getElementById('pin-input').value;
   const r=await fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
