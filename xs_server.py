@@ -233,7 +233,7 @@ def sw():
 
 
 # ===================== Integrazione Google Calendar =====================
-GSCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+GSCOPES = ["https://www.googleapis.com/auth/calendar"]
 _gstate = {"refresh": None, "calendar_id": os.environ.get("GOOGLE_CALENDAR_ID")}
 
 
@@ -355,12 +355,15 @@ def g_status():
 def g_calendars():
     svc = _google_service()
     if not svc:
-        return jsonify({"connected": False}), 400
-    items = svc.calendarList().list().execute().get("items", [])
-    cals = [{"id": c["id"], "summary": c.get("summary", c["id"]),
-             "primary": c.get("primary", False)} for c in items]
-    return jsonify({"connected": True, "calendars": cals,
-                    "selected": _gstate["calendar_id"]})
+        return jsonify({"connected": False, "error": "Google non collegato"}), 200
+    try:
+        items = svc.calendarList().list().execute().get("items", [])
+        cals = [{"id": c["id"], "summary": c.get("summary", c["id"]),
+                 "primary": c.get("primary", False)} for c in items]
+        return jsonify({"connected": True, "calendars": cals,
+                        "selected": _gstate["calendar_id"]})
+    except Exception as ex:
+        return jsonify({"connected": True, "calendars": [], "error": str(ex)[:200]}), 200
 
 
 @app.post("/api/google/select_calendar")
@@ -427,6 +430,50 @@ def g_import():
         except Exception as ex:
             results.append({"date": it.get("date"), "ok": False, "error": str(ex)})
     return jsonify({"results": results})
+
+
+@app.post("/api/google/export")
+def g_export():
+    """Scrive su Google Calendar gli eventi corrispondenti alle ore di XS
+    nella settimana indicata. Evita i duplicati (stesso titolo, data e ora)."""
+    ensure_login()
+    svc = _google_service()
+    if not svc:
+        return jsonify({"connected": False}), 400
+    cal = _gstate["calendar_id"] or "primary"
+    start = parse_date(request.args["start"])
+    end = parse_date(request.args["end"])
+    from datetime import datetime as _dtm
+    tmin = (start - dt.timedelta(days=1)).isoformat() + "T00:00:00Z"
+    tmax = (end + dt.timedelta(days=1)).isoformat() + "T00:00:00Z"
+    existing = svc.events().list(calendarId=cal, timeMin=tmin, timeMax=tmax,
+                                 singleEvents=True).execute().get("items", [])
+    seen = set()
+    for e in existing:
+        s = e.get("start", {}).get("dateTime")
+        if s:
+            sd = _dtm.fromisoformat(s)
+            seen.add(((e.get("summary") or "").strip(),
+                      sd.date().isoformat(), sd.strftime("%H:%M")))
+    created = skipped = 0
+    d = start
+    while d <= end:
+        for ent in client.get_day_entries(d.year, d.month, d.day):
+            title = " - ".join(x for x in [ent["client"], ent["project"], ent["task"]] if x).strip()
+            key = (title, d.isoformat(), ent["start"])
+            if key in seen:
+                skipped += 1
+                continue
+            svc.events().insert(calendarId=cal, body={
+                "summary": title,
+                "start": {"dateTime": d.isoformat() + "T" + ent["start"] + ":00",
+                          "timeZone": "Europe/Rome"},
+                "end": {"dateTime": d.isoformat() + "T" + ent["end"] + ":00",
+                        "timeZone": "Europe/Rome"},
+            }).execute()
+            created += 1
+        d += dt.timedelta(days=1)
+    return jsonify({"created": created, "skipped": skipped})
 
 
 @app.get("/")
@@ -599,6 +646,8 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
 .seg2 button.active{background:linear-gradient(180deg,var(--gold),var(--gold-deep));color:var(--on-gold);font-weight:600}
 .hint{font-size:11.5px;color:var(--faint);margin-top:8px}
 
+.syncrow{display:flex;gap:10px;margin-bottom:18px}
+.syncrow .importbtn{flex:1;margin-bottom:0}
 .importbtn{width:100%;margin-bottom:18px;padding:12px;border:1px solid var(--line-strong);border-radius:var(--r-sm);color:var(--gold);font-size:13.5px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;transition:.2s}
 .importbtn:hover{background:rgba(201,173,116,.06);border-color:var(--gold)}
 .importbtn:active{transform:scale(.99)}
@@ -638,7 +687,10 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
   </div>
   <div class="range" id="range"></div>
   <div class="weekstrip" id="weekstrip"></div>
-  <button class="importbtn" id="import-google"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg> Importa da Google</button>
+  <div class="syncrow">
+    <button class="importbtn" id="import-google"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg> Importa</button>
+    <button class="importbtn" id="export-google"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21V9m0 0l-4 4m4-4l4 4M5 3h14"/></svg> Esporta</button>
+  </div>
 
   <div class="list" id="list"><div class="loading">Carico la settimana…</div></div>
 
@@ -665,6 +717,9 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
       <div class="gstatus" id="g-status">—</div>
       <a class="btn" style="border:1px solid var(--line);color:var(--gold);width:100%;display:block;text-align:center;text-decoration:none" href="/oauth/start">Collega / ricollega Google</a>
       <div class="field" style="margin-top:12px"><label>Calendario di lavoro</label><select id="g-cal"><option value="">—</option></select></div>
+      <div style="display:flex;gap:9px;margin-bottom:10px"><button class="btn" style="border:1px solid var(--line);color:var(--muted);flex:1" id="g-cal-reload">Ricarica elenco</button></div>
+      <div class="field"><label>Oppure incolla l'ID del calendario</label><input type="text" id="g-cal-id" placeholder="xxxx@group.calendar.google.com"></div>
+      <button class="btn" style="border:1px solid var(--line);color:var(--muted);width:100%" id="g-cal-save">Usa questo ID</button>
       <p class="hint">Per rendere il collegamento permanente, segui le istruzioni mostrate dopo "Collega Google" (variabile GOOGLE_TOKEN su Render).</p>
     </div>
   </div>
@@ -906,9 +961,29 @@ listEl.addEventListener("touchend",e=>{const dx=e.changedTouches[0].clientX-sx,d
 /* google */
 let gConnected=false;
 async function gStatus(){try{const s=await(await fetch('/api/google/status')).json();gConnected=s.connected;const el=document.getElementById('g-status');if(el)el.textContent=s.connected?'Collegato':'Non collegato';}catch(e){}}
-async function loadCalendars(){if(!gConnected)return;try{const d=await(await fetch('/api/google/calendars')).json();const sel=document.getElementById('g-cal');if(!sel)return;sel.innerHTML='';(d.calendars||[]).forEach(c=>{const o=new Option(c.summary,c.id);if(c.id===d.selected)o.selected=true;sel.add(o);});}catch(e){}}
+async function loadCalendars(){
+  const sel=document.getElementById('g-cal'),st=document.getElementById('g-status'); if(!sel)return;
+  try{const d=await(await fetch('/api/google/calendars')).json();
+    if(d.connected===false){if(st)st.textContent='Non collegato — premi "Collega Google"';sel.innerHTML='<option value="">— collega prima Google —</option>';return;}
+    sel.innerHTML='<option value="">— scegli —</option>';
+    (d.calendars||[]).forEach(c=>{const o=new Option(c.summary,c.id);if(c.id===d.selected)o.selected=true;sel.add(o);});
+    if(st)st.textContent = d.error?('Collegato, ma errore: '+d.error) : ((d.calendars||[]).length?('Collegato · '+d.calendars.length+' calendari'):'Collegato · nessun calendario trovato');
+  }catch(e){if(st)st.textContent='Errore nel leggere i calendari';}
+}
 document.getElementById('open-settings').addEventListener('click',()=>{gStatus().then(loadCalendars);});
 document.getElementById('g-cal').onchange=async(e)=>{await fetch('/api/google/select_calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({calendar_id:e.target.value})});toast('Calendario impostato');};
+document.getElementById('g-cal-reload').onclick=()=>{gStatus().then(loadCalendars);};
+document.getElementById('g-cal-save').onclick=async()=>{const id=document.getElementById('g-cal-id').value.trim();if(!id){toast('Inserisci un ID');return;}await fetch('/api/google/select_calendar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({calendar_id:id})});toast('Calendario impostato');};
+document.getElementById('export-google').onclick=async()=>{
+  if(!gConnected){toast('Collega Google nelle impostazioni');show('set');return;}
+  const su=new Date(currentMonday+'T00:00');su.setDate(su.getDate()+6);
+  if(!confirm('Scrivere su Google Calendar tutte le ore di questa settimana?'))return;
+  toast('Sincronizzo su Google\u2026');
+  try{const r=await fetch('/api/google/export?start='+currentMonday+'&end='+isoLocal(su),{method:'POST'});const d=await r.json();
+    if(d.connected===false){toast('Google non collegato');return;}
+    toast((d.created||0)+' eventi creati'+(d.skipped?(' \u00b7 '+d.skipped+' gi\u00e0 presenti'):''));}
+  catch(e){toast('Errore nella sincronizzazione');}
+};
 
 let _impEvents=[];
 async function importGoogle(){
