@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 import requests
 from bs4 import BeautifulSoup
 
-BASE_URL = "https://xs.cbsoft.it"
+BASE_URL = "https://ts.b2forge.com/"
 
 
 # ---------------------------------------------------------------------------
