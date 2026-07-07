@@ -1177,8 +1177,9 @@ function blockSummary(md){
   return `<section class="block">
     <div class="block-head"><span class="eyebrow">Riassunto</span><span class="l"></span></div>
     <div class="stat-grid">
-      <div class="stat hero"><div class="lab">Ore totali</div><div class="val tnum">${fmtMin(md.totalMin)}</div><div class="sub">pari a ${fullDays(md.totalMin)} giorni pieni da 8h</div></div>
+      <div class="stat hero"><div class="lab">Ore totali</div><div class="val tnum">${fmtMin(md.totalMin)}</div></div>
       <div class="stat"><div class="lab">Giorni lavorati</div><div class="val tnum">${workedN}<small>/${md.last}</small></div></div>
+      <div class="stat"><div class="lab">giorni pieni da 8h</div><div class="val tnum">${fullDays(md.totalMin)}</div></div>
       <div class="stat"><div class="lab">Media / giorno</div><div class="val tnum">${fmtMin(avg)}</div></div>
       <div class="stat"><div class="lab">Clienti attivi</div><div class="val tnum">${clients}</div></div>
       <div class="stat"><div class="lab">Giorno più lungo</div><div class="val tnum">${longest&&longest.total_min?fmtMin(longest.total_min):"—"}</div><div class="sub">${longLabel}</div></div>
