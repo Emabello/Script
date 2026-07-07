@@ -1,9 +1,11 @@
 """
-xs_server.py — Calendario settimanale per XS (gira in locale nel browser).
+xs_server.py — Calendario delle ore per XS (gira in locale nel browser).
 
 Vista a blocchi della settimana, dettaglio del giorno con note per ogni
-inserimento, cancellazione, riepilogo settimanale per cliente, tema
-chiaro/scuro e gestione utente. Si appoggia al motore in xs_client.py.
+inserimento, cancellazione, riepilogo mensile con statistiche e grafici
+(giorni lavorati, ore totali, ripartizione per cliente), tema chiaro/scuro
+e gestione utente. Il caricamento dei dati avviene sempre per mese intero.
+Si appoggia al motore in xs_client.py.
 
 Dipendenze:
   pip install requests beautifulsoup4 flask
@@ -62,12 +64,14 @@ def _gate():
         return jsonify({'locked': True}), 401
 
 
-def monday_of(d): return d - dt.timedelta(days=d.weekday())
 def parse_date(s):
+    """'2026-06-16' -> datetime.date(2026, 6, 16)."""
     y, m, day = map(int, s.split("-")); return dt.date(y, m, day)
 
 
 def catalog_to_json():
+    """Trasforma il catalogo (clienti -> progetti -> task) in una struttura JSON
+    serializzabile, scartando i clienti senza progetti e ordinando per nome."""
     catalog = client.get_catalog()
     out = []
     for c in catalog.values():
@@ -86,6 +90,8 @@ def catalog_to_json():
 
 
 def day_payload(d):
+    """Costruisce il riepilogo di un singolo giorno: elenco delle voci registrate
+    e totale dei minuti lavorati (usato sia dalla settimana che dal mese)."""
     entries = client.get_day_entries(d.year, d.month, d.day)
     total_min = 0
     for e in entries:
@@ -143,21 +149,12 @@ def api_catalog():
     return jsonify(catalog_to_json())
 
 
-@app.get("/api/week")
-def api_week():
-    ensure_login()
-    start = request.args.get("start")
-    base = parse_date(start) if start else dt.date.today()
-    mon = monday_of(base)
-    days = [day_payload(mon + dt.timedelta(days=i)) for i in range(7)]
-    return jsonify({"monday": mon.isoformat(), "days": days,
-                    "week_total_min": sum(d["total_min"] for d in days)})
-
-
 @app.get("/api/range")
 def api_range():
-    """Restituisce tutti i giorni da 'start' a 'end' (inclusi). Usato per
-    precaricare un intero mese e rendere istantaneo il cambio settimana."""
+    """Restituisce tutti i giorni da 'start' a 'end' (inclusi). È l'unica via di
+    caricamento usata dall'app: si precarica un intero mese in un colpo solo, così
+    la navigazione tra le settimane di quel mese e il riepilogo mensile sono
+    istantanei (nessuna chiamata giorno per giorno)."""
     ensure_login()
     start = parse_date(request.args["start"])
     end = parse_date(request.args["end"])
@@ -200,7 +197,7 @@ def api_delete():
 def manifest():
     data = {
         "name": "Le mie ore", "short_name": "Ore", "display": "standalone",
-        "background_color": "#0d1211", "theme_color": "#0d1211",
+        "background_color": "#0b0c10", "theme_color": "#0b0c10",
         "start_url": "/", "scope": "/", "orientation": "portrait-primary",
         "icons": [
             {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
@@ -328,9 +325,9 @@ def oauth_callback():
         _gstate["refresh"] = rt
     body = (
         "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
-        "<style>body{font-family:system-ui;background:#0d1211;color:#f2ede1;padding:30px;line-height:1.6}"
-        "code{background:#16201e;padding:10px;border-radius:8px;display:block;word-break:break-all;color:#c9ad74;margin:12px 0}"
-        "a{color:#c9ad74}</style></head><body>"
+        "<style>body{font-family:system-ui;background:#0b0c10;color:#f3f4f9;padding:30px;line-height:1.6}"
+        "code{background:#171a21;padding:10px;border-radius:8px;display:block;word-break:break-all;color:#8b7bff;margin:12px 0}"
+        "a{color:#8b7bff}</style></head><body>"
         "<h2>Google collegato \u2713</h2>"
     )
     if rt:
@@ -488,7 +485,7 @@ PAGE = r"""<!DOCTYPE html>
 <script>document.documentElement.dataset.theme=localStorage.getItem("xs-theme")||"dark";</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Le mie ore</title>
-<meta name="theme-color" content="#0d1211">
+<meta name="theme-color" content="#0b0c10">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -497,30 +494,34 @@ PAGE = r"""<!DOCTYPE html>
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
+/* --- Palette moderna: superfici scure profonde + accento indaco/violetto ---
+   NB: la variabile storica --gold è ora l'accento (indaco): il nome resta per
+   compatibilità con i riferimenti già presenti nel markup. */
 :root{
-  --bg:#0d1211; --panel:#141c1a; --card:#16201e; --ink:#f2ede1; --ink-dim:#cfc9bb;
-  --muted:#8b938c; --faint:#5f665f; --line:rgba(208,190,150,.12); --line-strong:rgba(208,190,150,.22);
-  --gold:#c9ad74; --gold-deep:#a8884f; --emerald:#62b89a; --danger:#cf8076;
-  --on-gold:#1a140a; --input-bg:#0f1715; --card-grad:linear-gradient(180deg,#16201e,#131b19);
-  --weekend:#0f1715;
-  --page-bg:radial-gradient(1200px 600px at 80% -10%,rgba(201,173,116,.10),transparent 60%),radial-gradient(900px 520px at 6% 4%,rgba(98,184,154,.06),transparent 55%),#0d1211;
-  --r:18px; --r-sm:12px; --shadow:0 24px 60px -28px rgba(0,0,0,.7),0 2px 8px -2px rgba(0,0,0,.4);
+  --bg:#0b0c10; --panel:#13151c; --card:#171a21; --ink:#f3f4f9; --ink-dim:#c4c7d4;
+  --muted:#8b8fa3; --faint:#565a6b; --line:rgba(255,255,255,.07); --line-strong:rgba(255,255,255,.13);
+  --gold:#7c6cff; --gold-deep:#5a49d1; --emerald:#2dd4bf; --danger:#ff6b81;
+  --on-gold:#ffffff; --input-bg:#0f1117; --card-grad:linear-gradient(180deg,#191c25,#14161d);
+  --weekend:#101219;
+  --page-bg:radial-gradient(1100px 620px at 82% -12%,rgba(124,108,255,.16),transparent 60%),radial-gradient(880px 520px at 4% 2%,rgba(45,212,191,.08),transparent 55%),#0b0c10;
+  --display:'Space Grotesk',system-ui,sans-serif;
+  --r:20px; --r-sm:13px; --shadow:0 30px 70px -34px rgba(0,0,0,.75),0 4px 14px -6px rgba(0,0,0,.5);
 }
 html[data-theme="light"]{
-  --bg:#f3efe6; --panel:#fbf9f4; --card:#ffffff; --ink:#1d2422; --ink-dim:#3f4a45;
-  --muted:#7c837d; --faint:#a7ada6; --line:rgba(40,34,18,.10); --line-strong:rgba(40,34,18,.18);
-  --gold:#9a7b3f; --gold-deep:#7d6230; --emerald:#2f8c6e; --danger:#b4554a;
-  --on-gold:#fffaf0; --input-bg:#fbf9f4; --card-grad:linear-gradient(180deg,#ffffff,#faf7f0);
-  --weekend:#efeadd;
-  --page-bg:radial-gradient(1200px 600px at 80% -10%,rgba(154,123,63,.10),transparent 60%),radial-gradient(900px 520px at 6% 4%,rgba(47,140,110,.07),transparent 55%),#f3efe6;
-  --shadow:0 22px 54px -30px rgba(70,58,30,.45),0 2px 8px -4px rgba(0,0,0,.10);
+  --bg:#eef0f5; --panel:#ffffff; --card:#ffffff; --ink:#181a22; --ink-dim:#414556;
+  --muted:#6c7182; --faint:#a6abbb; --line:rgba(20,22,33,.08); --line-strong:rgba(20,22,33,.15);
+  --gold:#5b49d1; --gold-deep:#4534ad; --emerald:#0d9488; --danger:#e11d48;
+  --on-gold:#ffffff; --input-bg:#f5f6fb; --card-grad:linear-gradient(180deg,#ffffff,#f7f7fd);
+  --weekend:#f1f2f8;
+  --page-bg:radial-gradient(1100px 620px at 82% -12%,rgba(91,73,209,.12),transparent 60%),radial-gradient(880px 520px at 4% 2%,rgba(13,148,136,.07),transparent 55%),#eef0f5;
+  --shadow:0 28px 60px -34px rgba(40,34,90,.4),0 3px 12px -6px rgba(0,0,0,.12);
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5;-webkit-tap-highlight-color:transparent}
 body{min-height:100vh;background:var(--page-bg);transition:background .3s,color .3s}
-.serif{font-family:Fraunces,Georgia,serif}
+.serif{font-family:var(--display);letter-spacing:-.01em}
 .eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:500}
 .tnum{font-variant-numeric:tabular-nums}
 button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
@@ -546,7 +547,7 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .nav .now:hover{border-color:var(--gold);color:var(--gold)}
 .wtotal{margin-left:auto;text-align:right}
 .wtotal .eyebrow{margin-bottom:1px;font-size:10px}
-.wtotal .v{font-family:Fraunces,serif;font-size:25px;line-height:1;color:var(--gold)}
+.wtotal .v{font-family:var(--display);font-size:25px;line-height:1;color:var(--gold)}
 .wtotal .v small{font-size:13px;color:var(--muted);font-family:Inter}
 .range{font-size:13px;color:var(--muted);margin-bottom:14px}
 .range .serif{font-size:15px;color:var(--ink-dim)}
@@ -571,10 +572,10 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .day-head{width:100%;display:flex;align-items:center;gap:14px;padding:15px 17px;text-align:left}
 .dh-left{display:flex;align-items:baseline;gap:11px}
 .dh-left .wd{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);width:34px}
-.dh-left .dn{font-family:Fraunces,serif;font-weight:300;font-size:30px;line-height:1}
+.dh-left .dn{font-family:var(--display);font-weight:300;font-size:30px;line-height:1}
 .day.weekend .dn{color:var(--ink-dim)}
 .dh-right{margin-left:auto;display:flex;align-items:center;gap:12px}
-.pill{font-family:Fraunces,serif;font-size:16px;color:var(--gold)}
+.pill{font-family:var(--display);font-size:16px;color:var(--gold)}
 .free{font-size:13px;color:var(--faint);font-style:italic}
 .cnt{font-size:11px;color:var(--muted)}
 .chev{width:22px;height:22px;color:var(--muted);transition:transform .3s cubic-bezier(.4,0,.2,1);display:grid;place-items:center}
@@ -587,7 +588,7 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .entry{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px dashed var(--line)}
 .day.open .entry{animation:rise .42s cubic-bezier(.4,0,.2,1) both}
 @keyframes rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
-.entry .etime{font-family:Fraunces,serif;font-size:16px;white-space:nowrap}
+.entry .etime{font-family:var(--display);font-size:16px;white-space:nowrap}
 .entry .einfo{min-width:0;flex:1}
 .entry .einfo .ec{font-size:12.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .entry .einfo .et{font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -598,7 +599,7 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .empty{padding:14px 0;color:var(--faint);font-style:italic;font-size:13.5px;border-top:1px dashed var(--line)}
 
 .addtoggle{margin-top:14px;width:100%;padding:11px;border:1px dashed var(--line-strong);border-radius:var(--r-sm);color:var(--gold);font-size:13.5px;font-weight:500;transition:.2s}
-.addtoggle:hover{background:rgba(201,173,116,.06);border-color:var(--gold)}
+.addtoggle:hover{background:rgba(124,108,255,.08);border-color:var(--gold)}
 .addform{overflow:hidden;max-height:0;opacity:0;transition:max-height .38s cubic-bezier(.4,0,.2,1),opacity .3s}
 .addform.show{max-height:1400px;opacity:1;margin-top:12px}
 .field{margin-bottom:10px}
@@ -622,10 +623,10 @@ textarea{resize:vertical}
 .sum-row .nm{font-size:13.5px;min-width:96px}
 .sum-row .bar{flex:1;height:6px;border-radius:999px;background:var(--line);overflow:hidden}
 .sum-row .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--gold),var(--gold-deep));transition:width .6s cubic-bezier(.4,0,.2,1)}
-.sum-row .h{font-family:Fraunces,serif;font-size:15px;color:var(--gold);white-space:nowrap}
+.sum-row .h{font-family:var(--display);font-size:15px;color:var(--gold);white-space:nowrap}
 .sum-stats{display:flex;gap:22px;margin-top:14px;flex-wrap:wrap}
 .sum-stats .eyebrow{margin-bottom:3px}
-.sum-stats .sv{font-family:Fraunces,serif;font-size:21px}
+.sum-stats .sv{font-family:var(--display);font-size:21px}
 
 .overlay{position:fixed;inset:0;background:rgba(6,9,8,.62);backdrop-filter:blur(7px);display:none;align-items:center;justify-content:center;padding:22px;z-index:50;animation:fade .2s}
 @keyframes fade{from{opacity:0}to{opacity:1}}
@@ -649,11 +650,11 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
 .syncrow{display:flex;gap:10px;margin-bottom:18px}
 .syncrow .importbtn{flex:1;margin-bottom:0}
 .importbtn{width:100%;margin-bottom:18px;padding:12px;border:1px solid var(--line-strong);border-radius:var(--r-sm);color:var(--gold);font-size:13.5px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;transition:.2s}
-.importbtn:hover{background:rgba(201,173,116,.06);border-color:var(--gold)}
+.importbtn:hover{background:rgba(124,108,255,.08);border-color:var(--gold)}
 .importbtn:active{transform:scale(.99)}
 .imp{display:flex;align-items:center;gap:11px;padding:11px 0;border-top:1px solid var(--line)}
 .imp input{width:19px;height:19px;accent-color:var(--gold);flex:none}
-.imp .t{font-family:Fraunces,serif;font-size:15px;white-space:nowrap}
+.imp .t{font-family:var(--display);font-size:15px;white-space:nowrap}
 .imp .info{flex:1;min-width:0}
 .imp .info .ti{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .imp .info .mt{font-size:11.5px;color:var(--emerald);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -664,6 +665,80 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
 .loading{text-align:center;color:var(--muted);padding:50px 0;font-style:italic}
 
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ===== Ritocchi moderni sui componenti esistenti ===== */
+.brand h1 em{font-style:normal;font-weight:500}
+.icon-btn{border-radius:13px;background:var(--card)}
+.icon-btn:hover{background:rgba(124,108,255,.10)}
+.rule{background:linear-gradient(90deg,var(--gold),transparent 78%);opacity:.6}
+.weekstrip .seg{height:40px;border-radius:11px}
+.day.today{box-shadow:0 0 40px -16px rgba(124,108,255,.55)}
+.viewhide{display:none}
+
+/* ===== Vista Riepilogo mese ===== */
+#month-view[hidden]{display:none}
+.monthbar{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.month-back{display:inline-flex;align-items:center;gap:7px;padding:0 15px;height:40px;border-radius:999px;border:1px solid var(--line);color:var(--ink-dim);font-size:13px;transition:.2s}
+.month-back:hover{border-color:var(--gold);color:var(--gold)}
+.month-back svg{width:15px;height:15px}
+.monthbar .nav{margin-left:auto}
+.month-title{font-family:var(--display);font-size:26px;letter-spacing:-.01em;margin:0 0 20px;text-transform:capitalize;font-weight:500}
+
+/* blocchi/card */
+.block{background:var(--card-grad);border:1px solid var(--line);border-radius:var(--r);padding:20px 18px;margin-bottom:16px}
+.block-head{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.block-head .eyebrow{white-space:nowrap}
+.block-head .l{flex:1;height:1px;background:var(--line)}
+.block-head .bh-val{font-family:var(--display);color:var(--gold);font-size:14px;white-space:nowrap}
+
+/* blocco 1 — stat tile */
+.stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:11px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 15px}
+.stat .lab{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+.stat .val{font-family:var(--display);font-size:26px;line-height:1;font-weight:500}
+.stat .val small{font-size:14px;color:var(--muted);font-weight:400;margin-left:2px}
+.stat .sub{font-size:11.5px;color:var(--faint);margin-top:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stat.hero{grid-column:1 / -1;background:linear-gradient(135deg,rgba(124,108,255,.16),rgba(45,212,191,.05));border-color:var(--line-strong)}
+.stat.hero .val{font-size:40px;font-weight:600;color:var(--gold)}
+
+/* blocco 2 — righe per cliente */
+.mrow{display:flex;align-items:center;gap:11px;padding:11px 0;border-top:1px solid var(--line)}
+.mrow:first-child{border-top:none}
+.mrow .dot{width:10px;height:10px;border-radius:3px;flex:none}
+.mrow .nm{font-size:13.5px;flex:none;width:112px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow .bar{flex:1;height:8px;border-radius:999px;background:var(--line);overflow:hidden}
+.mrow .bar i{display:block;height:100%;width:0;border-radius:999px;transition:width .6s cubic-bezier(.4,0,.2,1)}
+.mrow .h{font-family:var(--display);font-size:14px;white-space:nowrap;min-width:56px;text-align:right}
+.mrow .pc{font-size:11.5px;color:var(--muted);min-width:36px;text-align:right;font-variant-numeric:tabular-nums}
+
+/* blocco 3 — grafici */
+.chart{margin-top:22px}
+.chart:first-child{margin-top:2px}
+.chart h4{margin:0 0 12px;font-size:12.5px;font-weight:600;color:var(--ink-dim)}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart .grid-line{stroke:var(--line);stroke-width:1}
+.chart .axis-lab{font-size:10px;fill:var(--muted);font-variant-numeric:tabular-nums}
+.chart .avg-line{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;opacity:.7}
+.legend{display:flex;flex-wrap:wrap;gap:9px 16px;margin-top:14px}
+.legend .it{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-dim)}
+.legend .sw{width:11px;height:11px;border-radius:3px;flex:none}
+.legend .lh{color:var(--muted);font-variant-numeric:tabular-nums}
+.donut-wrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.donut-wrap .dsvg{width:148px;flex:none}
+.donut-wrap .legend{margin-top:0;flex:1;min-width:150px;flex-direction:column;gap:9px}
+.heat{display:grid;grid-template-columns:repeat(7,1fr);gap:5px}
+.heat .hd{font-size:9.5px;color:var(--muted);text-align:center;text-transform:uppercase;letter-spacing:.05em;padding-bottom:2px}
+.heat .cell{aspect-ratio:1;border-radius:7px;background:var(--line);display:grid;place-items:center;font-size:11px;color:var(--ink-dim);font-variant-numeric:tabular-nums;transition:transform .12s}
+.heat .cell.blank{background:transparent}
+.heat .cell.today{outline:2px solid var(--gold);outline-offset:1px}
+.heat .cell[data-h]:hover{transform:scale(1.08)}
+.heat-scale{display:flex;align-items:center;gap:6px;margin-top:12px;font-size:11px;color:var(--muted)}
+.heat-scale .sc{display:flex;gap:3px}
+.heat-scale .sc span{width:15px;height:11px;border-radius:3px}
+.mempty{text-align:center;color:var(--faint);font-style:italic;padding:44px 0}
+.ttip{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line-strong);border-radius:9px;padding:7px 10px;font-size:12px;color:var(--ink);box-shadow:var(--shadow);z-index:70;opacity:0;transition:opacity .12s;white-space:nowrap;transform:translate(-50%,-115%)}
+.ttip.show{opacity:1}
+.ttip b{font-family:var(--display);font-weight:600}
 </style>
 </head>
 <body>
@@ -671,33 +746,53 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
   <div class="top">
     <div class="brand"><div class="eyebrow">Timesheet</div><h1 class="serif">Le mie <em>ore</em></h1></div>
     <div class="spacer"></div>
+    <button class="icon-btn" id="open-month" title="Riepilogo mese">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
+    </button>
     <button class="icon-btn" id="open-settings" title="Impostazioni">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     </button>
   </div>
   <div class="rule"></div>
 
-  <div class="weekbar">
-    <div class="nav">
-      <button class="arrow" id="prev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
-      <button class="now" id="now">Oggi</button>
-      <button class="arrow" id="next"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></button>
+  <!-- ============ Vista settimana ============ -->
+  <div id="week-view">
+    <div class="weekbar">
+      <div class="nav">
+        <button class="arrow" id="prev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <button class="now" id="now">Oggi</button>
+        <button class="arrow" id="next"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+      <div class="wtotal"><div class="eyebrow">Settimana</div><div class="v" id="wtotal">—</div></div>
     </div>
-    <div class="wtotal"><div class="eyebrow">Settimana</div><div class="v" id="wtotal">—</div></div>
-  </div>
-  <div class="range" id="range"></div>
-  <div class="weekstrip" id="weekstrip"></div>
-  <div class="syncrow">
-    <button class="importbtn" id="import-google"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg> Importa</button>
-    <button class="importbtn" id="export-google"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21V9m0 0l-4 4m4-4l4 4M5 3h14"/></svg> Esporta</button>
+    <div class="range" id="range"></div>
+    <div class="weekstrip" id="weekstrip"></div>
+    <div class="syncrow">
+      <button class="importbtn" id="import-google"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg> Importa</button>
+      <button class="importbtn" id="export-google"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 21V9m0 0l-4 4m4-4l4 4M5 3h14"/></svg> Esporta</button>
+    </div>
+
+    <div class="list" id="list"><div class="loading">Carico il mese…</div></div>
+
+    <div class="summary" id="summary" style="display:none">
+      <div class="summary-head"><span class="eyebrow">Riepilogo settimana</span><span class="l"></span></div>
+      <div id="sum-rows"></div>
+      <div class="sum-stats" id="sum-stats"></div>
+    </div>
   </div>
 
-  <div class="list" id="list"><div class="loading">Carico la settimana…</div></div>
-
-  <div class="summary" id="summary" style="display:none">
-    <div class="summary-head"><span class="eyebrow">Riepilogo settimana</span><span class="l"></span></div>
-    <div id="sum-rows"></div>
-    <div class="sum-stats" id="sum-stats"></div>
+  <!-- ============ Vista riepilogo mese ============ -->
+  <div id="month-view" hidden>
+    <div class="monthbar">
+      <button class="month-back" id="month-back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg> Calendario</button>
+      <div class="nav">
+        <button class="arrow" id="m-prev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <button class="now" id="m-now">Questo mese</button>
+        <button class="arrow" id="m-next"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+    </div>
+    <h2 class="month-title" id="m-title">—</h2>
+    <div id="month-body"></div>
   </div>
 </div>
 
@@ -749,12 +844,22 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="ttip" id="ttip"></div>
 
 <script>
 const WD_LONG=["lunedì","martedì","mercoledì","giovedì","venerdì","sabato","domenica"];
 const WD_SHORT=["lun","mar","mer","gio","ven","sab","dom"];
 let catalog=[], currentMonday=null, currentDays=[], openDate=null;
-let cache={}, loaded=new Set();
+let currentMonth=null;               // primo giorno del mese mostrato nel riepilogo
+let cache={}, loaded=new Set();       // cache dei giorni (per data ISO) e mesi già scaricati
+
+/* Palette categorica validata (dataviz) per i grafici: stessi 8 colori adattati al
+   tema chiaro/scuro, assegnati in ordine fisso (mai ciclati). */
+const CAT={
+  dark :["#3987e5","#199e70","#c98500","#008300","#9085e9","#e66767","#d55181","#d95926"],
+  light:["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948","#e87ba4","#eb6834"]
+};
+function catColors(){return document.documentElement.dataset.theme==="light"?CAT.light:CAT.dark;}
 
 function fmtMin(m){const h=Math.floor(m/60),r=m%60;return h+"h"+(r?" "+(r<10?"0":"")+r+"m":"");}
 function entryMin(e){try{const h=parseInt(e.total.split("h")[0]||0);const m=parseInt((e.total.split("h")[1]||"").replace("m","").trim()||0);return h*60+m;}catch(_){return 0;}}
@@ -776,7 +881,9 @@ async function ensureMonth(iso){
   const data=await(await fetch("/api/range?start="+s+"&end="+e)).json();
   Object.assign(cache,data); loaded.add(key);
 }
-async function ensureWeek(mondayISO){
+// Il caricamento è sempre per mese: una settimana può stare a cavallo di due mesi,
+// quindi ci assicuriamo che entrambi i mesi toccati dalla settimana siano scaricati.
+async function ensureMonthsForWeek(mondayISO){
   const mo=new Date(mondayISO+"T00:00"); const su=new Date(mo); su.setDate(su.getDate()+6);
   await ensureMonth(isoLocal(mo)); await ensureMonth(isoLocal(su));
 }
@@ -792,7 +899,7 @@ async function showWeek(mondayISO, dir){
   const mo=new Date(mondayISO+"T00:00"); const su=new Date(mo); su.setDate(su.getDate()+6);
   const cached = loaded.has(monthKey(mondayISO)) && loaded.has(monthKey(isoLocal(su)));
   if(!cached) document.getElementById("list").innerHTML='<div class="loading">Carico il mese…</div>';
-  await ensureWeek(mondayISO);
+  await ensureMonthsForWeek(mondayISO);
   const data=weekData(mondayISO); currentDays=data.days;
   const t=todayISO(); openDate = data.days.some(d=>d.date===t) ? t : data.days[0].date;
   renderWeek(data, dir||0);
@@ -928,7 +1035,8 @@ document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>hide(b.datase
 document.querySelectorAll(".overlay").forEach(o=>o.onclick=e=>{if(o.id!=="pin-overlay"&&e.target===o)o.classList.remove("open");});
 
 /* theme */
-function setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem("xs-theme",t);document.querySelectorAll("#theme-seg button").forEach(b=>b.classList.toggle("active",b.dataset.theme===t));}
+function setTheme(t){document.documentElement.dataset.theme=t;localStorage.setItem("xs-theme",t);document.querySelectorAll("#theme-seg button").forEach(b=>b.classList.toggle("active",b.dataset.theme===t));
+  if(currentMonth && !document.getElementById("month-view").hidden) renderMonth();}   // ridisegna i grafici con i colori del nuovo tema
 document.querySelectorAll("#theme-seg button").forEach(b=>b.onclick=()=>setTheme(b.dataset.theme));
 setTheme(localStorage.getItem("xs-theme")||"dark");
 
@@ -946,10 +1054,18 @@ document.getElementById("prev").onclick=()=>shift(-7);
 document.getElementById("next").onclick=()=>shift(7);
 document.getElementById("now").onclick=()=>showWeek(isoLocal(weekMonday(new Date())),0);
 document.addEventListener("keydown",e=>{
-  if(e.key==="Escape"){document.querySelectorAll(".overlay.open").forEach(o=>{if(o.id!=="pin-overlay")o.classList.remove("open");});return;}
+  const monthOpen=!document.getElementById("month-view").hidden;
+  if(e.key==="Escape"){
+    const ov=[...document.querySelectorAll(".overlay.open")].filter(o=>o.id!=="pin-overlay");
+    if(ov.length){ov.forEach(o=>o.classList.remove("open"));return;}
+    if(monthOpen)closeMonthView();
+    return;
+  }
   if(document.querySelector(".overlay.open"))return;
   if(/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))return;
-  if(e.key==="ArrowLeft")shift(-7); if(e.key==="ArrowRight")shift(7);});
+  if(e.key==="ArrowLeft"){monthOpen?monthShift(-1):shift(-7);}
+  if(e.key==="ArrowRight"){monthOpen?monthShift(1):shift(7);}
+});
 
 /* swipe */
 let sx=0,sy=0;
@@ -1026,6 +1142,209 @@ document.getElementById('imp-confirm').onclick=async()=>{
   btn.textContent='Scrivi su XS';
 };
 document.getElementById('import-google').onclick=importGoogle;
+
+/* ===================== Riepilogo mese ===================== */
+function firstOfMonth(d){return new Date(d.getFullYear(),d.getMonth(),1);}
+function capitalize(s){return s.charAt(0).toUpperCase()+s.slice(1);}
+function fullDays(min){return (min/60/8).toLocaleString("it-IT",{minimumFractionDigits:1,maximumFractionDigits:1});}
+function accentHex(){return getComputedStyle(document.documentElement).getPropertyValue("--gold").trim()||"#7c6cff";}
+function hexToRgba(hex,a){const n=hex.replace("#","");return "rgba("+parseInt(n.slice(0,2),16)+","+parseInt(n.slice(2,4),16)+","+parseInt(n.slice(4,6),16)+","+a+")";}
+
+// Aggrega i giorni del mese selezionato leggendo dalla cache (già riempita per mese intero).
+function monthData(monthDate){
+  const y=monthDate.getFullYear(), m=monthDate.getMonth();
+  const last=new Date(y,m+1,0).getDate();
+  const days=[];
+  for(let n=1;n<=last;n++){
+    const d=new Date(y,m,n), iso=isoLocal(d), dp=cache[iso]||{entries:[],total_min:0};
+    days.push({date:iso,day:n,weekday:(d.getDay()+6)%7,total_min:dp.total_min||0,entries:dp.entries||[]});
+  }
+  const totalMin=days.reduce((a,d)=>a+d.total_min,0);
+  const worked=days.filter(d=>d.total_min>0);
+  const byClient={};
+  days.forEach(d=>d.entries.forEach(e=>{byClient[e.client]=(byClient[e.client]||0)+entryMin(e);}));
+  return {y,m,last,days,totalMin,worked,byClient};
+}
+function clientRows(md){return Object.entries(md.byClient).sort((a,b)=>b[1]-a[1]);}
+
+// ----- Blocco 1: riassunto (giorni lavorati, ore totali, statistiche) -----
+function blockSummary(md){
+  const workedN=md.worked.length;
+  const avg=workedN?Math.round(md.totalMin/workedN):0;
+  const clients=Object.keys(md.byClient).length;
+  const longest=md.days.reduce((a,d)=>d.total_min>(a?a.total_min:0)?d:a,null);
+  const longLabel=(longest&&longest.total_min)?new Date(longest.date+"T00:00").toLocaleDateString("it-IT",{weekday:"short",day:"numeric"}):"nessuno";
+  return `<section class="block">
+    <div class="block-head"><span class="eyebrow">Riassunto</span><span class="l"></span></div>
+    <div class="stat-grid">
+      <div class="stat hero"><div class="lab">Ore totali</div><div class="val tnum">${fmtMin(md.totalMin)}</div><div class="sub">pari a ${fullDays(md.totalMin)} giorni pieni da 8h</div></div>
+      <div class="stat"><div class="lab">Giorni lavorati</div><div class="val tnum">${workedN}<small>/${md.last}</small></div></div>
+      <div class="stat"><div class="lab">Media / giorno</div><div class="val tnum">${fmtMin(avg)}</div></div>
+      <div class="stat"><div class="lab">Clienti attivi</div><div class="val tnum">${clients}</div></div>
+      <div class="stat"><div class="lab">Giorno più lungo</div><div class="val tnum">${longest&&longest.total_min?fmtMin(longest.total_min):"—"}</div><div class="sub">${longLabel}</div></div>
+    </div></section>`;
+}
+
+// ----- Blocco 2: sommatoria del mese per cliente -----
+function blockClients(md){
+  const rows=clientRows(md), cols=catColors(), max=Math.max(...rows.map(r=>r[1]));
+  const body=rows.map(([n,mn],i)=>{
+    const c=i<8?cols[i]:"var(--muted)";
+    const pc=Math.round(mn/md.totalMin*100), w=Math.round(mn/max*100);
+    return `<div class="mrow"><span class="dot" style="background:${c}"></span><span class="nm" title="${n}">${n}</span><span class="bar"><i data-w="${w}" style="background:${c}"></i></span><span class="h tnum">${fmtMin(mn)}</span><span class="pc">${pc}%</span></div>`;
+  }).join("");
+  return `<section class="block">
+    <div class="block-head"><span class="eyebrow">Per cliente</span><span class="l"></span><span class="bh-val">${rows.length} client${rows.length===1?"e":"i"}</span></div>
+    ${body}</section>`;
+}
+
+// ----- Blocco 3: grafici (SVG inline, nessuna libreria esterna) -----
+function blockCharts(md){
+  return `<section class="block">
+    <div class="block-head"><span class="eyebrow">Grafici</span><span class="l"></span></div>
+    <div class="chart"><h4>Ore per giorno</h4>${chartDays(md)}</div>
+    <div class="chart"><h4>Ripartizione per cliente</h4>${chartDonut(md)}</div>
+    <div class="chart"><h4>Calendario del mese</h4>${chartHeat(md)}</div>
+    <div class="chart"><h4>Ore cumulate nel mese</h4>${chartCum(md)}</div>
+  </section>`;
+}
+
+// Istogramma: una colonna per giorno del mese, weekend attenuati, riga della media.
+function chartDays(md){
+  const W=360,H=150,pL=26,pR=6,pT=10,pB=20, plotW=W-pL-pR, plotH=H-pT-pB, baseY=pT+plotH;
+  const hrs=md.days.map(d=>d.total_min/60);
+  const maxH=Math.max(8,Math.ceil(Math.max(...hrs)/2)*2);
+  const slot=plotW/md.last, bw=Math.min(slot-2,24), acc=accentHex();
+  let bars="";
+  md.days.forEach((d,i)=>{
+    if(hrs[i]<=0) return;
+    const bh=hrs[i]/maxH*plotH, x=pL+i*slot+(slot-bw)/2, y=baseY-bh, we=d.weekday>=5;
+    const tip=`<b>${d.day} ${capitalize(new Date(d.date+"T00:00").toLocaleDateString("it-IT",{month:"short"}))}</b> · ${fmtMin(d.total_min)}`;
+    bars+=`<rect class="bar-mark" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2" style="fill:${acc};opacity:${we?.45:1}" data-tip="${tip}"></rect>`;
+  });
+  const wn=md.worked.length, avgH=wn?(md.totalMin/60/wn):0, avgY=baseY-avgH/maxH*plotH;
+  const avgEl=wn?`<line class="avg-line" x1="${pL}" y1="${avgY.toFixed(1)}" x2="${pL+plotW}" y2="${avgY.toFixed(1)}"></line><text class="axis-lab" x="${pL+plotW}" y="${(avgY-3).toFixed(1)}" text-anchor="end">media ${avgH.toFixed(1)}h</text>`:"";
+  const axis=`<line class="grid-line" x1="${pL}" y1="${baseY}" x2="${pL+plotW}" y2="${baseY}"></line>
+    <text class="axis-lab" x="${pL-6}" y="${baseY}" text-anchor="end" dominant-baseline="middle">0</text>
+    <text class="axis-lab" x="${pL-6}" y="${pT+4}" text-anchor="end">${maxH}h</text>`;
+  let xl="";
+  [1,8,15,22,md.last].filter((v,i,a)=>a.indexOf(v)===i&&v<=md.last).forEach(day=>{
+    const x=pL+(day-1)*slot+slot/2;
+    xl+=`<text class="axis-lab" x="${x.toFixed(1)}" y="${H-6}" text-anchor="middle">${day}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ore per giorno">${axis}${avgEl}${bars}${xl}</svg>`;
+}
+
+// Ciambella: quota di ore per cliente (oltre 8 clienti si accorpano in "Altri").
+function chartDonut(md){
+  const rows=clientRows(md), cols=catColors(); let slices;
+  if(rows.length<=8){slices=rows.map(([n,v],i)=>({n,v,c:cols[i]}));}
+  else{
+    slices=rows.slice(0,7).map(([n,v],i)=>({n,v,c:cols[i]}));
+    slices.push({n:"Altri",v:rows.slice(7).reduce((a,r)=>a+r[1],0),c:cols[7]});
+  }
+  const total=md.totalMin, R=48,cx=60,cy=60,sw=17,C=2*Math.PI*R;
+  let off=0, arcs="";
+  slices.forEach(s=>{
+    const len=s.v/total*C, dash=Math.max(len-2,0.5);   // 2px di gap (colore superficie) tra le fette
+    arcs+=`<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.c}" stroke-width="${sw}" stroke-dasharray="${dash.toFixed(2)} ${(C-dash).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" data-tip="<b>${s.n}</b> · ${fmtMin(s.v)} · ${Math.round(s.v/total*100)}%"></circle>`;
+    off+=len;
+  });
+  const svg=`<svg class="dsvg" viewBox="0 0 120 120" role="img" aria-label="Ripartizione ore per cliente">
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--line)" stroke-width="${sw}"></circle>
+    <g transform="rotate(-90 ${cx} ${cy})">${arcs}</g>
+    <text x="60" y="57" text-anchor="middle" style="font-family:var(--display);font-weight:600;font-size:19px;fill:var(--ink)">${Math.round(total/60)}</text>
+    <text x="60" y="72" text-anchor="middle" style="font-size:10px;fill:var(--muted)">ore</text></svg>`;
+  const legend=slices.map(s=>`<div class="it"><span class="sw" style="background:${s.c}"></span>${s.n}<span class="lh"> · ${fmtMin(s.v)}</span></div>`).join("");
+  return `<div class="donut-wrap">${svg}<div class="legend">${legend}</div></div>`;
+}
+
+// Heatmap a calendario: intensità del colore proporzionale alle ore del giorno.
+function chartHeat(md){
+  const acc=accentHex(), head=WD_SHORT.map(w=>`<div class="hd">${w}</div>`).join(""), tIso=todayISO();
+  let cells="";
+  for(let i=0;i<md.days[0].weekday;i++) cells+='<div class="cell blank"></div>';
+  md.days.forEach(d=>{
+    const isT=d.date===tIso;
+    if(d.total_min<=0){cells+=`<div class="cell${isT?" today":""}">${d.day}</div>`;return;}
+    const it=Math.min(d.total_min/60/8,1), bg=hexToRgba(acc,0.18+0.82*it), fg=it>0.5?"#fff":"var(--ink-dim)";
+    cells+=`<div class="cell${isT?" today":""}" data-tip="<b>${d.day}</b> · ${fmtMin(d.total_min)}" style="background:${bg};color:${fg}">${d.day}</div>`;
+  });
+  const scale=[0.18,0.4,0.6,0.8,1].map(a=>`<span style="background:${hexToRgba(acc,a)}"></span>`).join("");
+  return `<div class="heat">${head}${cells}</div><div class="heat-scale">meno<span class="sc">${scale}</span>più (8h+)</div>`;
+}
+
+// Linea cumulata: ore accumulate giorno per giorno, con riferimento neutro al ritmo 8h.
+function chartCum(md){
+  const W=360,H=150,pL=28,pR=8,pT=10,pB=20, plotW=W-pL-pR, plotH=H-pT-pB, baseY=pT+plotH, acc=accentHex();
+  let run=0; const cum=md.days.map(d=>{run+=d.total_min/60;return run;}); const totalH=run;
+  let wr=0; const pace=md.days.map(d=>{if(d.weekday<5) wr+=8;return wr;});
+  const maxY=Math.max(8,Math.ceil(Math.max(totalH,pace[pace.length-1])/8)*8);
+  const X=i=>pL+(md.last===1?0:i/(md.last-1)*plotW), Y=v=>baseY-v/maxY*plotH;
+  const path=cum.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+  const area=path+` L${X(md.last-1).toFixed(1)} ${baseY} L${X(0).toFixed(1)} ${baseY} Z`;
+  const paceP=pace.map((v,i)=>(i?"L":"M")+X(i).toFixed(1)+" "+Y(v).toFixed(1)).join(" ");
+  const endX=X(md.last-1), endY=Y(totalH);
+  let hits="";
+  md.days.forEach((d,i)=>{
+    const w=plotW/md.last, x=Math.max(pL,X(i)-w/2);
+    hits+=`<rect x="${x.toFixed(1)}" y="${pT}" width="${w.toFixed(1)}" height="${plotH}" fill="transparent" data-tip="<b>${d.day}</b> · ${fmtMin(Math.round(cum[i]*60))} cumulate"></rect>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ore cumulate nel mese">
+    <line class="grid-line" x1="${pL}" y1="${baseY}" x2="${pL+plotW}" y2="${baseY}"></line>
+    <text class="axis-lab" x="${pL-6}" y="${baseY}" text-anchor="end" dominant-baseline="middle">0</text>
+    <text class="axis-lab" x="${pL-6}" y="${pT+4}" text-anchor="end">${maxY}h</text>
+    <path d="${paceP}" fill="none" class="avg-line"></path>
+    <path d="${area}" style="fill:${hexToRgba(acc,0.12)}"></path>
+    <path d="${path}" fill="none" style="stroke:${acc};stroke-width:2;stroke-linejoin:round;stroke-linecap:round"></path>
+    <circle cx="${endX.toFixed(1)}" cy="${endY.toFixed(1)}" r="4" style="fill:${acc};stroke:var(--card);stroke-width:2"></circle>
+    ${hits}</svg>
+    <div class="legend"><div class="it"><span class="sw" style="background:${acc}"></span>Ore cumulate</div><div class="it"><span class="sw" style="background:var(--muted)"></span>Ritmo 8h/gg lavorativo</div></div>`;
+}
+
+// Anima le barre e collega i tooltip dopo aver iniettato l'HTML del mese.
+function afterMonthRender(){
+  requestAnimationFrame(()=>document.querySelectorAll("#month-body .mrow .bar i").forEach(b=>b.style.width=b.dataset.w+"%"));
+  const tip=document.getElementById("ttip");
+  document.querySelectorAll("#month-body [data-tip]").forEach(el=>{
+    const move=ev=>{const p=ev.touches?ev.touches[0]:ev;tip.innerHTML=el.getAttribute("data-tip");tip.style.left=p.clientX+"px";tip.style.top=p.clientY+"px";tip.classList.add("show");};
+    el.addEventListener("mousemove",move);
+    el.addEventListener("mouseleave",()=>tip.classList.remove("show"));
+    el.addEventListener("touchstart",move,{passive:true});
+    el.addEventListener("touchend",()=>setTimeout(()=>tip.classList.remove("show"),900));
+  });
+}
+
+// Carica (se serve) e disegna il riepilogo del mese selezionato.
+async function renderMonth(){
+  const body=document.getElementById("month-body");
+  document.getElementById("m-title").textContent=capitalize(currentMonth.toLocaleDateString("it-IT",{month:"long",year:"numeric"}));
+  if(!loaded.has(isoLocal(currentMonth).slice(0,7))) body.innerHTML='<div class="mempty">Carico il mese…</div>';
+  await ensureMonth(isoLocal(currentMonth));
+  const md=monthData(currentMonth);
+  if(!md.totalMin){body.innerHTML='<div class="mempty">Nessuna ora registrata in questo mese.</div>';return;}
+  body.innerHTML=blockSummary(md)+blockClients(md)+blockCharts(md);
+  afterMonthRender();
+}
+
+function openMonthView(){
+  if(!currentMonth) currentMonth=firstOfMonth(new Date());
+  document.getElementById("week-view").hidden=true;
+  document.getElementById("month-view").hidden=false;
+  document.getElementById("open-month").classList.add("viewhide");
+  window.scrollTo(0,0); renderMonth();
+}
+function closeMonthView(){
+  document.getElementById("month-view").hidden=true;
+  document.getElementById("week-view").hidden=false;
+  document.getElementById("open-month").classList.remove("viewhide");
+}
+function monthShift(delta){currentMonth=new Date(currentMonth.getFullYear(),currentMonth.getMonth()+delta,1);renderMonth();}
+document.getElementById("open-month").onclick=openMonthView;
+document.getElementById("month-back").onclick=closeMonthView;
+document.getElementById("m-prev").onclick=()=>monthShift(-1);
+document.getElementById("m-next").onclick=()=>monthShift(1);
+document.getElementById("m-now").onclick=()=>{currentMonth=firstOfMonth(new Date());renderMonth();};
 
 /* pin + boot */
 if('serviceWorker' in navigator){try{navigator.serviceWorker.register('/sw.js').catch(()=>{});}catch(e){}}
