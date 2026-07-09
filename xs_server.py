@@ -60,7 +60,12 @@ def _gate():
         return
     if request.endpoint in ALLOW_NO_PIN or request.endpoint is None:
         return
-    if request.path.startswith('/api/') and not session.get('ok'):
+    # Proteggi /api/*, /fatture/api/*, /spese/api/*
+    p = request.path
+    is_api = (p.startswith('/api/')
+              or p.startswith('/fatture/api/')
+              or p.startswith('/spese/api/'))
+    if is_api and not session.get('ok'):
         return jsonify({'locked': True}), 401
 
 
@@ -475,7 +480,10 @@ def g_export():
 
 @app.get("/")
 def index():
-    return Response(PAGE, mimetype="text/html")
+    # Navbar B2F iniettata sopra il timesheet senza toccare PAGE
+    from shared.nav import render_nav
+    html = PAGE.replace("<body>", "<body>\n" + render_nav("ore"), 1)
+    return Response(html, mimetype="text/html")
 
 
 PAGE = r"""<!DOCTYPE html>
@@ -1179,7 +1187,7 @@ function blockSummary(md){
     <div class="stat-grid">
       <div class="stat hero"><div class="lab">Ore totali</div><div class="val tnum">${fmtMin(md.totalMin)}</div></div>
       <div class="stat"><div class="lab">Giorni lavorati</div><div class="val tnum">${workedN}<small>/${md.last}</small></div></div>
-      <div class="stat"><div class="lab">giorni pieni da 8h</div><div class="val tnum">${fullDays(md.totalMin)}</div></div>
+      <div class="stat"><div class="lab">giorni pieni da 8h</div><div class="val tnum">${fullDays(md.totalMin)}/${md.last}</div></div>
       <div class="stat"><div class="lab">Media / giorno</div><div class="val tnum">${fmtMin(avg)}</div></div>
       <div class="stat"><div class="lab">Clienti attivi</div><div class="val tnum">${clients}</div></div>
       <div class="stat"><div class="lab">Giorno più lungo</div><div class="val tnum">${longest&&longest.total_min?fmtMin(longest.total_min):"—"}</div><div class="sub">${longLabel}</div></div>

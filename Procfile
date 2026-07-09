@@ -1,1 +1,1 @@
-web: gunicorn -w 1 xs_server:app
+web: gunicorn -w 1 app:app
