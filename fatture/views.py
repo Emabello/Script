@@ -1,5 +1,9 @@
 """
-fatture/views.py — Rotte area /fatture, in stile timesheet.
+fatture/views.py — Area /fatture, in stile launchpad B2F.
+
+Header: logo B2F cliccabile (back to /) + toggle tema.
+Contenuto: card emittente, KPI clienti/fatture, CTA (disabilitate
+fino allo step 4).
 """
 from flask import Response
 
@@ -47,30 +51,24 @@ def index():
         piva = em.get("piva") or "PIVA da impostare"
         regime = em.get("regime_fisc") or "RF19"
 
-        n_cli  = st["b2f_clienti"]["count"] if st["b2f_clienti"]["ok"] else "—"
-        n_fat  = st["b2f_fatture"]["count"] if st["b2f_fatture"]["ok"] else "—"
+        n_cli = st["b2f_clienti"]["count"] if st["b2f_clienti"]["ok"] else "—"
+        n_fat = st["b2f_fatture"]["count"] if st["b2f_fatture"]["ok"] else "—"
 
         content = f"""
         <div class="card">
           <div class="eyebrow" style="margin-bottom:6px">Emittente</div>
-          <h2 class="serif" style="margin:0 0 3px">{em_line}</h2>
+          <h2 class="serif" style="margin:0 0 4px">{em_line}</h2>
           <div style="color:var(--muted);font-size:13px">
-            {piva} &middot; regime {regime}
+            {piva} · regime {regime}
           </div>
         </div>
 
-        <div class="grid">
+        <div class="grid2">
           <div class="card">
-            <div class="stat">
-              <div class="num tnum">{n_cli}</div>
-              <div class="lbl">Clienti</div>
-            </div>
+            <div class="stat"><div class="num tnum">{n_cli}</div><div class="lbl">Clienti</div></div>
           </div>
           <div class="card">
-            <div class="stat">
-              <div class="num tnum">{n_fat}</div>
-              <div class="lbl">Fatture</div>
-            </div>
+            <div class="stat"><div class="num tnum">{n_fat}</div><div class="lbl">Fatture</div></div>
           </div>
         </div>
 
@@ -78,16 +76,15 @@ def index():
           <a class="btn is-disabled" href="#" aria-disabled="true">Nuova fattura</a>
           <a class="btn ghost is-disabled" href="#" aria-disabled="true">Clienti</a>
         </div>
-        <div style="color:var(--faint);font-size:11.5px;margin-top:10px;
+        <div style="color:var(--faint);font-size:11px;margin-top:10px;
                     letter-spacing:.05em;text-transform:uppercase">
-          Disponibili dallo step 3
+          Disponibili dallo step 4
         </div>
         """
 
-    html = render_page(
-        section="fatture",
-        eyebrow="Fatturazione",
-        title_html='Le mie <em>fatture</em>',
-        content=content,
-    )
-    return Response(html, mimetype="text/html")
+    return Response(
+        render_page(section="fatture",
+                    eyebrow="Fatturazione",
+                    title_html='Le mie <em>fatture</em>',
+                    content=content),
+        mimetype="text/html")

@@ -52,7 +52,7 @@ def ensure_login():
         client.login(u, p)
 
 ALLOW_NO_PIN = {'index', 'manifest', 'icon192', 'icon512', 'appleicon',
-                'sw', 'api_status', 'api_unlock', 'oauth_start', 'oauth_callback'}
+                'sw', 'api_status', 'api_unlock', 'oauth_start', 'oauth_callback', 'launchpad', 'kpi_fatture', 'kpi_spese', 'health'}
 
 @app.before_request
 def _gate():
@@ -478,15 +478,14 @@ def g_export():
     return jsonify({"created": created, "skipped": skipped})
 
 
-@app.get("/")
+@app.get("/ore")
 def index():
-    # Subnav B2F iniettata dentro <div class="wrap"> senza toccare PAGE
-    from shared.nav import render_nav
-    html = PAGE.replace(
-        '<div class="wrap">',
-        '<div class="wrap">\n' + render_nav("ore"),
-        1,
-    )
+    # Timesheet: iniettiamo l'header B2F (logo cliccabile back-to-home
+    # + toggle tema) subito dentro <div class="wrap">, poi lasciamo il
+    # PAGE intatto.
+    from shared.theme import inject_app_header
+    html = inject_app_header(PAGE, eyebrow="Timesheet",
+                             title_html='Le mie <em>ore</em>')
     return Response(html, mimetype="text/html")
 
 
