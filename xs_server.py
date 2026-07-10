@@ -480,9 +480,13 @@ def g_export():
 
 @app.get("/")
 def index():
-    # Navbar B2F iniettata sopra il timesheet senza toccare PAGE
+    # Subnav B2F iniettata dentro <div class="wrap"> senza toccare PAGE
     from shared.nav import render_nav
-    html = PAGE.replace("<body>", "<body>\n" + render_nav("ore"), 1)
+    html = PAGE.replace(
+        '<div class="wrap">',
+        '<div class="wrap">\n' + render_nav("ore"),
+        1,
+    )
     return Response(html, mimetype="text/html")
 
 

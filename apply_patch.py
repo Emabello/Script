@@ -1,41 +1,53 @@
 """
-apply_patch.py — Modifica minima e idempotente a xs_server.py.
+apply_patch.py v2 — Modifiche minime a xs_server.py.
 
-Applica due patch chirurgiche al tuo xs_server.py esistente:
-
-  1. Iniezione della navbar B2F dentro il PAGE del timesheet (subito
-     dopo <body>). Usa `PAGE.replace(...)`, non riscrive PAGE.
-  2. Hardening del PIN gate: protegge anche /fatture/api/* e
-     /spese/api/*, non solo /api/*.
-
-Lo script è idempotente: puoi rilanciarlo, verifica se le patch sono
-già applicate e nel caso salta.
+Idempotente e ri-eseguibile:
+  1. Rimuove eventuali iniezioni precedenti (vecchia "hubnav" dopo <body>).
+  2. Inietta la subnav v2 dentro <div class="wrap"> (subito dopo l'apertura).
+  3. Aggiorna la funzione index() per iniettare la subnav dinamicamente
+     al render (usando `render_nav("ore")` di shared/nav).
+  4. Estende il PIN gate a /fatture/api/* e /spese/api/*.
 
 Uso:
-    python apply_patch.py            # applica in-place
-    python apply_patch.py --dry-run  # solo mostra cosa cambierebbe
-
-Poi committi xs_server.py modificato.
+    python apply_patch.py --dry-run
+    python apply_patch.py
 """
 import argparse
+import re
 import sys
 from pathlib import Path
 
 SRC = Path(__file__).parent / "xs_server.py"
 
-# Patch 1 — index() con iniezione navbar
-OLD_INDEX = '''@app.get("/")
+# ---------------------------------------------------------------------------
+# Patch 1 — index() con iniezione della subnav dentro <div class="wrap">
+# ---------------------------------------------------------------------------
+OLD_INDEX_PLAIN = '''@app.get("/")
 def index():
     return Response(PAGE, mimetype="text/html")'''
 
-NEW_INDEX = '''@app.get("/")
+OLD_INDEX_V1 = '''@app.get("/")
 def index():
     # Navbar B2F iniettata sopra il timesheet senza toccare PAGE
     from shared.nav import render_nav
     html = PAGE.replace("<body>", "<body>\\n" + render_nav("ore"), 1)
     return Response(html, mimetype="text/html")'''
 
-# Patch 2 — gate PIN esteso a tutte le API della hub
+NEW_INDEX = '''@app.get("/")
+def index():
+    # Subnav B2F iniettata dentro <div class="wrap"> senza toccare PAGE
+    from shared.nav import render_nav
+    html = PAGE.replace(
+        '<div class="wrap">',
+        '<div class="wrap">\\n' + render_nav("ore"),
+        1,
+    )
+    return Response(html, mimetype="text/html")'''
+
+
+# ---------------------------------------------------------------------------
+# Patch 2 — Gate PIN esteso a /fatture/api/* e /spese/api/*
+# ---------------------------------------------------------------------------
 OLD_GATE = '''    if request.path.startswith('/api/') and not session.get('ok'):
         return jsonify({'locked': True}), 401'''
 
@@ -47,27 +59,33 @@ NEW_GATE = '''    # Proteggi /api/*, /fatture/api/*, /spese/api/*
     if is_api and not session.get('ok'):
         return jsonify({'locked': True}), 401'''
 
+NEW_GATE_MARKER = "is_api = (p.startswith('/api/')"
+
 
 def apply(text: str) -> tuple[str, list[str]]:
-    """Applica le patch e restituisce (nuovo_testo, log_operazioni)."""
     log = []
     out = text
 
-    if NEW_INDEX.split("\n")[2].strip() in out:  # marker: la nostra import
-        log.append("[skip] patch 1 (navbar) gi\u00e0 applicata")
-    elif OLD_INDEX in out:
-        out = out.replace(OLD_INDEX, NEW_INDEX, 1)
-        log.append("[ok]   patch 1 (navbar) applicata")
+    # --- Patch 1: index() ---
+    if NEW_INDEX in out:
+        log.append("[skip] patch 1 (subnav dentro .wrap) gia' applicata")
+    elif OLD_INDEX_V1 in out:
+        out = out.replace(OLD_INDEX_V1, NEW_INDEX, 1)
+        log.append("[ok]   patch 1: migrata da v1 (subnav sposta in .wrap)")
+    elif OLD_INDEX_PLAIN in out:
+        out = out.replace(OLD_INDEX_PLAIN, NEW_INDEX, 1)
+        log.append("[ok]   patch 1: applicata da xs_server originale")
     else:
-        log.append("[warn] patch 1: index() non trovato nella forma attesa")
+        log.append("[warn] patch 1: index() non trovato in forma nota")
 
-    if "is_api = (p.startswith('/api/')" in out:
-        log.append("[skip] patch 2 (gate) gi\u00e0 applicata")
+    # --- Patch 2: gate ---
+    if NEW_GATE_MARKER in out:
+        log.append("[skip] patch 2 (gate esteso) gia' applicata")
     elif OLD_GATE in out:
         out = out.replace(OLD_GATE, NEW_GATE, 1)
-        log.append("[ok]   patch 2 (gate) applicata")
+        log.append("[ok]   patch 2: gate esteso a /fatture/api/* e /spese/api/*")
     else:
-        log.append("[warn] patch 2: gate non trovato nella forma attesa")
+        log.append("[warn] patch 2: gate non trovato in forma nota")
 
     return out, log
 
