@@ -85,7 +85,7 @@ def _render(content: str) -> Response:
 
 _EDITOR_HTML = r"""
 <style>
-.riga{display:grid;grid-template-columns:1fr 60px 90px 34px;gap:6px;
+.riga{display:grid;grid-template-columns:1fr 54px 46px 82px 34px;gap:6px;
   padding:10px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;
   background:var(--input-bg)}
 .riga input{width:100%;padding:8px 10px;border-radius:8px;
@@ -94,6 +94,7 @@ _EDITOR_HTML = r"""
 .riga .desc{grid-column:1/-1}
 .riga input:focus{outline:none;border-color:var(--gold)}
 .riga .qta,.riga .prezzo{text-align:right;font-variant-numeric:tabular-nums}
+.riga .um{text-align:center;text-transform:lowercase;font-size:12.5px;color:var(--muted)}
 .riga .btn-x{padding:0;background:transparent;border:none;color:var(--faint);
   font-size:18px;cursor:pointer;display:grid;place-items:center;border-radius:8px;
   transition:.15s;min-height:38px}
@@ -308,8 +309,8 @@ function loadCliente() {
 // Righe
 // ==============================================================
 let righe = [];
-function addRiga(desc="", qta=1, prezzo="") {
-  righe.push({desc, qta, prezzo});
+function addRiga(desc="", qta=1, prezzo="", um="") {
+  righe.push({desc, qta, prezzo, um});
   renderRighe(); recalc();
 }
 function renderRighe() {
@@ -322,6 +323,8 @@ function renderRighe() {
              oninput="upd(${i},'desc',this.value)">
       <input class="qta" type="number" step="0.01" min="0" placeholder="Q.tà"
              value="${r.qta}" oninput="upd(${i},'qta',this.value)">
+      <input class="um" placeholder="um" maxlength="6"
+             value="${esc(r.um || '')}" oninput="upd(${i},'um',this.value)">
       <input class="prezzo" type="number" step="0.01" min="0" placeholder="Prezzo"
              value="${r.prezzo}" oninput="upd(${i},'prezzo',this.value)">
       <button type="button" class="btn-x" onclick="delRiga(${i})">✕</button>
@@ -409,7 +412,8 @@ async function onSalva() {
     cliente_id: c.id,
     cliente_snapshot: clienteSnapshot(c),
     righe: righe.filter(r => (Number(r.qta) || 0) > 0 && (Number(r.prezzo) || 0) > 0)
-                .map(r => ({descrizione: r.desc, qta: Number(r.qta), prezzo: Number(r.prezzo),
+                .map(r => ({descrizione: r.desc, qta: Number(r.qta), um: r.um || null,
+                            prezzo: Number(r.prezzo),
                             tot: r2(Number(r.qta) * Number(r.prezzo))})),
     imponibile: t.imponibile,
     bollo: t.bolloAdd || (t.bolloDovuto ? 2.00 : 0),
@@ -440,92 +444,290 @@ async function onSalva() {
 }
 
 // ==============================================================
-// PDF (semplificato, essenziale — dallo stile del fatturatore.html)
+// PDF — Layout stile proforma Meme (monocromatico, professionale)
 // ==============================================================
+
+// Format numero con virgola decimale e separatore migliaia italiano
+function fmtNum(n) {
+  return Number(n || 0).toLocaleString('it-IT',
+    {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
 function onPDF() {
   const err = validate();
   if (err) { toast(err, 'err'); return; }
   const c = currentCliente();
   const t = calc();
   const dataIso = $('d_data').value || todayISO();
-  const anno = new Date(dataIso).getFullYear();
-  const num = ($('d_num').value || '').trim() || (CURRENT_PROG ? `${anno}/${String(CURRENT_PROG).padStart(3,'0')}` : `${anno}/---`);
+  const annoDoc = new Date(dataIso).getFullYear();
 
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({unit:'mm', format:'a4'});
-  const W = 210, M = 18; let y = M;
-
-  doc.setFont('helvetica','bold'); doc.setFontSize(16);
-  doc.text(`Fattura ${num}`, M, y); y += 6;
-  doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  doc.text(`Data: ${itDate(dataIso)}   Tipo: ${$('d_tipo').value}`, M, y); y += 10;
-
-  // Emittente
-  doc.setFont('helvetica','bold'); doc.text('Emittente', M, y); y += 5;
-  doc.setFont('helvetica','normal');
-  const emLines = [
-    (EMITTENTE.denominazione || `${EMITTENTE.nome} ${EMITTENTE.cognome}`.trim()),
-    EMITTENTE.piva ? `P.IVA ${EMITTENTE.piva}` : '',
-    EMITTENTE.cf ? `CF ${EMITTENTE.cf}` : '',
-    [EMITTENTE.indirizzo, [EMITTENTE.cap, EMITTENTE.comune].filter(Boolean).join(' '),
-     EMITTENTE.provincia ? `(${EMITTENTE.provincia})` : ''].filter(Boolean).join(' '),
-    EMITTENTE.email, EMITTENTE.pec,
-  ].filter(Boolean);
-  emLines.forEach(l => { doc.text(l, M, y); y += 5; });
-  y += 4;
-
-  // Cliente
-  doc.setFont('helvetica','bold'); doc.text('Cliente', M, y); y += 5;
-  doc.setFont('helvetica','normal');
-  const cLines = [
-    clienteLabel(c),
-    c.piva ? `P.IVA ${c.piva}` : '',
-    c.cf ? `CF ${c.cf}` : '',
-    [c.indirizzo, [c.cap, c.comune].filter(Boolean).join(' '),
-     c.provincia ? `(${c.provincia})` : ''].filter(Boolean).join(' '),
-    c.sdi ? `SDI: ${c.sdi}` : '',
-    c.pec ? `PEC: ${c.pec}` : '',
-  ].filter(Boolean);
-  cLines.forEach(l => { doc.text(l, M, y); y += 5; });
-  y += 6;
-
-  // Righe
-  doc.setFont('helvetica','bold');
-  doc.text('Descrizione', M, y);
-  doc.text('Qta',   W - M - 45, y, {align:'right'});
-  doc.text('Prezzo',W - M - 22, y, {align:'right'});
-  doc.text('Totale',W - M,      y, {align:'right'});
-  y += 2; doc.line(M, y, W - M, y); y += 4;
-  doc.setFont('helvetica','normal');
-  righe.forEach(r => {
-    if ((Number(r.qta) || 0) === 0 || (Number(r.prezzo) || 0) === 0) return;
-    const tot = r2(Number(r.qta) * Number(r.prezzo));
-    doc.text((r.desc || '').slice(0, 80), M, y);
-    doc.text(String(r.qta), W - M - 45, y, {align:'right'});
-    doc.text(eur(r.prezzo).replace(' €',''), W - M - 22, y, {align:'right'});
-    doc.text(eur(tot).replace(' €',''), W - M, y, {align:'right'});
-    y += 6;
-    if (y > 260) { doc.addPage(); y = M; }
-  });
-
-  // Totali
-  y += 4; doc.line(M, y, W - M, y); y += 6;
-  doc.text(`Imponibile: ${eur(t.imponibile)}`, W - M, y, {align:'right'}); y += 5;
-  if (t.cassa > 0) { doc.text(`Cassa 4%: ${eur(t.cassa)}`, W - M, y, {align:'right'}); y += 5; }
-  if (t.bolloAdd > 0) { doc.text(`Bollo: ${eur(t.bolloAdd)}`, W - M, y, {align:'right'}); y += 5; }
-  doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text(`Totale: ${eur(t.totale)}`, W - M, y, {align:'right'}); y += 8;
-
-  // Dichiarazioni forfettarie
-  doc.setFont('helvetica','normal'); doc.setFontSize(8);
-  doc.text('Operazione senza applicazione dell\'IVA ex art. 1, c. 54-89, L. 190/2014 - regime forfettario.', M, y); y += 4;
-  doc.text('Compenso non soggetto a ritenuta d\'acconto ex art. 1, c. 67, L. 190/2014.', M, y);
-  if (t.bolloDovuto) {
-    y += 4;
-    doc.text('Imposta di bollo assolta in modo virtuale ai sensi del D.M. 17/06/2014.', M, y);
+  // Numero display: solo progressivo (anno implicito dalla data)
+  let numDisplay;
+  const userNum = ($('d_num').value || '').trim();
+  if (userNum) {
+    // se contiene YYYY/NNN o NNN/YYYY, estrai la parte non-anno
+    const m = userNum.match(/^(\d+)\s*[\/\-\.]\s*(\d+)$/);
+    numDisplay = m ? String(parseInt(m[0].length === 4 ? m[2] : m[1], 10) || m[0]) : userNum;
+  } else {
+    numDisplay = CURRENT_PROG ? String(CURRENT_PROG) : '---';
   }
 
-  doc.save(`Fattura_${num.replace('/','-')}.pdf`);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({unit: 'mm', format: 'a4'});
+  const W = 210, H = 297, M = 18;
+
+  // Iniziali per il box EB
+  const nomeCompleto = EMITTENTE.denominazione ||
+    `${EMITTENTE.nome || ''} ${EMITTENTE.cognome || ''}`.trim() || 'B2F';
+  const initials = nomeCompleto.split(/\s+/).filter(Boolean).slice(0, 2)
+    .map(p => p[0]).join('').toUpperCase() || 'EB';
+
+  // Palette
+  const INK = [20, 23, 28];       // #14171C
+  const MUTED = [115, 120, 130];
+  const LINE = [220, 218, 210];
+  const FAINT = [175, 178, 187];
+
+  // ============ HEADER ============
+  const headerY = M;
+
+  // Box iniziali a sinistra
+  doc.setFillColor(INK[0], INK[1], INK[2]);
+  doc.rect(M, headerY, 22, 22, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text(initials, M + 11, headerY + 14, {align: 'center'});
+
+  // Info emittente a destra
+  doc.setTextColor(INK[0], INK[1], INK[2]);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(nomeCompleto, W - M, headerY + 5, {align: 'right'});
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+  let hy = headerY + 10;
+
+  const ids = [];
+  if (EMITTENTE.piva) ids.push('P.IVA ' + EMITTENTE.piva);
+  if (EMITTENTE.cf) ids.push('C.F. ' + EMITTENTE.cf);
+  if (ids.length) { doc.text(ids.join(' · '), W - M, hy, {align: 'right'}); hy += 4; }
+
+  const addrBits = [];
+  if (EMITTENTE.indirizzo) addrBits.push(EMITTENTE.indirizzo);
+  const cityStr = [EMITTENTE.cap, EMITTENTE.comune].filter(Boolean).join(' ');
+  const cityFull = cityStr + (EMITTENTE.provincia ? ' (' + EMITTENTE.provincia + ')' : '');
+  if (cityFull.trim()) addrBits.push(cityFull.trim());
+  if (addrBits.length) { doc.text(addrBits.join(' — '), W - M, hy, {align: 'right'}); hy += 4; }
+
+  const contact = [];
+  if (EMITTENTE.email) contact.push(EMITTENTE.email);
+  if (EMITTENTE.pec) contact.push('PEC ' + EMITTENTE.pec);
+  if (contact.length) { doc.text(contact.join(' · '), W - M, hy, {align: 'right'}); hy += 4; }
+
+  // ============ TITOLO DOCUMENTO ============
+  let y = Math.max(hy, headerY + 22) + 12;
+  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text('FATTURA', W - M, y, {align: 'right'});
+  y += 5;
+  doc.setTextColor(INK[0], INK[1], INK[2]);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(`n. ${numDisplay} · ${itDate(dataIso)}`, W - M, y, {align: 'right'});
+
+  // ============ DESTINATARIO ============
+  y += 14;
+  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text('DESTINATARIO', M, y);
+  y += 5;
+
+  doc.setTextColor(INK[0], INK[1], INK[2]);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(clienteLabel(c), M, y);
+  y += 5;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+  const cIds = [];
+  if (c.piva) cIds.push('P.IVA ' + c.piva);
+  if (c.cf) cIds.push('C.F. ' + c.cf);
+  if (cIds.length) { doc.text(cIds.join(' · '), M, y); y += 4; }
+
+  const cAddrBits = [];
+  if (c.indirizzo) cAddrBits.push(c.indirizzo);
+  const cCity = ([c.cap, c.comune].filter(Boolean).join(' ') +
+    (c.provincia ? ' (' + c.provincia + ')' : '')).trim();
+  if (cCity) cAddrBits.push(cCity);
+  if (cAddrBits.length) { doc.text(cAddrBits.join(' — '), M, y); y += 4; }
+
+  // ============ TABELLA RIGHE ============
+  y += 8;
+  const colDesc   = M;
+  const colQta    = 128;
+  const colPrezzo = 158;
+  const colImp    = W - M;
+  const descMax   = colQta - colDesc - 6;
+
+  doc.setDrawColor(LINE[0], LINE[1], LINE[2]);
+  doc.setLineWidth(0.4);
+  doc.line(M, y, W - M, y);
+  y += 5;
+
+  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.text('DESCRIZIONE',  colDesc, y);
+  doc.text('Q.TÀ',          colQta, y, {align: 'right'});
+  doc.text('PREZZO €',      colPrezzo, y, {align: 'right'});
+  doc.text('IMPORTO €',     colImp, y, {align: 'right'});
+  y += 3;
+  doc.line(M, y, W - M, y);
+  y += 6;
+
+  doc.setTextColor(INK[0], INK[1], INK[2]);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+
+  righe.forEach(r => {
+    const q = Number(r.qta) || 0;
+    const p = Number(r.prezzo) || 0;
+    if (q === 0 || p === 0) return;
+    const tot = r2(q * p);
+    const descLines = doc.splitTextToSize(r.desc || '', descMax);
+    doc.text(descLines, colDesc, y);
+    const qtaText = String(r.qta) + (r.um ? ' ' + r.um : '');
+    doc.text(qtaText, colQta, y, {align: 'right'});
+    doc.text(fmtNum(p), colPrezzo, y, {align: 'right'});
+    doc.text(fmtNum(tot), colImp, y, {align: 'right'});
+    y += Math.max(6, descLines.length * 4.6);
+    if (y > 245) { doc.addPage(); y = M; }
+  });
+
+  y += 3;
+  doc.setDrawColor(LINE[0], LINE[1], LINE[2]);
+  doc.line(M, y, W - M, y);
+  y += 10;
+
+  // ============ TOTALI ============
+  const totLabelX = W - M - 55;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+  doc.text('Imponibile', totLabelX, y, {align: 'right'});
+  doc.setTextColor(INK[0], INK[1], INK[2]);
+  doc.text(fmtNum(t.imponibile) + ' €', W - M, y, {align: 'right'});
+  y += 6;
+
+  if (t.cassa > 0) {
+    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+    doc.text('Cassa 4%', totLabelX, y, {align: 'right'});
+    doc.setTextColor(INK[0], INK[1], INK[2]);
+    doc.text(fmtNum(t.cassa) + ' €', W - M, y, {align: 'right'});
+    y += 6;
+  }
+  if (t.bolloAdd > 0) {
+    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+    doc.text('Bollo', totLabelX, y, {align: 'right'});
+    doc.setTextColor(INK[0], INK[1], INK[2]);
+    doc.text(fmtNum(t.bolloAdd) + ' €', W - M, y, {align: 'right'});
+    y += 6;
+  }
+
+  // Riga separazione totale
+  y += 2;
+  doc.setDrawColor(INK[0], INK[1], INK[2]);
+  doc.setLineWidth(0.5);
+  doc.line(W - M - 70, y, W - M, y);
+  y += 7;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.setTextColor(INK[0], INK[1], INK[2]);
+  doc.text('TOTALE A PAGARE', totLabelX, y, {align: 'right'});
+  doc.text(fmtNum(t.totale) + ' €', W - M, y, {align: 'right'});
+
+  // ============ PAGAMENTO ============
+  y += 14;
+  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text('PAGAMENTO', M, y);
+  y += 5;
+
+  doc.setTextColor(INK[0], INK[1], INK[2]);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  const modo = ($('p_mod').value || '').trim() || 'Bonifico bancario';
+  doc.text(modo, M, y);
+  y += 5;
+
+  if (EMITTENTE.iban) {
+    doc.setFontSize(9);
+    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+    doc.text('IBAN ' + EMITTENTE.iban, M, y);
+    y += 5;
+  }
+  const scad = $('p_scad').value;
+  if (scad) {
+    doc.setFontSize(9);
+    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+    doc.text('Scadenza: ' + itDate(scad), M, y);
+    y += 5;
+  }
+  const cond = ($('p_cond').value || '').trim();
+  if (cond) {
+    doc.setFontSize(9);
+    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
+    doc.text(cond, M, y);
+    y += 5;
+  }
+
+  // ============ NOTE FISCALI ============
+  y += 8;
+  doc.setDrawColor(LINE[0], LINE[1], LINE[2]);
+  doc.setLineWidth(0.3);
+  doc.line(M, y - 3, W - M, y - 3);
+
+  doc.setTextColor(INK[0], INK[1], INK[2]);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+
+  const notes = [
+    "Operazione senza applicazione dell'IVA ex art. 1, c. 54-89, L. 190/2014 - regime forfettario.",
+    "Compenso non soggetto a ritenuta d'acconto ex art. 1, c. 67, L. 190/2014.",
+  ];
+  if (t.bolloDovuto) {
+    const bolloLine = t.bolloAdd > 0
+      ? "Imposta di bollo di € 2,00 assolta virtualmente ai sensi del D.M. 17/06/2014 (addebitata al cliente)."
+      : "Imposta di bollo di € 2,00 assolta virtualmente ai sensi del D.M. 17/06/2014.";
+    notes.push(bolloLine);
+  }
+  notes.forEach(n => {
+    const wrapped = doc.splitTextToSize(n, W - 2 * M);
+    doc.text(wrapped, M, y);
+    y += wrapped.length * 4;
+  });
+
+  // ============ FOOTER ============
+  const footerY = H - 12;
+  doc.setFontSize(7.5);
+  doc.setTextColor(FAINT[0], FAINT[1], FAINT[2]);
+  const footerBits = [nomeCompleto];
+  if (EMITTENTE.piva) footerBits.push('P.IVA ' + EMITTENTE.piva);
+  if (EMITTENTE.email) footerBits.push(EMITTENTE.email);
+  doc.text(footerBits.join(' · '), W / 2, footerY, {align: 'center'});
+
+  // ============ SALVA ============
+  const fname = `Fattura_${numDisplay}_${annoDoc}.pdf`.replace(/[\/\s]+/g, '-');
+  doc.save(fname);
   toast('PDF generato', 'ok');
 }
 
