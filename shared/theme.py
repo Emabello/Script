@@ -308,6 +308,149 @@ def _head(title: str, prefetch: list[str] | None = None) -> str:
             .replace("__PREFETCH__", pf))
 
 
+# ---------------------------------------------------------------------
+# PIN gate (modal riusabile)
+# ---------------------------------------------------------------------
+# Snippet HTML+CSS+JS iniettato prima di </body> in tutte le pagine
+# della hub (launchpad + sub-app). All'avvio chiama /api/status; se
+# needs_pin && !unlocked, mostra il modal. Intercetta anche le fetch
+# API che rispondono 401 (sessione scaduta) e riapre il modal.
+# Il timesheet ha la sua UI di unlock propria: NON iniettiamo qui
+# dentro il PAGE, ma solo nelle pagine che passano per render_page /
+# render_launchpad.
+_PIN_GATE = r"""
+<style>
+.pin-ov{position:fixed;inset:0;z-index:9999;background:rgba(11,12,16,.86);
+  backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;
+  padding:20px}
+.pin-ov.show{display:flex}
+html[data-theme="light"] .pin-ov{background:rgba(238,240,245,.9)}
+.pin-card{width:100%;max-width:360px;background:var(--card-grad);
+  border:1px solid var(--line-strong);border-radius:20px;padding:26px 22px;
+  box-shadow:var(--shadow);text-align:center}
+.pin-card .lock{width:52px;height:52px;border-radius:16px;background:rgba(124,108,255,.15);
+  color:var(--gold);display:grid;place-items:center;margin:0 auto 14px}
+html[data-theme="light"] .pin-card .lock{background:rgba(91,73,209,.13)}
+.pin-card .lock svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
+.pin-card h3{font-family:var(--display);font-weight:500;font-size:20px;
+  margin:0 0 4px;letter-spacing:-.01em}
+.pin-card p{color:var(--muted);font-size:13.5px;margin:0 0 18px}
+.pin-input{width:100%;padding:14px 16px;border-radius:14px;
+  background:var(--input-bg);border:1px solid var(--line-strong);
+  color:var(--ink);font-family:'Space Grotesk',sans-serif;font-size:20px;
+  letter-spacing:.4em;text-align:center;font-variant-numeric:tabular-nums;
+  min-height:52px}
+.pin-input:focus{outline:none;border-color:var(--gold)}
+.pin-err{color:var(--danger);font-size:12.5px;margin-top:8px;min-height:16px}
+.pin-actions{margin-top:14px}
+.pin-actions .btn{width:100%}
+</style>
+
+<div class="pin-ov" id="pinOverlay" role="dialog" aria-modal="true" aria-label="Sblocco PIN">
+  <div class="pin-card">
+    <div class="lock">
+      <svg viewBox="0 0 24 24">
+        <rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/>
+        <path d="M7.5 10.5V7a4.5 4.5 0 0 1 9 0v3.5"/>
+      </svg>
+    </div>
+    <h3>Accesso protetto</h3>
+    <p>Inserisci il PIN per continuare</p>
+    <input class="pin-input" id="pinInput" type="password"
+           inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+           enterkeyhint="done" maxlength="12" placeholder="••••">
+    <div class="pin-err" id="pinErr">&nbsp;</div>
+    <div class="pin-actions">
+      <button class="btn" id="pinSubmit" type="button">Sblocca</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const overlay = document.getElementById('pinOverlay');
+  const input   = document.getElementById('pinInput');
+  const errBox  = document.getElementById('pinErr');
+  const button  = document.getElementById('pinSubmit');
+
+  function show() {
+    overlay.classList.add('show');
+    setTimeout(() => input.focus(), 50);
+  }
+  function hide() {
+    overlay.classList.remove('show');
+    input.value = ''; errBox.textContent = '\u00a0';
+  }
+  function setErr(m) { errBox.textContent = m || '\u00a0'; }
+
+  async function submitPin() {
+    const pin = input.value.trim();
+    if (!pin) { setErr('Inserisci il PIN'); return; }
+    button.disabled = true; setErr('\u00a0');
+    try {
+      const r = await fetch('/api/unlock', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({pin}),
+      });
+      if (r.ok) {
+        hide();
+        // Riprova le fetch pending o ricarica per popolare KPI/lista
+        if (window.__pinPending) {
+          window.__pinPending();
+          window.__pinPending = null;
+        } else {
+          location.reload();
+        }
+      } else {
+        setErr('PIN errato');
+        input.select();
+      }
+    } catch (e) {
+      setErr('Errore di rete');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  button.addEventListener('click', submitPin);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); submitPin(); }
+  });
+
+  // Intercetta globalmente 401 sulle fetch API → mostra modal
+  const _fetch = window.fetch;
+  window.fetch = async function(...args) {
+    const res = await _fetch.apply(this, args);
+    const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url) || '';
+    // Solo API interne, non chiamate esterne (fonts, jsPDF cdn, ecc.)
+    if (res.status === 401 && (url.startsWith('/api/') || url.startsWith('/fatture/api/') || url.startsWith('/spese/api/'))) {
+      show();
+    }
+    return res;
+  };
+
+  // Check iniziale: se serve PIN e non sono loggato → mostra subito
+  fetch('/api/status', {credentials: 'same-origin'})
+    .then(r => r.ok ? r.json() : null)
+    .then(s => {
+      if (s && s.needs_pin && !s.unlocked) show();
+    })
+    .catch(() => {});
+})();
+</script>
+"""
+
+
+def _inject_pin_gate(html: str) -> str:
+    """Inserisce lo snippet PIN gate subito prima di </body>."""
+    if "</body>" in html:
+        return html.replace("</body>", _PIN_GATE + "\n</body>", 1)
+    return html + _PIN_GATE
+
+
 def inject_app_header(page_html: str, eyebrow: str, title_html: str) -> str:
     """
     Inietta nel PAGE del timesheet l'header B2F (logo cliccabile back
@@ -383,7 +526,7 @@ def render_page(section: str, eyebrow: str, title_html: str, content: str,
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>{lbl}
         </a>'''
 
-    return f"""{head}
+    html = f"""{head}
 <body>
   <div class="wrap">
     <div class="apphead">
@@ -402,6 +545,7 @@ def render_page(section: str, eyebrow: str, title_html: str, content: str,
   {fab_html}
 </body>
 </html>"""
+    return _inject_pin_gate(html)
 
 
 # ---------------------------------------------------------------------
@@ -431,7 +575,7 @@ def render_launchpad(greet_name: str | None = None) -> str:
     hi = f'Ciao <em>{who}</em>' if who else 'Ciao <em>tu</em>'
     head = _head("B2F — Home", prefetch=["/ore", "/fatture", "/spese"])
 
-    return f"""{head}
+    html = f"""{head}
 <body>
   <div class="wrap">
     <div class="apphead">
@@ -523,3 +667,4 @@ def render_launchpad(greet_name: str | None = None) -> str:
 </script>
 </body>
 </html>"""
+    return _inject_pin_gate(html)
