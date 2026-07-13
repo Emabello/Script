@@ -2,4 +2,6 @@ from flask import Blueprint
 
 fatture_bp = Blueprint("fatture", __name__)
 
-from . import views  # noqa: E402,F401  registra le rotte
+# views.py importa clienti/storico/editor (che registrano le loro rotte
+# sul blueprint quando importati) e definisce la rotta principale /.
+from . import views  # noqa: E402,F401

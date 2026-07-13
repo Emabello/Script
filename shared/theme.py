@@ -159,6 +159,105 @@ html[data-theme="light"] .tile .ic{background:rgba(91,73,209,.1)}
   padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.06)}
 html[data-theme="light"] .notice code{background:rgba(0,0,0,.05)}
 
+/* ---------- Form ---------- */
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.field label{font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--muted);font-weight:500}
+.field .hint{font-size:11.5px;color:var(--faint);margin-top:2px}
+.field input,.field select,.field textarea{
+  font-family:inherit;font-size:14.5px;color:var(--ink);
+  background:var(--input-bg);border:1px solid var(--line-strong);border-radius:12px;
+  padding:11px 13px;transition:border-color .15s,background .15s;width:100%;min-height:44px}
+.field input:focus,.field select:focus,.field textarea:focus{
+  outline:none;border-color:var(--gold)}
+.field textarea{min-height:80px;resize:vertical;font-family:inherit}
+.field.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.field.row2>.field{margin-bottom:0}
+.field-group{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.field-group.c3{grid-template-columns:2fr 1fr 1fr}
+@media (max-width:420px){.field-group,.field-group.c3{grid-template-columns:1fr}}
+
+/* Actions bar */
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.actions .btn{flex:1;min-width:100px}
+
+/* Chip / badge */
+.chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;
+  font-size:11.5px;font-weight:500;letter-spacing:.03em;
+  background:rgba(124,108,255,.12);color:var(--gold)}
+html[data-theme="light"] .chip{background:rgba(91,73,209,.1)}
+.chip.g{background:rgba(45,212,191,.12);color:var(--emerald)}
+.chip.r{background:rgba(255,107,129,.12);color:var(--danger)}
+.chip.a{background:rgba(245,181,104,.14);color:var(--amber)}
+.chip.n{background:rgba(139,143,163,.14);color:var(--muted)}
+
+/* Lista di elementi cliccabili (clienti, fatture) */
+.list{display:flex;flex-direction:column;gap:8px}
+.list .item{display:flex;gap:12px;padding:14px;background:var(--card-grad);
+  border:1px solid var(--line);border-radius:var(--r-sm);text-decoration:none;
+  color:var(--ink);transition:.15s;box-shadow:var(--shadow-tile);min-height:60px;
+  align-items:center}
+.list .item:active{transform:scale(.985)}
+@media (hover:hover){.list .item:hover{border-color:var(--gold);background:var(--tile-hover)}}
+.list .item .info{flex:1;min-width:0}
+.list .item .info .n{font-size:15px;font-weight:500;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0 0 2px}
+.list .item .info .m{font-size:12.5px;color:var(--muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list .item .m .tnum{font-variant-numeric:tabular-nums}
+.list .item .end{flex-shrink:0;text-align:right}
+
+/* Breadcrumb / sub-header */
+.crumb{display:flex;gap:6px;align-items:center;font-size:12.5px;
+  color:var(--muted);margin:-6px 0 14px;flex-wrap:wrap}
+.crumb a{color:var(--gold);text-decoration:none}
+.crumb a:hover{text-decoration:underline}
+.crumb .sep{color:var(--faint)}
+
+/* Empty state */
+.empty{text-align:center;padding:38px 20px;color:var(--muted)}
+.empty svg{width:44px;height:44px;stroke:currentColor;fill:none;stroke-width:1.4;
+  opacity:.45;margin-bottom:8px}
+.empty .t{font-family:var(--display);font-size:16px;color:var(--ink-dim);margin-bottom:6px}
+.empty .s{font-size:13.5px;line-height:1.4}
+
+/* FAB (floating action button) */
+.fab{position:fixed;right:20px;bottom:24px;z-index:100;
+  display:inline-flex;align-items:center;gap:8px;padding:14px 20px;
+  background:var(--gold);color:var(--on-gold);border-radius:999px;text-decoration:none;
+  font-weight:600;font-size:14px;
+  box-shadow:0 16px 34px -14px rgba(124,108,255,.7),0 4px 12px -4px rgba(0,0,0,.3)}
+.fab:active{transform:scale(.96)}
+.fab svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2.2;
+  stroke-linecap:round;stroke-linejoin:round}
+
+/* Toast / feedback ephemera */
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+  padding:11px 18px;background:var(--panel);color:var(--ink);border:1px solid var(--line-strong);
+  border-radius:999px;font-size:13.5px;box-shadow:var(--shadow);z-index:200;
+  opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
+.toast.ok{border-color:var(--emerald)}
+.toast.err{border-color:var(--danger);color:var(--danger)}
+
+/* CTA sulla dashboard fatture */
+.cta-list{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.cta-list a{display:flex;align-items:center;gap:12px;padding:14px 16px;
+  background:var(--card-grad);border:1px solid var(--line);border-radius:var(--r-sm);
+  text-decoration:none;color:var(--ink);transition:.15s;min-height:56px;
+  box-shadow:var(--shadow-tile)}
+.cta-list a:active{transform:scale(.985)}
+@media (hover:hover){.cta-list a:hover{border-color:var(--gold)}}
+.cta-list a .ico{width:36px;height:36px;border-radius:10px;background:rgba(124,108,255,.12);
+  color:var(--gold);display:grid;place-items:center;flex-shrink:0}
+html[data-theme="light"] .cta-list a .ico{background:rgba(91,73,209,.1)}
+.cta-list a .ico svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
+.cta-list a .lbl{flex:1;font-weight:500;font-size:14.5px}
+.cta-list a .cnt{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums}
+.cta-list a .arw{color:var(--faint)}
+.cta-list a .arw svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2}
+
 /* Skeleton per KPI in caricamento */
 .skel{display:inline-block;height:.75em;width:6em;border-radius:4px;vertical-align:-1px;
   background:linear-gradient(90deg,rgba(255,255,255,.06),rgba(255,255,255,.14),rgba(255,255,255,.06));
@@ -247,13 +346,43 @@ html[data-theme="light"] .b2f-back .glyph{background:rgba(91,73,209,.14)}
     )
 
 
-def render_page(section: str, eyebrow: str, title_html: str, content: str) -> str:
+def render_page(section: str, eyebrow: str, title_html: str, content: str,
+                breadcrumb: list[tuple[str, str]] | None = None,
+                fab: tuple[str, str] | None = None) -> str:
     """
     Pagina di sotto-app (Ore, Fatture, Spese).
     Header: logo B2F cliccabile (back to /) + titolo + toggle tema.
+
+    Args:
+      section    : chiave sezione (per titolo pagina)
+      eyebrow    : maiuscoletto sopra il titolo
+      title_html : H1 con <em>...</em> per l'accento
+      content    : HTML del corpo
+      breadcrumb : lista [(label, href), ...] mostrata sopra il titolo
+      fab        : ("Nuova cosa", "/path/nuovo") aggiunge un FAB in basso a destra
     """
     title = f"{eyebrow} — B2F"
     head = _head(title)
+
+    crumb_html = ""
+    if breadcrumb:
+        parts = []
+        for i, (label, href) in enumerate(breadcrumb):
+            if href:
+                parts.append(f'<a href="{href}">{label}</a>')
+            else:
+                parts.append(f'<span>{label}</span>')
+            if i < len(breadcrumb) - 1:
+                parts.append('<span class="sep">›</span>')
+        crumb_html = f'<div class="crumb">{"".join(parts)}</div>'
+
+    fab_html = ""
+    if fab:
+        lbl, href = fab
+        fab_html = f'''<a class="fab" href="{href}">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>{lbl}
+        </a>'''
+
     return f"""{head}
 <body>
   <div class="wrap">
@@ -267,8 +396,10 @@ def render_page(section: str, eyebrow: str, title_html: str, content: str) -> st
       </div>
       {_THEME_TOGGLE}
     </div>
+    {crumb_html}
     {content}
   </div>
+  {fab_html}
 </body>
 </html>"""
 
