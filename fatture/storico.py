@@ -219,9 +219,30 @@ def fattura_dettaglio(fid):
         "scadenza":       f.get("scadenza"),
     }, ensure_ascii=False)
 
+    # Chip per lo stato "registrata su spese"
+    spesa_id_val = f.get("spesa_id")
+    registrata_chip = ""
+    if spesa_id_val:
+        registrata_chip = (
+            f'<span class="chip g" style="margin-left:6px">'
+            f'Registrata su spese</span>'
+        )
+
+    # Bottone registra: nascosto se già registrata
+    btn_registra_display = "none" if spesa_id_val else ""
+
+    # Data incasso corrente (default per il form registra)
+    data_incasso_default = (f.get("data_incasso") or f.get("data")
+                            or date.today().isoformat())
+
+    # Descrizione precompilata per la riga spese
+    desc_precompilata = f"Fattura {f.get('numero','')} — {_cliente_label(f)}"
+
+    stato_corrente = f.get("stato") or "emessa"
+
     body = f'''
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
         <div>
           <div class="eyebrow" style="margin-bottom:4px">Fattura</div>
           <h2 class="serif" style="margin:0;font-size:24px">{f.get("numero","—")}</h2>
@@ -229,7 +250,10 @@ def fattura_dettaglio(fid):
             {_fmt_date(f.get("data"))}
           </div>
         </div>
-        {_stato_chip(f.get("stato"))}
+        <div style="text-align:right">
+          {_stato_chip(stato_corrente)}
+          {registrata_chip}
+        </div>
       </div>
     </div>
 
@@ -267,28 +291,167 @@ def fattura_dettaglio(fid):
       </div>
     </div>
 
-    <div class="actions" style="margin-top:14px">
+    <div class="actions" style="margin-top:14px;flex-direction:column">
       <button type="button" class="btn" onclick="onRistampa()">
         <svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round">
           <path d="M12 3v12M8 11l4 4 4-4M5 21h14"/></svg>
         Scarica PDF
       </button>
+      <button type="button" class="btn ghost" onclick="openStatoModal()">
+        Cambia stato
+      </button>
+      <button type="button" class="btn ghost" id="btnRegistra"
+              style="display:{btn_registra_display}" onclick="openEntrataModal()">
+        Registra come entrata su spese
+      </button>
     </div>
 
+    <!-- ===== Modal cambio stato ===== -->
+    <div class="modal-ov" id="modalStato" style="display:none">
+      <div class="modal-card">
+        <h3 class="serif" style="margin:0 0 4px">Cambia stato</h3>
+        <p style="color:var(--muted);font-size:13px;margin:0 0 16px">
+          Stato attuale: <strong>{stato_corrente}</strong>
+        </p>
+        <div class="field">
+          <label>Nuovo stato</label>
+          <select id="statoSel" onchange="onStatoChange()">
+            <option value="bozza"      {" selected" if stato_corrente=="bozza" else ""}>Bozza</option>
+            <option value="emessa"     {" selected" if stato_corrente=="emessa" else ""}>Emessa</option>
+            <option value="incassata"  {" selected" if stato_corrente=="incassata" else ""}>Incassata</option>
+            <option value="annullata"  {" selected" if stato_corrente=="annullata" else ""}>Annullata</option>
+          </select>
+        </div>
+        <div class="field" id="fldDataIncasso"
+             style="display:{'block' if stato_corrente=='incassata' else 'none'}">
+          <label>Data incasso</label>
+          <input type="date" id="dataIncasso" value="{data_incasso_default}">
+        </div>
+        <div class="actions" style="margin-top:8px">
+          <button type="button" class="btn ghost" onclick="closeModal('modalStato')">Annulla</button>
+          <button type="button" class="btn" onclick="onSalvaStato()">Salva</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Modal registra entrata ===== -->
+    <div class="modal-ov" id="modalEntrata" style="display:none">
+      <div class="modal-card">
+        <h3 class="serif" style="margin:0 0 4px">Registra come entrata</h3>
+        <p style="color:var(--muted);font-size:13px;margin:0 0 16px">
+          Crea una riga <code>tipo=entrata</code> nella tabella spese e collega
+          la fattura. Aggiorna anche lo stato a "incassata".
+        </p>
+        <div class="field">
+          <label>Data</label>
+          <input type="date" id="e_data" value="{data_incasso_default}">
+        </div>
+        <div class="field">
+          <label>Descrizione</label>
+          <input id="e_desc" value="{desc_precompilata}">
+        </div>
+        <div class="field">
+          <label>Importo (€)</label>
+          <input type="number" step="0.01" id="e_imp" value="{f.get('totale') or 0}">
+        </div>
+        <div class="field-group">
+          <div class="field"><label>Categoria (opz.)</label>
+            <input id="e_cat" placeholder="es. FATTURATO"></div>
+          <div class="field"><label>Sottocategoria (opz.)</label>
+            <input id="e_scat"></div>
+        </div>
+        <div class="actions" style="margin-top:8px">
+          <button type="button" class="btn ghost" onclick="closeModal('modalEntrata')">Annulla</button>
+          <button type="button" class="btn" onclick="onSalvaEntrata()">Registra</button>
+        </div>
+      </div>
+    </div>
+
+    <style>
+      .modal-ov{{position:fixed;inset:0;z-index:500;background:rgba(11,12,16,.75);
+        backdrop-filter:blur(6px);display:flex;align-items:flex-end;justify-content:center;
+        padding:0}}
+      html[data-theme="light"] .modal-ov{{background:rgba(238,240,245,.86)}}
+      .modal-card{{width:100%;max-width:560px;background:var(--card-grad);
+        border:1px solid var(--line-strong);border-radius:20px 20px 0 0;
+        padding:22px 22px calc(22px + env(safe-area-inset-bottom,0px));
+        box-shadow:var(--shadow);max-height:88vh;overflow-y:auto}}
+      @media (min-width:640px){{
+        .modal-ov{{align-items:center;padding:20px}}
+        .modal-card{{border-radius:20px}}
+      }}
+    </style>
+
     {pdf_js}
+    <div id="toast" class="toast"></div>
     <script>
+      const FATTURA_ID = {fid};
       const FATTURA_PAYLOAD = {payload_js};
+
       function onRistampa() {{
         if (!window.b2fRenderInvoicePDF) {{
           alert('Rendering PDF non pronto'); return;
         }}
         window.b2fRenderInvoicePDF(FATTURA_PAYLOAD);
       }}
-    </script>
 
-    <div class="notice" style="margin-top:14px">
-      Altre azioni (cambia stato, registra incasso su spese) arriveranno nel Blocco B.
-    </div>
+      function toast(msg, cls) {{
+        const t = document.getElementById('toast');
+        t.textContent = msg; t.className = 'toast show ' + (cls || '');
+        setTimeout(()=>{{t.className='toast '+(cls||'')}}, cls==='err' ? 4500 : 2500);
+      }}
+      function openModal(id) {{ document.getElementById(id).style.display = 'flex'; }}
+      function closeModal(id) {{ document.getElementById(id).style.display = 'none'; }}
+
+      // --- cambio stato ---
+      function openStatoModal() {{ openModal('modalStato'); }}
+      function onStatoChange() {{
+        const v = document.getElementById('statoSel').value;
+        document.getElementById('fldDataIncasso').style.display = (v==='incassata' ? 'block' : 'none');
+      }}
+      async function onSalvaStato() {{
+        const nuovo = document.getElementById('statoSel').value;
+        const body = {{stato: nuovo}};
+        if (nuovo === 'incassata') {{
+          body.data_incasso = document.getElementById('dataIncasso').value;
+        }}
+        try {{
+          const r = await fetch(`/fatture/api/fatture/${{FATTURA_ID}}/stato`, {{
+            method: 'PATCH', headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify(body),
+          }});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
+          toast('Stato aggiornato', 'ok');
+          setTimeout(()=>location.reload(), 500);
+        }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
+      }}
+
+      // --- registra come entrata ---
+      function openEntrataModal() {{ openModal('modalEntrata'); }}
+      async function onSalvaEntrata() {{
+        const body = {{
+          data:         document.getElementById('e_data').value,
+          descrizione:  document.getElementById('e_desc').value,
+          importo:      Number(document.getElementById('e_imp').value || 0),
+          categoria:    document.getElementById('e_cat').value.trim() || null,
+          sottocategoria: document.getElementById('e_scat').value.trim() || null,
+        }};
+        try {{
+          const r = await fetch(`/fatture/api/fatture/${{FATTURA_ID}}/registra-entrata`, {{
+            method: 'POST', headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify(body),
+          }});
+          const j = await r.json();
+          if (!r.ok) {{
+            toast(j.error || 'Errore registrazione', 'err');
+            return;
+          }}
+          toast('Registrata su spese (id ' + j.spesa_id + ')', 'ok');
+          setTimeout(()=>location.reload(), 600);
+        }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
+      }}
+    </script>
     '''
 
     return _render(body,
@@ -351,6 +514,80 @@ def api_next_progressivo():
                             "numero": f"{anno}/{val:03d}"})
         except Exception as e2:
             return jsonify({"error": f"{str(e)[:100]} | fallback: {str(e2)[:100]}"}), 500
+
+
+@fatture_bp.patch("/api/fatture/<int:fid>/stato")
+def api_fattura_stato(fid):
+    """Cambia stato fattura. Se stato=incassata richiede/genera data_incasso."""
+    sb, err = _supabase_or_error()
+    if err: return jsonify({"error": "supabase not configured"}), 503
+    data = request.get_json(silent=True) or {}
+    stato = data.get("stato")
+    if stato not in ("bozza", "emessa", "incassata", "annullata"):
+        return jsonify({"error": "stato non valido"}), 400
+    payload = {"stato": stato}
+    if stato == "incassata":
+        payload["data_incasso"] = data.get("data_incasso") or date.today().isoformat()
+    else:
+        payload["data_incasso"] = None
+    try:
+        r = sb.table("b2f_fatture").update(payload).eq("id", fid).execute()
+        return jsonify(r.data[0] if r.data else {"id": fid})
+    except Exception as e:
+        return jsonify({"error": str(e)[:200]}), 500
+
+
+@fatture_bp.post("/api/fatture/<int:fid>/registra-entrata")
+def api_fattura_registra_entrata(fid):
+    """
+    Crea riga in tabella `spese` (tipo=entrata) e collega spesa_id
+    sulla fattura. Se stato non era gia' incassata/annullata, lo porta
+    a incassata con data_incasso = data della spesa.
+    """
+    sb, err = _supabase_or_error()
+    if err: return jsonify({"error": "supabase not configured"}), 503
+
+    try:
+        rf = sb.table("b2f_fatture").select("*").eq("id", fid).single().execute()
+        f = rf.data or {}
+    except Exception as e:
+        return jsonify({"error": f"fattura non trovata: {str(e)[:120]}"}), 404
+    if f.get("spesa_id"):
+        return jsonify({"error": "fattura gia' registrata su spese",
+                        "spesa_id": f["spesa_id"]}), 409
+
+    body = request.get_json(silent=True) or {}
+    riga = {
+        "data":        body.get("data") or f.get("data_incasso") or date.today().isoformat(),
+        "tipo":        "entrata",
+        "importo":     float(body.get("importo") or f.get("totale") or 0),
+        "descrizione": body.get("descrizione")
+                       or f"Fattura {f.get('numero','')} — {_cliente_label(f)}",
+    }
+    if body.get("categoria"):      riga["categoria"] = body["categoria"]
+    if body.get("sottocategoria"): riga["sottocategoria"] = body["sottocategoria"]
+
+    try:
+        ins = sb.table("spese").insert(riga).execute()
+        spesa_id = (ins.data or [{}])[0].get("id")
+        if not spesa_id:
+            return jsonify({"error": "insert spese senza id di ritorno"}), 500
+    except Exception as e:
+        return jsonify({"error": f"errore insert spese: {str(e)[:200]}"}), 500
+
+    upd = {"spesa_id": spesa_id}
+    if f.get("stato") not in ("incassata", "annullata"):
+        upd["stato"] = "incassata"
+        upd["data_incasso"] = riga["data"]
+    try:
+        sb.table("b2f_fatture").update(upd).eq("id", fid).execute()
+    except Exception as e:
+        # rollback manuale della riga spese
+        try: sb.table("spese").delete().eq("id", spesa_id).execute()
+        except Exception: pass
+        return jsonify({"error": f"aggiornamento fattura fallito: {str(e)[:200]}"}), 500
+
+    return jsonify({"ok": True, "spesa_id": spesa_id})
 
 
 @fatture_bp.post("/api/fatture")

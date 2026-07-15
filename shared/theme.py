@@ -54,7 +54,8 @@ a{color:inherit}
 .tnum{font-variant-numeric:tabular-nums}
 button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 
-.wrap{max-width:560px;margin:0 auto;padding:18px 18px 90px}
+.wrap{max-width:560px;margin:0 auto;
+  padding:calc(18px + env(safe-area-inset-top,0px)) calc(18px + env(safe-area-inset-right,0px)) calc(90px + env(safe-area-inset-bottom,0px)) calc(18px + env(safe-area-inset-left,0px))}
 
 /* ---------- Header comune (app + launchpad) ---------- */
 .apphead{display:flex;align-items:center;gap:14px;margin:0 0 22px;min-height:44px}
@@ -222,7 +223,8 @@ html[data-theme="light"] .chip{background:rgba(91,73,209,.1)}
 .empty .s{font-size:13.5px;line-height:1.4}
 
 /* FAB (floating action button) */
-.fab{position:fixed;right:20px;bottom:24px;z-index:100;
+.fab{position:fixed;right:calc(20px + env(safe-area-inset-right,0px));
+  bottom:calc(24px + env(safe-area-inset-bottom,0px));z-index:100;
   display:inline-flex;align-items:center;gap:8px;padding:14px 20px;
   background:var(--gold);color:var(--on-gold);border-radius:999px;text-decoration:none;
   font-weight:600;font-size:14px;
@@ -232,7 +234,8 @@ html[data-theme="light"] .chip{background:rgba(91,73,209,.1)}
   stroke-linecap:round;stroke-linejoin:round}
 
 /* Toast / feedback ephemera */
-.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));
+  transform:translateX(-50%);
   padding:11px 18px;background:var(--panel);color:var(--ink);border:1px solid var(--line-strong);
   border-radius:999px;font-size:13.5px;box-shadow:var(--shadow);z-index:200;
   opacity:0;pointer-events:none;transition:opacity .2s}

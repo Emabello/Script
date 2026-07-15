@@ -300,10 +300,36 @@ _JS_TEMPLATE = r"""
                  .filter(Boolean).join('     ·     ');
     d.text(foot, PW/2, fy + 4.5, {align:'center'});
 
-    // ===== SALVA =====
+    // ===== SALVA (compatibile mobile + PWA) =====
     const safeCli = cNome.replace(/[^\w]+/g, '_').slice(0, 30);
     const fname = `Fattura_${payload.numero_display}_${safeCli}.pdf`;
-    d.save(fname);
+
+    try {
+      // Approccio universale: blob + anchor con download attribute
+      // Funziona su Chrome/Firefox/Safari desktop e su Chrome Android in PWA.
+      const blob = d.output('blob');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fname;
+      a.rel = 'noopener';
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      // Cleanup differito (Safari iOS a volte perde il blob se lo revochi subito)
+      setTimeout(() => {
+        try { document.body.removeChild(a); } catch (e) {}
+        URL.revokeObjectURL(url);
+      }, 2000);
+    } catch (err) {
+      // Ultima spiaggia: apre il PDF in nuova tab (utente lo salva manualmente)
+      try {
+        const url = d.output('bloburl');
+        window.open(url, '_blank');
+      } catch (e2) {
+        alert('Impossibile scaricare il PDF: ' + (err.message || err));
+      }
+    }
     return true;
   };
 })();
