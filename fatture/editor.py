@@ -1,15 +1,10 @@
 """
 fatture/editor.py — Editor nuova fattura.
 
-Adatta la logica del fatturatore.html originale:
-  - Emittente prelevato da b2f_emittente
-  - Clienti prelevati da b2f_clienti (picker)
-  - Numerazione da b2f_next_progressivo
-  - Salvataggio POST /fatture/api/fatture
-  - PDF client-side con jsPDF (immutato dall'originale)
-
-Rotta HTML:
-  GET /fatture/nuova
+Il PDF viene generato dalla funzione condivisa window.b2fRenderInvoicePDF
+definita in shared/pdfgen.py — stessa logica usata per la ristampa
+dallo storico. Layout fedele al fatturatore.html originale ma senza
+codici SDI e senza disclaimer proforma.
 """
 from datetime import date
 
@@ -18,6 +13,7 @@ from flask import Response
 from . import fatture_bp
 from shared.theme import render_page
 from shared.supabase_client import get_client, is_configured
+from shared.pdfgen import pdf_script
 
 
 @fatture_bp.get("/nuova")
@@ -26,7 +22,7 @@ def fattura_nuova():
         content = '<div class="notice warn">Supabase non configurato.</div>'
         return _render(content)
 
-    # Preleva emittente per precompilare
+    # Preleva emittente per il picker + iniezione JS
     sb = get_client()
     try:
         em = (sb.table("b2f_emittente")
@@ -34,37 +30,13 @@ def fattura_nuova():
     except Exception:
         em = {}
 
-    emj = _emittente_to_json(em)
     today = date.today().isoformat()
+    pdf_js = pdf_script(em)
 
-    content = _EDITOR_HTML.replace("__EMITTENTE_JSON__", emj) \
-                          .replace("__TODAY__", today)
+    content = _EDITOR_HTML.replace("__TODAY__", today) \
+                          .replace("__PDF_SCRIPT__", pdf_js)
 
     return _render(content)
-
-
-def _emittente_to_json(em: dict) -> str:
-    """Genera JS object literal per l'emittente."""
-    import json
-    d = {
-        "nome":         em.get("nome") or "",
-        "cognome":      em.get("cognome") or "",
-        "denominazione": em.get("denominazione") or "",
-        "piva":         em.get("piva") or "",
-        "cf":           em.get("cf") or "",
-        "regime_fisc":  em.get("regime_fisc") or "RF19",
-        "indirizzo":    em.get("indirizzo") or "",
-        "cap":          em.get("cap") or "",
-        "comune":       em.get("comune") or "",
-        "provincia":    em.get("provincia") or "",
-        "nazione":      em.get("nazione") or "IT",
-        "email":        em.get("email") or "",
-        "pec":          em.get("pec") or "",
-        "iban":         em.get("iban") or "",
-        "cassa_prev":   em.get("cassa_prev") or "",
-        "aliquota_cassa": float(em.get("aliquota_cassa") or 0),
-    }
-    return json.dumps(d, ensure_ascii=False)
 
 
 def _render(content: str) -> Response:
@@ -77,10 +49,7 @@ def _render(content: str) -> Response:
 
 
 # ---------------------------------------------------------------------------
-# HTML dell'editor.
-# CSS ereditato dal theme (form/card/btn/notice) — solo micro-tweak locale.
-# JS: righe dinamiche, calcolo totale con INPS 4% opz e bollo €2, POST server.
-# jsPDF caricato via CDN, come nel fatturatore originale.
+# HTML dell'editor. Il PDF e' delegato a b2fRenderInvoicePDF (pdfgen.py).
 # ---------------------------------------------------------------------------
 
 _EDITOR_HTML = r"""
@@ -211,15 +180,10 @@ _EDITOR_HTML = r"""
 
 <div id="toast" class="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+__PDF_SCRIPT__
 <script>
 // ==============================================================
-// Emittente iniettato dal server (b2f_emittente)
-// ==============================================================
-const EMITTENTE = __EMITTENTE_JSON__;
-
-// ==============================================================
-// Utility
+// Utility (l'oggetto EMITTENTE è disponibile globalmente via pdfgen)
 // ==============================================================
 const $ = id => document.getElementById(id);
 const r2 = n => Math.round((Number(n)+Number.EPSILON)*100)/100;
@@ -425,7 +389,7 @@ async function onSalva() {
     pagamento_mod: $('p_mod').value || null,
     pagamento_cond: $('p_cond').value || null,
     scadenza: $('p_scad').value || null,
-    iban: EMITTENTE.iban || null,
+    iban: (window.B2F_EMITTENTE && window.B2F_EMITTENTE.iban) || null,
     stato: 'emessa',
   };
 
@@ -444,291 +408,50 @@ async function onSalva() {
 }
 
 // ==============================================================
-// PDF — Layout stile proforma Meme (monocromatico, professionale)
+// PDF — Delegato a window.b2fRenderInvoicePDF (shared/pdfgen.py)
 // ==============================================================
-
-// Format numero con virgola decimale e separatore migliaia italiano
-function fmtNum(n) {
-  return Number(n || 0).toLocaleString('it-IT',
-    {minimumFractionDigits: 2, maximumFractionDigits: 2});
+function buildPdfPayload() {
+  const c = currentCliente();
+  const t = calc();
+  const dataIso = $('d_data').value || todayISO();
+  // Numero display: solo progressivo (anno implicito dalla data)
+  let numDisplay;
+  const userNum = ($('d_num').value || '').trim();
+  if (userNum) {
+    const m = userNum.match(/^(\d+)\s*[\/\-\.]\s*(\d+)$/);
+    numDisplay = m ? String(parseInt(m[1].length === 4 ? m[2] : m[1], 10)) : userNum;
+  } else {
+    numDisplay = CURRENT_PROG ? String(CURRENT_PROG) : '---';
+  }
+  return {
+    numero_display: numDisplay,
+    data_iso: dataIso,
+    tipo_doc: $('d_tipo').value || 'TD01',
+    cliente: c ? {
+      tipo: c.tipo, denominazione: c.denominazione,
+      nome: c.nome, cognome: c.cognome,
+      piva: c.piva, cf: c.cf,
+      indirizzo: c.indirizzo, cap: c.cap, comune: c.comune, provincia: c.provincia,
+    } : {},
+    righe: righe.filter(r => (Number(r.qta) || 0) > 0 && (Number(r.prezzo) || 0) > 0)
+                .map(r => ({descrizione: r.desc, qta: Number(r.qta),
+                            um: r.um || null, prezzo: Number(r.prezzo)})),
+    imponibile: t.imponibile,
+    cassa_perc: t.cassa_perc,
+    cassa_importo: t.cassa,
+    bollo_add: t.bolloAdd > 0,
+    bollo_dovuto: !!t.bolloDovuto,
+    totale: t.totale,
+    pagamento_mod: $('p_mod').value || 'Bonifico bancario',
+    scadenza: $('p_scad').value || null,
+  };
 }
 
 function onPDF() {
   const err = validate();
   if (err) { toast(err, 'err'); return; }
-  const c = currentCliente();
-  const t = calc();
-  const dataIso = $('d_data').value || todayISO();
-  const annoDoc = new Date(dataIso).getFullYear();
-
-  // Numero display: solo progressivo (anno implicito dalla data)
-  let numDisplay;
-  const userNum = ($('d_num').value || '').trim();
-  if (userNum) {
-    // se contiene YYYY/NNN o NNN/YYYY, estrai la parte non-anno
-    const m = userNum.match(/^(\d+)\s*[\/\-\.]\s*(\d+)$/);
-    numDisplay = m ? String(parseInt(m[0].length === 4 ? m[2] : m[1], 10) || m[0]) : userNum;
-  } else {
-    numDisplay = CURRENT_PROG ? String(CURRENT_PROG) : '---';
-  }
-
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({unit: 'mm', format: 'a4'});
-  const W = 210, H = 297, M = 18;
-
-  // Iniziali per il box EB
-  const nomeCompleto = EMITTENTE.denominazione ||
-    `${EMITTENTE.nome || ''} ${EMITTENTE.cognome || ''}`.trim() || 'B2F';
-  const initials = nomeCompleto.split(/\s+/).filter(Boolean).slice(0, 2)
-    .map(p => p[0]).join('').toUpperCase() || 'EB';
-
-  // Palette
-  const INK = [20, 23, 28];       // #14171C
-  const MUTED = [115, 120, 130];
-  const LINE = [220, 218, 210];
-  const FAINT = [175, 178, 187];
-
-  // ============ HEADER ============
-  const headerY = M;
-
-  // Box iniziali a sinistra
-  doc.setFillColor(INK[0], INK[1], INK[2]);
-  doc.rect(M, headerY, 22, 22, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.text(initials, M + 11, headerY + 14, {align: 'center'});
-
-  // Info emittente a destra
-  doc.setTextColor(INK[0], INK[1], INK[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
-  doc.text(nomeCompleto, W - M, headerY + 5, {align: 'right'});
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-  let hy = headerY + 10;
-
-  const ids = [];
-  if (EMITTENTE.piva) ids.push('P.IVA ' + EMITTENTE.piva);
-  if (EMITTENTE.cf) ids.push('C.F. ' + EMITTENTE.cf);
-  if (ids.length) { doc.text(ids.join(' · '), W - M, hy, {align: 'right'}); hy += 4; }
-
-  const addrBits = [];
-  if (EMITTENTE.indirizzo) addrBits.push(EMITTENTE.indirizzo);
-  const cityStr = [EMITTENTE.cap, EMITTENTE.comune].filter(Boolean).join(' ');
-  const cityFull = cityStr + (EMITTENTE.provincia ? ' (' + EMITTENTE.provincia + ')' : '');
-  if (cityFull.trim()) addrBits.push(cityFull.trim());
-  if (addrBits.length) { doc.text(addrBits.join(' — '), W - M, hy, {align: 'right'}); hy += 4; }
-
-  const contact = [];
-  if (EMITTENTE.email) contact.push(EMITTENTE.email);
-  if (EMITTENTE.pec) contact.push('PEC ' + EMITTENTE.pec);
-  if (contact.length) { doc.text(contact.join(' · '), W - M, hy, {align: 'right'}); hy += 4; }
-
-  // ============ TITOLO DOCUMENTO ============
-  let y = Math.max(hy, headerY + 22) + 12;
-  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.text('FATTURA', W - M, y, {align: 'right'});
-  y += 5;
-  doc.setTextColor(INK[0], INK[1], INK[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(`n. ${numDisplay} · ${itDate(dataIso)}`, W - M, y, {align: 'right'});
-
-  // ============ DESTINATARIO ============
-  y += 14;
-  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.text('DESTINATARIO', M, y);
-  y += 5;
-
-  doc.setTextColor(INK[0], INK[1], INK[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(clienteLabel(c), M, y);
-  y += 5;
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-  const cIds = [];
-  if (c.piva) cIds.push('P.IVA ' + c.piva);
-  if (c.cf) cIds.push('C.F. ' + c.cf);
-  if (cIds.length) { doc.text(cIds.join(' · '), M, y); y += 4; }
-
-  const cAddrBits = [];
-  if (c.indirizzo) cAddrBits.push(c.indirizzo);
-  const cCity = ([c.cap, c.comune].filter(Boolean).join(' ') +
-    (c.provincia ? ' (' + c.provincia + ')' : '')).trim();
-  if (cCity) cAddrBits.push(cCity);
-  if (cAddrBits.length) { doc.text(cAddrBits.join(' — '), M, y); y += 4; }
-
-  // ============ TABELLA RIGHE ============
-  y += 8;
-  const colDesc   = M;
-  const colQta    = 128;
-  const colPrezzo = 158;
-  const colImp    = W - M;
-  const descMax   = colQta - colDesc - 6;
-
-  doc.setDrawColor(LINE[0], LINE[1], LINE[2]);
-  doc.setLineWidth(0.4);
-  doc.line(M, y, W - M, y);
-  y += 5;
-
-  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.text('DESCRIZIONE',  colDesc, y);
-  doc.text('Q.TÀ',          colQta, y, {align: 'right'});
-  doc.text('PREZZO €',      colPrezzo, y, {align: 'right'});
-  doc.text('IMPORTO €',     colImp, y, {align: 'right'});
-  y += 3;
-  doc.line(M, y, W - M, y);
-  y += 6;
-
-  doc.setTextColor(INK[0], INK[1], INK[2]);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-
-  righe.forEach(r => {
-    const q = Number(r.qta) || 0;
-    const p = Number(r.prezzo) || 0;
-    if (q === 0 || p === 0) return;
-    const tot = r2(q * p);
-    const descLines = doc.splitTextToSize(r.desc || '', descMax);
-    doc.text(descLines, colDesc, y);
-    const qtaText = String(r.qta) + (r.um ? ' ' + r.um : '');
-    doc.text(qtaText, colQta, y, {align: 'right'});
-    doc.text(fmtNum(p), colPrezzo, y, {align: 'right'});
-    doc.text(fmtNum(tot), colImp, y, {align: 'right'});
-    y += Math.max(6, descLines.length * 4.6);
-    if (y > 245) { doc.addPage(); y = M; }
-  });
-
-  y += 3;
-  doc.setDrawColor(LINE[0], LINE[1], LINE[2]);
-  doc.line(M, y, W - M, y);
-  y += 10;
-
-  // ============ TOTALI ============
-  const totLabelX = W - M - 55;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-  doc.text('Imponibile', totLabelX, y, {align: 'right'});
-  doc.setTextColor(INK[0], INK[1], INK[2]);
-  doc.text(fmtNum(t.imponibile) + ' €', W - M, y, {align: 'right'});
-  y += 6;
-
-  if (t.cassa > 0) {
-    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-    doc.text('Cassa 4%', totLabelX, y, {align: 'right'});
-    doc.setTextColor(INK[0], INK[1], INK[2]);
-    doc.text(fmtNum(t.cassa) + ' €', W - M, y, {align: 'right'});
-    y += 6;
-  }
-  if (t.bolloAdd > 0) {
-    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-    doc.text('Bollo', totLabelX, y, {align: 'right'});
-    doc.setTextColor(INK[0], INK[1], INK[2]);
-    doc.text(fmtNum(t.bolloAdd) + ' €', W - M, y, {align: 'right'});
-    y += 6;
-  }
-
-  // Riga separazione totale
-  y += 2;
-  doc.setDrawColor(INK[0], INK[1], INK[2]);
-  doc.setLineWidth(0.5);
-  doc.line(W - M - 70, y, W - M, y);
-  y += 7;
-
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(12);
-  doc.setTextColor(INK[0], INK[1], INK[2]);
-  doc.text('TOTALE A PAGARE', totLabelX, y, {align: 'right'});
-  doc.text(fmtNum(t.totale) + ' €', W - M, y, {align: 'right'});
-
-  // ============ PAGAMENTO ============
-  y += 14;
-  doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8.5);
-  doc.text('PAGAMENTO', M, y);
-  y += 5;
-
-  doc.setTextColor(INK[0], INK[1], INK[2]);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  const modo = ($('p_mod').value || '').trim() || 'Bonifico bancario';
-  doc.text(modo, M, y);
-  y += 5;
-
-  if (EMITTENTE.iban) {
-    doc.setFontSize(9);
-    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-    doc.text('IBAN ' + EMITTENTE.iban, M, y);
-    y += 5;
-  }
-  const scad = $('p_scad').value;
-  if (scad) {
-    doc.setFontSize(9);
-    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-    doc.text('Scadenza: ' + itDate(scad), M, y);
-    y += 5;
-  }
-  const cond = ($('p_cond').value || '').trim();
-  if (cond) {
-    doc.setFontSize(9);
-    doc.setTextColor(MUTED[0], MUTED[1], MUTED[2]);
-    doc.text(cond, M, y);
-    y += 5;
-  }
-
-  // ============ NOTE FISCALI ============
-  y += 8;
-  doc.setDrawColor(LINE[0], LINE[1], LINE[2]);
-  doc.setLineWidth(0.3);
-  doc.line(M, y - 3, W - M, y - 3);
-
-  doc.setTextColor(INK[0], INK[1], INK[2]);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-
-  const notes = [
-    "Operazione senza applicazione dell'IVA ex art. 1, c. 54-89, L. 190/2014 - regime forfettario.",
-    "Compenso non soggetto a ritenuta d'acconto ex art. 1, c. 67, L. 190/2014.",
-  ];
-  if (t.bolloDovuto) {
-    const bolloLine = t.bolloAdd > 0
-      ? "Imposta di bollo di € 2,00 assolta virtualmente ai sensi del D.M. 17/06/2014 (addebitata al cliente)."
-      : "Imposta di bollo di € 2,00 assolta virtualmente ai sensi del D.M. 17/06/2014.";
-    notes.push(bolloLine);
-  }
-  notes.forEach(n => {
-    const wrapped = doc.splitTextToSize(n, W - 2 * M);
-    doc.text(wrapped, M, y);
-    y += wrapped.length * 4;
-  });
-
-  // ============ FOOTER ============
-  const footerY = H - 12;
-  doc.setFontSize(7.5);
-  doc.setTextColor(FAINT[0], FAINT[1], FAINT[2]);
-  const footerBits = [nomeCompleto];
-  if (EMITTENTE.piva) footerBits.push('P.IVA ' + EMITTENTE.piva);
-  if (EMITTENTE.email) footerBits.push(EMITTENTE.email);
-  doc.text(footerBits.join(' · '), W / 2, footerY, {align: 'center'});
-
-  // ============ SALVA ============
-  const fname = `Fattura_${numDisplay}_${annoDoc}.pdf`.replace(/[\/\s]+/g, '-');
-  doc.save(fname);
-  toast('PDF generato', 'ok');
+  const ok = window.b2fRenderInvoicePDF(buildPdfPayload());
+  if (ok) toast('PDF generato', 'ok');
 }
 
 // ==============================================================

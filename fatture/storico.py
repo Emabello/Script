@@ -171,17 +171,53 @@ def fattura_dettaglio(fid):
                        breadcrumb=[("Fatture", "/fatture"),
                                    ("Storico", "/fatture/storico"), (str(fid), "")])
 
+    # Preleva emittente per iniezione JS del PDF
+    try:
+        em = (sb.table("b2f_emittente").select("*").eq("id", 1)
+                .single().execute()).data or {}
+    except Exception:
+        em = {}
+    from shared.pdfgen import pdf_script
+    pdf_js = pdf_script(em)
+
     snap = f.get("cliente_snapshot") or {}
     righe = f.get("righe") or []
     righe_html = "".join(
         f'''<div class="row">
-          <div class="d">×{r.get("qta",1)}</div>
+          <div class="d">×{r.get("qta",1)}{" "+r.get("um") if r.get("um") else ""}</div>
           <div class="t">{(r.get("descrizione") or "").strip() or "—"}</div>
           <div class="a tnum">€ {_fmt_eur((r.get("qta") or 0) * (r.get("prezzo") or 0))}</div>
         </div>''' for r in righe
     )
     if not righe_html:
         righe_html = '<div class="row"><div class="t" style="color:var(--muted)">Nessuna riga</div></div>'
+
+    # Numero display per il PDF: solo progressivo
+    numero_full = f.get("numero") or ""
+    if "/" in numero_full:
+        _, prog = numero_full.split("/", 1)
+        numero_display = str(int(prog))  # rimuove leading zeros
+    else:
+        numero_display = str(f.get("progressivo") or "")
+
+    # Payload PDF serializzato per JavaScript
+    import json
+    payload_js = json.dumps({
+        "numero_display": numero_display,
+        "data_iso":       f.get("data"),
+        "tipo_doc":       f.get("tipo_doc") or "TD01",
+        "cliente":        snap,
+        "righe":          [{"descrizione": r.get("descrizione"), "qta": r.get("qta"),
+                            "um": r.get("um"), "prezzo": r.get("prezzo")} for r in righe],
+        "imponibile":     float(f.get("imponibile") or 0),
+        "cassa_perc":     float(f.get("cassa_perc") or 0),
+        "cassa_importo":  float(f.get("cassa_importo") or 0),
+        "bollo_add":      bool(f.get("bollo_addebitato")),
+        "bollo_dovuto":   float(f.get("imponibile") or 0) > 77.47,
+        "totale":         float(f.get("totale") or 0),
+        "pagamento_mod":  f.get("pagamento_mod") or "Bonifico bancario",
+        "scadenza":       f.get("scadenza"),
+    }, ensure_ascii=False)
 
     body = f'''
     <div class="card">
@@ -190,7 +226,7 @@ def fattura_dettaglio(fid):
           <div class="eyebrow" style="margin-bottom:4px">Fattura</div>
           <h2 class="serif" style="margin:0;font-size:24px">{f.get("numero","—")}</h2>
           <div style="color:var(--muted);font-size:13px;margin-top:3px">
-            {_fmt_date(f.get("data"))} · {f.get("tipo_doc","TD01")}
+            {_fmt_date(f.get("data"))}
           </div>
         </div>
         {_stato_chip(f.get("stato"))}
@@ -231,8 +267,27 @@ def fattura_dettaglio(fid):
       </div>
     </div>
 
-    <div class="notice" style="margin-top:10px">
-      Azioni fattura (cambia stato, registra incasso su spese, PDF server) arriveranno nel Blocco B.
+    <div class="actions" style="margin-top:14px">
+      <button type="button" class="btn" onclick="onRistampa()">
+        <svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round">
+          <path d="M12 3v12M8 11l4 4 4-4M5 21h14"/></svg>
+        Scarica PDF
+      </button>
+    </div>
+
+    {pdf_js}
+    <script>
+      const FATTURA_PAYLOAD = {payload_js};
+      function onRistampa() {{
+        if (!window.b2fRenderInvoicePDF) {{
+          alert('Rendering PDF non pronto'); return;
+        }}
+        window.b2fRenderInvoicePDF(FATTURA_PAYLOAD);
+      }}
+    </script>
+
+    <div class="notice" style="margin-top:14px">
+      Altre azioni (cambia stato, registra incasso su spese) arriveranno nel Blocco B.
     </div>
     '''
 
