@@ -16,16 +16,30 @@ from datetime import date
 
 from flask import Response, jsonify
 
+import xs_server
 from xs_server import app  # importa la Flask app esistente
 
 from fatture import fatture_bp
 from spese import spese_bp
+from shared.webauthn import webauthn_bp
 
 from shared.theme import render_launchpad
 from shared.supabase_client import get_client, is_configured
 
 app.register_blueprint(fatture_bp, url_prefix="/fatture")
 app.register_blueprint(spese_bp,   url_prefix="/spese")
+app.register_blueprint(webauthn_bp, url_prefix="/api/webauthn")
+
+# Gli endpoint WebAuthn devono restare accessibili senza PIN: register/*
+# richiede comunque sessione già sbloccata (controllo interno al blueprint),
+# auth/* è il meccanismo stesso con cui ci si sblocca.
+xs_server.ALLOW_NO_PIN.update({
+    "webauthn.webauthn_register_begin",
+    "webauthn.webauthn_register_complete",
+    "webauthn.webauthn_auth_begin",
+    "webauthn.webauthn_auth_complete",
+    "webauthn.webauthn_status",
+})
 
 
 def _greet_name() -> str:

@@ -159,6 +159,10 @@ html[data-theme="light"] .tile .ic{background:rgba(91,73,209,.1)}
 .notice code{font-family:ui-monospace,'JetBrains Mono',monospace;font-size:12.5px;
   padding:1px 6px;border-radius:4px;background:rgba(255,255,255,.06)}
 html[data-theme="light"] .notice code{background:rgba(0,0,0,.05)}
+.notice.bio{display:none;align-items:center;justify-content:space-between;gap:10px;
+  margin-bottom:16px}
+.notice.bio.show{display:flex}
+.notice.bio button{color:var(--gold);font-weight:600;white-space:nowrap}
 
 /* ---------- Form ---------- */
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
@@ -348,6 +352,13 @@ html[data-theme="light"] .pin-card .lock{background:rgba(91,73,209,.13)}
 .pin-err{color:var(--danger);font-size:12.5px;margin-top:8px;min-height:16px}
 .pin-actions{margin-top:14px}
 .pin-actions .btn{width:100%}
+.pin-bio{display:none;align-items:center;justify-content:center;gap:8px;
+  width:100%;margin-top:10px;padding:12px 16px;border-radius:14px;
+  background:transparent;border:1px solid var(--line-strong);color:var(--ink-dim);
+  font-family:Inter,sans-serif;font-size:14px;font-weight:500}
+.pin-bio.show{display:flex}
+.pin-bio svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
 </style>
 
 <div class="pin-ov" id="pinOverlay" role="dialog" aria-modal="true" aria-label="Sblocco PIN">
@@ -366,16 +377,40 @@ html[data-theme="light"] .pin-card .lock{background:rgba(91,73,209,.13)}
     <div class="pin-err" id="pinErr">&nbsp;</div>
     <div class="pin-actions">
       <button class="btn" id="pinSubmit" type="button">Sblocca</button>
+      <button class="pin-bio" id="pinBioBtn" type="button">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 11c0 2.5-.3 4.8-1.2 6.8M8.5 20.5A13.5 13.5 0 0 0 9.8 9.5M12 3.5a8.5 8.5 0 0 1 8.5 8.5c0 1.7-.2 3.3-.6 4.8M6.4 6.4A8.5 8.5 0 0 1 12 3.5M4.3 15.5c.4-1.3.7-2.7.7-4a7 7 0 0 1 .4-2.3M15.5 20.2c.5-1.2 1-2.7 1.3-4.2M12 7a5 5 0 0 1 5 5c0 1.2-.1 2.3-.3 3.3"/>
+        </svg>
+        Sblocca con impronta
+      </button>
     </div>
   </div>
 </div>
 
 <script>
+// Helper condivisi base64url <-> ArrayBuffer per WebAuthn (usati anche
+// dal banner di registrazione nella launchpad).
+window.b2fBase64urlToBuffer = function(b64url) {
+  const pad = '='.repeat((4 - b64url.length % 4) % 4);
+  const b64 = (b64url + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const buf = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+  return buf.buffer;
+};
+window.b2fBufferToBase64url = function(buf) {
+  const bytes = new Uint8Array(buf);
+  let str = '';
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+
 (function() {
   const overlay = document.getElementById('pinOverlay');
   const input   = document.getElementById('pinInput');
   const errBox  = document.getElementById('pinErr');
   const button  = document.getElementById('pinSubmit');
+  const bioBtn  = document.getElementById('pinBioBtn');
 
   function show() {
     overlay.classList.add('show');
@@ -386,6 +421,74 @@ html[data-theme="light"] .pin-card .lock{background:rgba(91,73,209,.13)}
     input.value = ''; errBox.textContent = '\u00a0';
   }
   function setErr(m) { errBox.textContent = m || '\u00a0'; }
+
+  function unlocked() {
+    hide();
+    if (window.__pinPending) {
+      window.__pinPending();
+      window.__pinPending = null;
+    } else {
+      location.reload();
+    }
+  }
+
+  async function tryShowBioButton() {
+    try {
+      if (!window.PublicKeyCredential
+          || !window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) return;
+      const [st, avail] = await Promise.all([
+        fetch('/api/webauthn/status', {credentials: 'same-origin'}).then(r => r.ok ? r.json() : null),
+        PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
+      ]);
+      if (st && st.credentials_count > 0 && avail) bioBtn.classList.add('show');
+    } catch (e) { /* niente bottone bio, resta solo il PIN */ }
+  }
+
+  async function bioUnlock() {
+    bioBtn.disabled = true; setErr('\u00a0');
+    try {
+      const beginRes = await fetch('/api/webauthn/auth/begin', {
+        method: 'POST', credentials: 'same-origin',
+      });
+      if (!beginRes.ok) throw new Error('begin failed');
+      const options = await beginRes.json();
+      options.challenge = b2fBase64urlToBuffer(options.challenge);
+      if (options.allowCredentials) {
+        options.allowCredentials = options.allowCredentials.map(c => ({
+          ...c, id: b2fBase64urlToBuffer(c.id),
+        }));
+      }
+      const cred = await navigator.credentials.get({publicKey: options});
+      const payload = {
+        id: cred.id,
+        rawId: b2fBufferToBase64url(cred.rawId),
+        type: cred.type,
+        response: {
+          clientDataJSON: b2fBufferToBase64url(cred.response.clientDataJSON),
+          authenticatorData: b2fBufferToBase64url(cred.response.authenticatorData),
+          signature: b2fBufferToBase64url(cred.response.signature),
+          userHandle: cred.response.userHandle ? b2fBufferToBase64url(cred.response.userHandle) : null,
+        },
+      };
+      const completeRes = await fetch('/api/webauthn/auth/complete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        body: JSON.stringify({credential: payload}),
+      });
+      if (completeRes.ok) {
+        unlocked();
+      } else {
+        setErr('Sblocco con impronta non riuscito, usa il PIN');
+      }
+    } catch (e) {
+      setErr('Sblocco con impronta annullato');
+    } finally {
+      bioBtn.disabled = false;
+    }
+  }
+
+  bioBtn.addEventListener('click', bioUnlock);
 
   async function submitPin() {
     const pin = input.value.trim();
@@ -399,14 +502,7 @@ html[data-theme="light"] .pin-card .lock{background:rgba(91,73,209,.13)}
         body: JSON.stringify({pin}),
       });
       if (r.ok) {
-        hide();
-        // Riprova le fetch pending o ricarica per popolare KPI/lista
-        if (window.__pinPending) {
-          window.__pinPending();
-          window.__pinPending = null;
-        } else {
-          location.reload();
-        }
+        unlocked();
       } else {
         setErr('PIN errato');
         input.select();
@@ -439,7 +535,7 @@ html[data-theme="light"] .pin-card .lock{background:rgba(91,73,209,.13)}
   fetch('/api/status', {credentials: 'same-origin'})
     .then(r => r.ok ? r.json() : null)
     .then(s => {
-      if (s && s.needs_pin && !s.unlocked) show();
+      if (s && s.needs_pin && !s.unlocked) { show(); tryShowBioButton(); }
     })
     .catch(() => {});
 })();
@@ -597,6 +693,14 @@ def render_launchpad(greet_name: str | None = None) -> str:
       <div class="sub">Scegli un'app per iniziare.</div>
     </div>
 
+    <div class="notice bio" id="bioBanner">
+      <span>Sblocco veloce disponibile</span>
+      <span style="display:flex;gap:14px;flex-shrink:0">
+        <button type="button" id="bioBannerDecline" style="color:var(--muted)">Non ora</button>
+        <button type="button" id="bioBannerBtn">Attiva</button>
+      </span>
+    </div>
+
     <div class="tiles">
       <a class="tile" href="/ore" data-app="ore">
         <div class="ic">{_ICON_ORE}</div>
@@ -666,6 +770,84 @@ def render_launchpad(greet_name: str | None = None) -> str:
         `Saldo mese <strong>${{symbol}}€ ${{fmtEur(s)}}</strong>`, sign);
     }})
     .catch(() => setKpi('kpi-spese', 'Movimenti, filtri, inserimento'));
+}})();
+</script>
+
+<script>
+// Banner "sblocco veloce": proposto solo dopo sblocco riuscito, se il device
+// supporta un platform authenticator e non ci sono ancora credenziali salvate.
+(async () => {{
+  const banner  = document.getElementById('bioBanner');
+  const btnGo   = document.getElementById('bioBannerBtn');
+  const btnSkip = document.getElementById('bioBannerDecline');
+  if (!banner) return;
+
+  try {{
+    if (localStorage.getItem('b2f-biometric-declined')) return;
+    if (!window.PublicKeyCredential
+        || !window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) return;
+
+    const status = await fetch('/api/status', {{credentials: 'same-origin'}})
+      .then(r => r.ok ? r.json() : null);
+    if (!status || (status.needs_pin && !status.unlocked)) return;
+
+    const [wa, avail] = await Promise.all([
+      fetch('/api/webauthn/status', {{credentials: 'same-origin'}}).then(r => r.ok ? r.json() : null),
+      PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
+    ]);
+    if (!wa || wa.credentials_count > 0 || !avail) return;
+
+    banner.classList.add('show');
+  }} catch (e) {{ /* niente banner, non è un problema */ }}
+
+  btnSkip.addEventListener('click', () => {{
+    localStorage.setItem('b2f-biometric-declined', '1');
+    banner.classList.remove('show');
+  }});
+
+  btnGo.addEventListener('click', async () => {{
+    btnGo.disabled = true;
+    try {{
+      const beginRes = await fetch('/api/webauthn/register/begin', {{
+        method: 'POST', credentials: 'same-origin',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{device_name: navigator.userAgentData?.platform || navigator.platform || 'Telefono'}}),
+      }});
+      if (!beginRes.ok) throw new Error('begin failed');
+      const options = await beginRes.json();
+      options.challenge = b2fBase64urlToBuffer(options.challenge);
+      options.user.id = b2fBase64urlToBuffer(options.user.id);
+      if (options.excludeCredentials) {{
+        options.excludeCredentials = options.excludeCredentials.map(c => ({{
+          ...c, id: b2fBase64urlToBuffer(c.id),
+        }}));
+      }}
+      const cred = await navigator.credentials.create({{publicKey: options}});
+      const payload = {{
+        id: cred.id,
+        rawId: b2fBufferToBase64url(cred.rawId),
+        type: cred.type,
+        response: {{
+          clientDataJSON: b2fBufferToBase64url(cred.response.clientDataJSON),
+          attestationObject: b2fBufferToBase64url(cred.response.attestationObject),
+          transports: cred.response.getTransports ? cred.response.getTransports() : [],
+        }},
+      }};
+      const completeRes = await fetch('/api/webauthn/register/complete', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        credentials: 'same-origin',
+        body: JSON.stringify({{credential: payload}}),
+      }});
+      if (!completeRes.ok) throw new Error('complete failed');
+      banner.querySelector('span').textContent = 'Impronta salvata';
+      setTimeout(() => banner.classList.remove('show'), 1800);
+    }} catch (e) {{
+      banner.querySelector('span').textContent = 'Configurazione non riuscita, riprova più tardi';
+    }} finally {{
+      btnGo.disabled = false;
+    }}
+  }});
 }})();
 </script>
 </body>
