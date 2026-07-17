@@ -12,9 +12,11 @@ Route:
 La radice / mostra la launchpad. Il timesheet e' stato spostato su /ore
 tramite apply_patch.py (il decoratore di index() viene riscritto).
 """
+import os
 from datetime import date
 
 from flask import Response, jsonify
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import xs_server
 from xs_server import app  # importa la Flask app esistente
@@ -25,6 +27,22 @@ from shared.webauthn import webauthn_bp
 
 from shared.theme import render_launchpad
 from shared.supabase_client import get_client, is_configured
+
+# Render (come ogni PaaS) termina il TLS su un proxy e inoltra a gunicorn in
+# HTTP con header X-Forwarded-Proto: https. Senza ProxyFix, request.scheme
+# resta 'http': l'origin WebAuthn calcolato diventa "http://<host>" e NON
+# combacia con l'origin reale del browser ("https://<host>"), facendo fallire
+# la verifica di registrazione e autenticazione (register/complete 400,
+# auth/complete 401). Con ProxyFix lo schema torna corretto.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+# Cookie di sessione: SameSite esplicito (Lax va bene, le chiamate WebAuthn
+# sono same-origin) e Secure in produzione (Render espone la env RENDER).
+# In locale (http) Secure resta False così lo sblocco PIN continua a funzionare.
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),
+)
 
 app.register_blueprint(fatture_bp, url_prefix="/fatture")
 app.register_blueprint(spese_bp,   url_prefix="/spese")
@@ -144,10 +162,11 @@ def health():
             return {"ok": False, "error": str(e)[:200]}
 
     out["tables"] = {
-        "spese":         probe("spese"),
-        "b2f_emittente": probe("b2f_emittente"),
-        "b2f_clienti":   probe("b2f_clienti"),
-        "b2f_fatture":   probe("b2f_fatture"),
+        "spese":                    probe("spese"),
+        "b2f_emittente":            probe("b2f_emittente"),
+        "b2f_clienti":              probe("b2f_clienti"),
+        "b2f_fatture":              probe("b2f_fatture"),
+        "b2f_webauthn_credentials": probe("b2f_webauthn_credentials"),
     }
     return jsonify(out)
 
