@@ -100,7 +100,32 @@ def index():
         <div class="cnt">{n_fat}</div>
         <div class="arw"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       </a>
+
+      <a href="/fatture/situazione">
+        <div class="ico">
+          <svg viewBox="0 0 24 24"><path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2"/>
+          <rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 10h6M9 13h4M9 16h2"/></svg>
+        </div>
+        <div class="lbl">Situazione fiscale</div>
+        <div class="cnt" id="kpi-fiscale">—</div>
+        <div class="arw"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" stroke="currentColor" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      </a>
     </div>
+
+    <script>
+    (function() {{
+      fetch('/fatture/api/situazione', {{cache:'no-store'}})
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {{
+          const el = document.getElementById('kpi-fiscale');
+          if (!el || !d || !d.totali) return;
+          const fmt = v => new Intl.NumberFormat('it-IT',
+            {{minimumFractionDigits:0, maximumFractionDigits:0}}).format(v);
+          el.textContent = '€ ' + fmt(d.totali.netto_stimato);
+        }})
+        .catch(() => {{}});
+    }})();
+    </script>
     '''
 
     return _wrap(content)
