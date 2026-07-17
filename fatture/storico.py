@@ -16,6 +16,7 @@ from datetime import date
 from flask import Response, request, jsonify
 
 from . import fatture_bp
+from .costanti import CATEGORIE_SPESE_PIVA
 from shared.theme import render_page
 from shared.supabase_client import get_client, is_configured
 
@@ -219,13 +220,13 @@ def fattura_dettaglio(fid):
         "scadenza":       f.get("scadenza"),
     }, ensure_ascii=False)
 
-    # Chip per lo stato "registrata su spese"
-    spesa_id_val = f.get("spesa_id")
+    # Chip per lo stato "registrata su spese P.IVA"
+    spesa_id_val = f.get("spesa_piva_id")
     registrata_chip = ""
     if spesa_id_val:
         registrata_chip = (
             f'<span class="chip g" style="margin-left:6px">'
-            f'Registrata su spese</span>'
+            f'Registrata su spese P.IVA</span>'
         )
 
     # Bottone registra: nascosto se già registrata
@@ -239,6 +240,11 @@ def fattura_dettaglio(fid):
     desc_precompilata = f"Fattura {f.get('numero','')} — {_cliente_label(f)}"
 
     stato_corrente = f.get("stato") or "emessa"
+
+    cat_options = "".join(
+        f'<option value="{k}"{" selected" if k=="fatturato" else ""}>{lbl}</option>'
+        for k, lbl in CATEGORIE_SPESE_PIVA
+    )
 
     body = f'''
     <div class="card">
@@ -302,7 +308,7 @@ def fattura_dettaglio(fid):
       </button>
       <button type="button" class="btn ghost" id="btnRegistra"
               style="display:{btn_registra_display}" onclick="openEntrataModal()">
-        Registra come entrata su spese
+        Registra come entrata su spese P.IVA
       </button>
     </div>
 
@@ -337,9 +343,9 @@ def fattura_dettaglio(fid):
     <!-- ===== Modal registra entrata ===== -->
     <div class="modal-ov" id="modalEntrata" style="display:none">
       <div class="modal-card">
-        <h3 class="serif" style="margin:0 0 4px">Registra come entrata</h3>
+        <h3 class="serif" style="margin:0 0 4px">Registra come entrata su spese P.IVA</h3>
         <p style="color:var(--muted);font-size:13px;margin:0 0 16px">
-          Crea una riga <code>tipo=entrata</code> nella tabella spese e collega
+          Crea una riga <code>tipo=entrata</code> nella tabella spese P.IVA e collega
           la fattura. Aggiorna anche lo stato a "incassata".
         </p>
         <div class="field">
@@ -355,8 +361,8 @@ def fattura_dettaglio(fid):
           <input type="number" step="0.01" id="e_imp" value="{f.get('totale') or 0}">
         </div>
         <div class="field-group">
-          <div class="field"><label>Categoria (opz.)</label>
-            <input id="e_cat" placeholder="es. FATTURATO"></div>
+          <div class="field"><label>Categoria</label>
+            <select id="e_cat">{cat_options}</select></div>
           <div class="field"><label>Sottocategoria (opz.)</label>
             <input id="e_scat"></div>
         </div>
@@ -447,7 +453,7 @@ def fattura_dettaglio(fid):
             toast(j.error || 'Errore registrazione', 'err');
             return;
           }}
-          toast('Registrata su spese (id ' + j.spesa_id + ')', 'ok');
+          toast('Registrata su spese P.IVA (id ' + j.spesa_piva_id + ')', 'ok');
           setTimeout(()=>location.reload(), 600);
         }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
       }}
@@ -540,9 +546,9 @@ def api_fattura_stato(fid):
 @fatture_bp.post("/api/fatture/<int:fid>/registra-entrata")
 def api_fattura_registra_entrata(fid):
     """
-    Crea riga in tabella `spese` (tipo=entrata) e collega spesa_id
-    sulla fattura. Se stato non era gia' incassata/annullata, lo porta
-    a incassata con data_incasso = data della spesa.
+    Crea riga in tabella `b2f_spese_piva` (tipo=entrata) e collega
+    spesa_piva_id sulla fattura. Se stato non era gia' incassata/annullata,
+    lo porta a incassata con data_incasso = data della spesa.
     """
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -552,9 +558,9 @@ def api_fattura_registra_entrata(fid):
         f = rf.data or {}
     except Exception as e:
         return jsonify({"error": f"fattura non trovata: {str(e)[:120]}"}), 404
-    if f.get("spesa_id"):
-        return jsonify({"error": "fattura gia' registrata su spese",
-                        "spesa_id": f["spesa_id"]}), 409
+    if f.get("spesa_piva_id"):
+        return jsonify({"error": "fattura gia' registrata su spese P.IVA",
+                        "spesa_piva_id": f["spesa_piva_id"]}), 409
 
     body = request.get_json(silent=True) or {}
     riga = {
@@ -563,31 +569,32 @@ def api_fattura_registra_entrata(fid):
         "importo":     float(body.get("importo") or f.get("totale") or 0),
         "descrizione": body.get("descrizione")
                        or f"Fattura {f.get('numero','')} — {_cliente_label(f)}",
+        "categoria":   body.get("categoria") or "fatturato",
+        "fattura_id":  fid,
     }
-    if body.get("categoria"):      riga["categoria"] = body["categoria"]
     if body.get("sottocategoria"): riga["sottocategoria"] = body["sottocategoria"]
 
     try:
-        ins = sb.table("spese").insert(riga).execute()
-        spesa_id = (ins.data or [{}])[0].get("id")
-        if not spesa_id:
-            return jsonify({"error": "insert spese senza id di ritorno"}), 500
+        ins = sb.table("b2f_spese_piva").insert(riga).execute()
+        spesa_piva_id = (ins.data or [{}])[0].get("id")
+        if not spesa_piva_id:
+            return jsonify({"error": "insert spese P.IVA senza id di ritorno"}), 500
     except Exception as e:
-        return jsonify({"error": f"errore insert spese: {str(e)[:200]}"}), 500
+        return jsonify({"error": f"errore insert spese P.IVA: {str(e)[:200]}"}), 500
 
-    upd = {"spesa_id": spesa_id}
+    upd = {"spesa_piva_id": spesa_piva_id}
     if f.get("stato") not in ("incassata", "annullata"):
         upd["stato"] = "incassata"
         upd["data_incasso"] = riga["data"]
     try:
         sb.table("b2f_fatture").update(upd).eq("id", fid).execute()
     except Exception as e:
-        # rollback manuale della riga spese
-        try: sb.table("spese").delete().eq("id", spesa_id).execute()
+        # rollback manuale della riga spese P.IVA
+        try: sb.table("b2f_spese_piva").delete().eq("id", spesa_piva_id).execute()
         except Exception: pass
         return jsonify({"error": f"aggiornamento fattura fallito: {str(e)[:200]}"}), 500
 
-    return jsonify({"ok": True, "spesa_id": spesa_id})
+    return jsonify({"ok": True, "spesa_piva_id": spesa_piva_id})
 
 
 @fatture_bp.post("/api/fatture")
