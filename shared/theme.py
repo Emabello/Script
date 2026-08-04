@@ -586,11 +586,15 @@ def inject_app_header(page_html: str, eyebrow: str = "Timesheet",
     if open_marker not in page_html:
         return page_html
 
+    # Il timesheet e' una pagina a colonna singola: la shell non la stira
+    # sull'intera larghezza del desktop.
+    topbar = _topbar(eyebrow, title_html, None, actions_html).replace(
+        '<header class="topbar">', '<header class="topbar single">', 1)
     shell_open = f"""<div class="app">
   {_rail("ore")}
   <div class="main">
-    {_topbar(eyebrow, title_html, None, actions_html)}
-    <main class="content">"""
+    {topbar}
+    <main class="content single">"""
     shell_close = f"""    </main>
   </div>
 </div>
@@ -714,7 +718,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
         sinistra.append(f'''<div class="card">
           <div class="card-head">
             <div class="eyebrow">Ultime fatture</div>
-            <a class="small" style="color:var(--accent)" href="/fatture/storico">Tutte ›</a>
+            <a class="small" style="color:var(--accent-text)" href="/fatture/storico">Tutte ›</a>
           </div>
           <div class="rows">{righe}</div>
         </div>''')
@@ -731,7 +735,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
         sinistra.append(f'''<div class="card">
           <div class="card-head">
             <div class="eyebrow">Ultimi movimenti</div>
-            <a class="small" style="color:var(--accent)" href="/spese">Tutti ›</a>
+            <a class="small" style="color:var(--accent-text)" href="/spese">Tutti ›</a>
           </div>
           <div class="rows">{righe}</div>
         </div>''')

@@ -88,7 +88,7 @@ CSS = _FONT_FACES + r"""
   --ink:#f1f2f5;      /* testo primario   */
   --ink-2:#b7bac2;    /* testo secondario */
   --ink-3:#868a94;    /* etichette        */
-  --ink-4:#5b5f69;    /* disabilitato     */
+  --ink-4:#5f636d;    /* decorativo       */
 
   /* --- Semantici (NON usare come accento) --------------------------- */
   --pos:#35bf8e;      --pos-soft:rgba(53,191,142,.14);
@@ -133,11 +133,11 @@ html[data-theme="light"]{
   --ink:#15171c;
   --ink-2:#474b55;
   --ink-3:#6d717c;
-  --ink-4:#a0a4ae;
+  --ink-4:#8a8f9b;
 
-  --pos:#0d9668;      --pos-soft:rgba(13,150,104,.12);
-  --neg:#d93a56;      --neg-soft:rgba(217,58,86,.11);
-  --warn:#b47a15;     --warn-soft:rgba(180,122,21,.13);
+  --pos:#0a7954;      --pos-soft:rgba(10,121,84,.12);
+  --neg:#c82743;      --neg-soft:rgba(200,39,67,.12);
+  --warn:#906111;     --warn-soft:rgba(144,97,17,.12);
 
   --e1:0 1px 2px rgba(16,20,30,.06);
   --e2:0 4px 14px -8px rgba(16,20,30,.18);
@@ -145,43 +145,58 @@ html[data-theme="light"]{
 }
 
 /* --- Accenti ---------------------------------------------------------
-   Ogni accento definisce: --accent (superfici piene e testo attivo),
-   --accent-hi (hover), --accent-soft (tinta di sfondo), --on-accent.
+   Un solo colore non puo' fare tutto: come grafica gli basta 3:1, come
+   testo piccolo gliene servono 4.5. Da qui tre varianti per accento:
+
+     --accent       icone, bordi, barre, numeri grandi     (>= 3:1)
+     --accent-fill  superfici piene: bottoni, FAB          (bianco >= 4.5:1)
+     --accent-text  testo piccolo: chip, link              (>= 4.5:1, anche
+                    steso sul proprio fondo tenue --accent-soft)
+
+   Piu' --accent-hi (hover), --accent-soft (tinta), --on-accent.
    Nessuno di questi e' verde o rosso: quei due restano semantici.      */
 
 :root,
 html[data-accent="indigo"]{
   --accent:#6f5cf0; --accent-hi:#8272ff; --accent-soft:rgba(111,92,240,.15);
+  --accent-fill:#6f5cf0; --accent-fill-hi:#8272ff; --accent-text:#8b7cf3;
   --on-accent:#ffffff;
 }
 html[data-theme="light"][data-accent="indigo"],
 html[data-theme="light"]{
   --accent:#5343cf; --accent-hi:#4535b8; --accent-soft:rgba(83,67,207,.11);
+  --accent-fill:#5343cf; --accent-fill-hi:#4535b8; --accent-text:#5343cf;
   --on-accent:#ffffff;
 }
 
 html[data-accent="blue"]{
   --accent:#3b8ef0; --accent-hi:#5aa2f5; --accent-soft:rgba(59,142,240,.15);
+  --accent-fill:#1273e6; --accent-fill-hi:#3b8ef0; --accent-text:#3b8ef0;
   --on-accent:#ffffff;
 }
 html[data-theme="light"][data-accent="blue"]{
   --accent:#1f6fd0; --accent-hi:#175bb0; --accent-soft:rgba(31,111,208,.11);
+  --accent-fill:#1f6fd0; --accent-fill-hi:#175bb0; --accent-text:#1e6bc9;
 }
 
 html[data-accent="violet"]{
   --accent:#a06bf0; --accent-hi:#b485f7; --accent-soft:rgba(160,107,240,.15);
+  --accent-fill:#9052ed; --accent-fill-hi:#a06bf0; --accent-text:#a572f1;
   --on-accent:#ffffff;
 }
 html[data-theme="light"][data-accent="violet"]{
   --accent:#7c45c8; --accent-hi:#68389f; --accent-soft:rgba(124,69,200,.11);
+  --accent-fill:#7c45c8; --accent-fill-hi:#68389f; --accent-text:#7c45c8;
 }
 
 html[data-accent="graphite"]{
   --accent:#d6d9e0; --accent-hi:#eceef2; --accent-soft:rgba(214,217,224,.12);
+  --accent-fill:#d6d9e0; --accent-fill-hi:#eceef2; --accent-text:#d6d9e0;
   --on-accent:#14161b;
 }
 html[data-theme="light"][data-accent="graphite"]{
   --accent:#2b2f38; --accent-hi:#151820; --accent-soft:rgba(43,47,56,.09);
+  --accent-fill:#2b2f38; --accent-fill-hi:#151820; --accent-text:#2b2f38;
   --on-accent:#ffffff;
 }
 
@@ -261,7 +276,8 @@ ul,ol{margin:0;padding:0;list-style:none}
 .pos{color:var(--pos)}
 .neg{color:var(--neg)}
 .warn{color:var(--warn)}
-.accent{color:var(--accent)}
+/* Utility per testo: usa la variante leggibile, non quella grafica. */
+.accent{color:var(--accent-text)}
 
 
 /* =====================================================================
@@ -305,7 +321,7 @@ ul,ol{margin:0;padding:0;list-style:none}
   stroke:currentColor;fill:none;stroke-width:1.6;
   stroke-linecap:round;stroke-linejoin:round}
 .rail-link:hover{background:var(--surface-3);color:var(--ink)}
-.rail-link.is-active{background:var(--accent-soft);color:var(--accent)}
+.rail-link.is-active{background:var(--accent-soft);color:var(--accent-text)}
 
 .rail-foot{display:flex;flex-direction:column;gap:var(--sp-3);
   padding-top:var(--sp-4);border-top:1px solid var(--line)}
@@ -336,6 +352,9 @@ ul,ol{margin:0;padding:0;list-style:none}
   .topbar,.content{max-width:var(--content-max-lg)}
   .topbar{padding-top:var(--sp-7);padding-left:var(--sp-7);padding-right:var(--sp-7)}
   .content{padding-left:var(--sp-7);padding-right:var(--sp-7);padding-bottom:var(--sp-9)}
+  /* Pagine pensate per una colonna sola (il timesheet): stirarle su 1140px
+     non aggiunge informazione, allunga solo le righe. */
+  .topbar.single,.content.single{max-width:760px;margin-left:0}
 }
 
 /* --- Tab bar (solo mobile/tablet) ------------------------------------ */
@@ -356,7 +375,7 @@ ul,ol{margin:0;padding:0;list-style:none}
 }
 .tab svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.6;
   stroke-linecap:round;stroke-linejoin:round}
-.tab.is-active{color:var(--accent)}
+.tab.is-active{color:var(--accent-text)}
 .tab:active{transform:scale(.94)}
 
 @media (min-width:1024px){
@@ -371,7 +390,7 @@ ul,ol{margin:0;padding:0;list-style:none}
   font-size:12.5px;color:var(--ink-3);
 }
 .crumb a{color:var(--ink-2)}
-.crumb a:hover{color:var(--accent)}
+.crumb a:hover{color:var(--accent-text)}
 .crumb .sep{color:var(--ink-4)}
 @media (min-width:1024px){
   .crumb{max-width:var(--content-max-lg);padding-left:var(--sp-7);padding-right:var(--sp-7)}
@@ -437,9 +456,10 @@ ul,ol{margin:0;padding:0;list-style:none}
   font-size:clamp(26px,5.5vw,34px);line-height:1.05;letter-spacing:-.015em;
   font-variant-numeric:tabular-nums;
 }
-.stat .val.accent{color:var(--accent)}
+.stat .val/* Utility per testo: usa la variante leggibile, non quella grafica. */
+.accent{color:var(--accent-text)}
 .stat .lbl{font-size:12px;color:var(--ink-3)}
-.stat .hint{font-size:12px;color:var(--ink-4);margin-top:2px}
+.stat .hint{font-size:12px;color:var(--ink-3);margin-top:2px}
 .stat.sm .val{font-size:22px}
 
 /* --- Righe tabellari ----------------------------------------------------
@@ -505,14 +525,14 @@ ul,ol{margin:0;padding:0;list-style:none}
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:var(--sp-2);
   min-height:44px;padding:11px var(--sp-5);border-radius:var(--r-full);
-  background:var(--accent);color:var(--on-accent);
+  background:var(--accent-fill);color:var(--on-accent);
   font-size:14.5px;font-weight:600;letter-spacing:.005em;
   transition:background-color var(--dur),transform var(--dur),opacity var(--dur);
 }
 .btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;
   stroke-linecap:round;stroke-linejoin:round}
 .btn:active{transform:scale(.98)}
-@media (hover:hover){.btn:hover{background:var(--accent-hi)}}
+@media (hover:hover){.btn:hover{background:var(--accent-fill-hi)}}
 .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line-strong)}
 @media (hover:hover){.btn.ghost:hover{background:var(--surface-3)}}
 .btn.subtle{background:var(--surface-3);color:var(--ink)}
@@ -545,7 +565,7 @@ ul,ol{margin:0;padding:0;list-style:none}
   bottom:calc(var(--tabbar-h) + var(--sp-4) + env(safe-area-inset-bottom,0px));
   display:inline-flex;align-items:center;gap:var(--sp-2);
   min-height:52px;padding:0 var(--sp-5);border-radius:var(--r-full);
-  background:var(--accent);color:var(--on-accent);
+  background:var(--accent-fill);color:var(--on-accent);
   font-size:14.5px;font-weight:600;box-shadow:var(--e3),var(--e1);
 }
 .fab svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:2.2;
@@ -562,7 +582,7 @@ ul,ol{margin:0;padding:0;list-style:none}
   font-size:11.5px;font-weight:500;letter-spacing:.02em;
   background:var(--surface-3);color:var(--ink-2);white-space:nowrap;
 }
-.chip.accent{background:var(--accent-soft);color:var(--accent)}
+.chip.accent{background:var(--accent-soft);color:var(--accent-text)}
 .chip.pos{background:var(--pos-soft);color:var(--pos)}
 .chip.neg{background:var(--neg-soft);color:var(--neg)}
 .chip.warn{background:var(--warn-soft);color:var(--warn)}
@@ -582,7 +602,7 @@ ul,ol{margin:0;padding:0;list-style:none}
 }
 .notice-row{display:flex;align-items:center;justify-content:space-between;
   gap:var(--sp-3);flex-wrap:wrap}
-.notice-row button{color:var(--accent);font-weight:600;white-space:nowrap}
+.notice-row button{color:var(--accent-text);font-weight:600;white-space:nowrap}
 
 /* --- Form -------------------------------------------------------------------- */
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:var(--sp-3)}
@@ -590,7 +610,7 @@ ul,ol{margin:0;padding:0;list-style:none}
    usato dalle intestazioni di sezione (.eyebrow), e due livelli di
    maiuscolo nello stesso modulo appiattiscono la gerarchia. */
 .field label{font-size:12.5px;font-weight:500;color:var(--ink-3)}
-.field .hint{font-size:12px;color:var(--ink-4)}
+.field .hint{font-size:12px;color:var(--ink-3)}
 .field input,.field select,.field textarea,.input{
   width:100%;min-height:44px;padding:11px var(--sp-3);
   background:var(--bg);color:var(--ink);

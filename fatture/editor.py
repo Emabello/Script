@@ -88,7 +88,7 @@ _EDITOR_HTML = r"""
   border-top:1px solid var(--line)}
 .tot-row .lbl{color:var(--ink-3)}
 .tot-row .val{font-variant-numeric:tabular-nums}
-.tot-row.big .val{color:var(--accent)}
+.tot-row.big .val{color:var(--accent-text)}
 .pill-count{background:var(--surface-3);padding:5px 12px;border-radius:var(--r-full);
   font-size:12.5px;color:var(--ink-2);display:inline-flex;align-items:center;gap:5px}
 .pill-count .tnum{font-weight:600}
@@ -128,7 +128,7 @@ _EDITOR_HTML = r"""
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
     <div class="eyebrow">Cliente</div>
-    <a href="/fatture/clienti/nuovo" style="font-size:12.5px;color:var(--gold);
+    <a href="/fatture/clienti/nuovo" style="font-size:12.5px;color:var(--accent-text);
        text-decoration:none">+ nuovo</a>
   </div>
   <div class="field">
@@ -137,7 +137,7 @@ _EDITOR_HTML = r"""
       <option value="">— seleziona —</option>
     </select>
   </div>
-  <div id="c_summary" style="color:var(--muted);font-size:13px;line-height:1.5"></div>
+  <div id="c_summary" class="small muted" style="line-height:1.5"></div>
 </div>
 
 <div class="card">
