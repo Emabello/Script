@@ -175,8 +175,10 @@ def _situazione_data(sb, anno: int) -> dict:
     for m in range(1, 13):
         fatt = fatturato_mese[m]
         imponibile = round(fatt * coeff, 2)
-        imposta = round(imponibile * aliq_imp, 2)
         inps_saldo = round(imponibile * aliq_inps, 2)
+        # L'imposta sostitutiva si calcola sul reddito al netto dei contributi
+        # INPS deducibili: (Imponibile - INPS Saldo) * aliquota.
+        imposta = round((imponibile - inps_saldo) * aliq_imp, 2)
         inps_acconto = round(inps_saldo * aliq_acc, 2)
         incasso = incasso_mese[m]
         bollo = bollo_mese[m]
@@ -443,7 +445,7 @@ def _build_workbook(sb, anno: int):
         cell(f"B{r}", m["fatturato"], fmt=money_fmt, fill=input_fill)
         cell(f"C{r}", f"=B{r}*$D$5", fmt=money_fmt)
         cell(f"D{r}", m["incasso"], fmt=money_fmt, fill=input_fill)
-        cell(f"E{r}", f"=C{r}*$E$5", fmt=money_fmt)
+        cell(f"E{r}", f"=(C{r}-F{r})*$E$5", fmt=money_fmt)
         cell(f"F{r}", f"=C{r}*$F$5", fmt=money_fmt)
         cell(f"G{r}", f"=F{r}*$G$5", fmt=money_fmt)
         cell(f"H{r}", m["bollo"], fmt=money_fmt, fill=input_fill)

@@ -68,11 +68,14 @@ def index():
     anno = s["anno"]
 
     content = f'''
-    <div class="card">
-      <div class="eyebrow" style="margin-bottom:6px">Emittente</div>
+    <a href="/fatture/emittente" class="card" style="display:block;text-decoration:none;color:inherit">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="eyebrow" style="margin-bottom:6px">Emittente</div>
+        <span style="font-size:12.5px;color:var(--gold)">Modifica ›</span>
+      </div>
       <h2 class="serif" style="margin:0 0 3px">{em_line}</h2>
       <div style="color:var(--muted);font-size:13px">{em_sub}</div>
-    </div>
+    </a>
 
     <div class="cta-list">
       <a href="/fatture/nuova">
