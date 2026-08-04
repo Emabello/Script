@@ -818,7 +818,16 @@ def api_parametri_update():
         r = sb.table("b2f_parametri_fiscali").update(payload).eq("id", 1).execute()
         return jsonify(r.data[0] if r.data else {"id": 1})
     except Exception as e:
-        return jsonify({"error": str(e)[:200]}), 500
+        msg = str(e)
+        # I parametri di accantonamento vivono su colonne aggiunte da
+        # migration_accantonamento.sql. Se la migrazione non e' stata
+        # ancora eseguita, dirlo invece di rilanciare l'errore grezzo.
+        if "column" in msg.lower() and any(c in msg for c in acc.PARAMETRI_CAMPI):
+            return jsonify({
+                "error": "Colonne mancanti su b2f_parametri_fiscali: esegui "
+                         "migration_accantonamento.sql nell'SQL Editor di Supabase."
+            }), 409
+        return jsonify({"error": msg[:200]}), 500
 
 
 # ---------------------------------------------------------------------------
