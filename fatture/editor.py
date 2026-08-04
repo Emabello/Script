@@ -30,11 +30,23 @@ def fattura_nuova():
     except Exception:
         em = {}
 
+    # Quota da accantonare, calcolata coi parametri fiscali correnti: serve
+    # per il suggerimento dal vivo mentre si compila la fattura.
+    try:
+        from .fiscale import get_parametri
+        from . import accantonamento as acc
+        prova = acc.scomponi(1000.0, get_parametri(sb))
+        acc_rate = prova["aliquote"][prova["scenario_preferito"]]
+    except Exception:
+        acc_rate = 0.0
+
     today = date.today().isoformat()
     pdf_js = pdf_script(em)
 
-    content = _EDITOR_HTML.replace("__TODAY__", today) \
-                          .replace("__PDF_SCRIPT__", pdf_js)
+    content = (_EDITOR_HTML
+               .replace("__TODAY__", today)
+               .replace("__ACC_RATE__", f"{acc_rate:.6f}")
+               .replace("__PDF_SCRIPT__", pdf_js))
 
     return _render(content)
 
@@ -54,36 +66,37 @@ def _render(content: str) -> Response:
 
 _EDITOR_HTML = r"""
 <style>
-.riga{display:grid;grid-template-columns:1fr 54px 46px 82px 34px;gap:6px;
-  padding:10px;border:1px solid var(--line);border-radius:12px;margin-bottom:8px;
-  background:var(--input-bg)}
-.riga input{width:100%;padding:8px 10px;border-radius:8px;
-  background:transparent;border:1px solid var(--line);color:var(--ink);
-  font-family:inherit;font-size:14px;min-height:38px}
+/* Due righe: descrizione a tutta larghezza, poi quantità · unità · prezzo ·
+   elimina. Le quattro colonne descrivono la seconda riga. */
+.riga{display:grid;grid-template-columns:minmax(0,1fr) 58px minmax(0,1.4fr) 40px;
+  gap:6px;padding:10px;border:1px solid var(--line);border-radius:var(--r-sm);
+  margin-bottom:var(--sp-2);background:var(--surface-3)}
+.riga input{width:100%;padding:8px 10px;border-radius:var(--r-xs);
+  background:var(--surface);border:1px solid var(--line);color:var(--ink);
+  font-family:inherit;font-size:14px;min-height:40px}
 .riga .desc{grid-column:1/-1}
-.riga input:focus{outline:none;border-color:var(--gold)}
+.riga input:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft)}
 .riga .qta,.riga .prezzo{text-align:right;font-variant-numeric:tabular-nums}
-.riga .um{text-align:center;text-transform:lowercase;font-size:12.5px;color:var(--muted)}
-.riga .btn-x{padding:0;background:transparent;border:none;color:var(--faint);
-  font-size:18px;cursor:pointer;display:grid;place-items:center;border-radius:8px;
-  transition:.15s;min-height:38px}
-.riga .btn-x:hover{color:var(--danger);background:rgba(255,107,129,.1)}
-.tot-row{display:flex;justify-content:space-between;padding:6px 4px;font-size:13.5px}
-.tot-row.big{font-size:17px;font-weight:600;padding-top:10px;margin-top:8px;
+.riga .um{text-align:center;text-transform:lowercase;font-size:12.5px}
+.riga .btn-x{color:var(--ink-4);font-size:17px;display:grid;place-items:center;
+  border-radius:var(--r-xs);transition:color .15s,background-color .15s;min-height:40px}
+.riga .btn-x:hover{color:var(--neg);background:var(--neg-soft)}
+.tot-row{display:flex;justify-content:space-between;gap:12px;
+  padding:7px 0;font-size:13.5px}
+.tot-row.big{font-size:17px;font-weight:600;padding-top:11px;margin-top:var(--sp-2);
   border-top:1px solid var(--line)}
-.tot-row .lbl{color:var(--muted)}
+.tot-row .lbl{color:var(--ink-3)}
 .tot-row .val{font-variant-numeric:tabular-nums}
-.tot-row.big .val{color:var(--gold)}
-.check-row{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:13.5px}
-.check-row input[type=checkbox]{width:18px;height:18px;accent-color:var(--gold)}
-.pill-count{background:var(--card-grad);border:1px solid var(--line-strong);
-  padding:6px 12px;border-radius:999px;font-size:12.5px;color:var(--ink-dim);
-  display:inline-flex;align-items:center;gap:6px}
-.pill-count .tnum{color:var(--gold);font-weight:600}
+.tot-row.big .val{color:var(--accent)}
+.pill-count{background:var(--surface-3);padding:5px 12px;border-radius:var(--r-full);
+  font-size:12.5px;color:var(--ink-2);display:inline-flex;align-items:center;gap:5px}
+.pill-count .tnum{font-weight:600}
 </style>
 
+<div class="narrow">
 <div class="card">
-  <div class="eyebrow" style="margin-bottom:8px">Documento</div>
+  <div class="card-head"><div class="eyebrow">Documento</div></div>
   <div class="field-group">
     <div class="field">
       <label>Numero</label>
@@ -130,7 +143,8 @@ _EDITOR_HTML = r"""
 <div class="card">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
     <div class="eyebrow">Righe</div>
-    <span class="pill-count"><span class="tnum" id="n_righe">0</span> righe</span>
+    <span class="pill-count"><span class="tnum" id="n_righe">0</span>
+      <span id="n_righe_lbl">righe</span></span>
   </div>
   <div id="righe"></div>
   <button type="button" class="btn ghost" onclick="addRiga()" style="width:100%;margin-top:4px">
@@ -139,24 +153,25 @@ _EDITOR_HTML = r"""
 </div>
 
 <div class="card">
-  <div class="eyebrow" style="margin-bottom:8px">Contributi & bollo</div>
-  <div class="check-row">
+  <div class="card-head"><div class="eyebrow">Contributi e bollo</div></div>
+  <div class="field inline">
     <input type="checkbox" id="o_inps">
-    <label for="o_inps">Addebita cassa prev. 4% (INPS Gest. Sep.)</label>
+    <label for="o_inps">Addebita cassa previdenziale 4 % (INPS Gest. Sep.)</label>
   </div>
-  <div class="check-row">
+  <div class="field inline">
     <input type="checkbox" id="o_bollo_add" checked>
     <label for="o_bollo_add">Addebita bollo € 2,00 se dovuto (imponibile &gt; € 77,47)</label>
   </div>
 </div>
 
 <div class="card">
-  <div class="eyebrow" style="margin-bottom:8px">Totali</div>
+  <div class="card-head"><div class="eyebrow">Totali</div></div>
   <div id="totali"></div>
+  <div class="notice info small mt-3" id="accHint" style="display:none"></div>
 </div>
 
 <div class="card">
-  <div class="eyebrow" style="margin-bottom:8px">Pagamento</div>
+  <div class="card-head"><div class="eyebrow">Pagamento</div></div>
   <div class="field">
     <label>Modalità</label>
     <input id="p_mod" placeholder="Bonifico bancario">
@@ -173,9 +188,10 @@ _EDITOR_HTML = r"""
   </div>
 </div>
 
-<div class="actions" style="margin-top:14px">
+<div class="actions">
   <button type="button" class="btn" onclick="onSalva()">Salva fattura</button>
   <button type="button" class="btn ghost" onclick="onPDF()">Anteprima PDF</button>
+</div>
 </div>
 
 <div id="toast" class="toast"></div>
@@ -186,8 +202,10 @@ __PDF_SCRIPT__
 // Utility (l'oggetto EMITTENTE è disponibile globalmente via pdfgen)
 // ==============================================================
 const $ = id => document.getElementById(id);
+const ACC_RATE = __ACC_RATE__;   // quota consigliata da accantonare sul lordo
 const r2 = n => Math.round((Number(n)+Number.EPSILON)*100)/100;
-const eur = n => (r2(n)).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+// Simbolo davanti, come in tutto il resto dell'app.
+const eur = n => '€ ' + (r2(n)).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
 const xnum = n => (r2(n)).toFixed(2);
 const esc = s => String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 const todayISO = () => new Date().toISOString().slice(0,10);
@@ -285,17 +303,21 @@ function renderRighe() {
     el.innerHTML = `
       <input class="desc" placeholder="Descrizione" value="${esc(r.desc)}"
              oninput="upd(${i},'desc',this.value)">
-      <input class="qta" type="number" step="0.01" min="0" placeholder="Q.tà"
+      <input class="qta" type="number" step="0.01" min="0" inputmode="decimal"
+             placeholder="Q.tà" aria-label="Quantità"
              value="${r.qta}" oninput="upd(${i},'qta',this.value)">
-      <input class="um" placeholder="um" maxlength="6"
+      <input class="um" placeholder="um" maxlength="6" aria-label="Unità di misura"
              value="${esc(r.um || '')}" oninput="upd(${i},'um',this.value)">
-      <input class="prezzo" type="number" step="0.01" min="0" placeholder="Prezzo"
+      <input class="prezzo" type="number" step="0.01" min="0" inputmode="decimal"
+             placeholder="Prezzo" aria-label="Prezzo unitario"
              value="${r.prezzo}" oninput="upd(${i},'prezzo',this.value)">
-      <button type="button" class="btn-x" onclick="delRiga(${i})">✕</button>
+      <button type="button" class="btn-x" onclick="delRiga(${i})"
+              aria-label="Elimina riga">✕</button>
     `;
     wrap.appendChild(el);
   });
   $('n_righe').textContent = righe.length;
+  $('n_righe_lbl').textContent = righe.length === 1 ? 'riga' : 'righe';
 }
 function upd(i, k, v) { righe[i][k] = v; recalc(); }
 function delRiga(i) {
@@ -328,6 +350,21 @@ function recalc() {
     <div class="tot-row big"><span>Totale</span>
       <span class="val tnum">${eur(t.totale)}</span></div>
   `;
+
+  // Anticipa il calcolo dell'accantonamento: e' utile saperlo mentre si
+  // decide il prezzo, non solo dopo aver incassato.
+  const hint = $('accHint');
+  if (hint) {
+    if (t.totale > 0 && ACC_RATE > 0) {
+      hint.style.display = 'block';
+      hint.innerHTML = 'Quando incasserai questa fattura, metti da parte circa '
+        + '<strong>' + eur(t.totale * ACC_RATE) + '</strong> '
+        + '(' + (ACC_RATE * 100).toFixed(1).replace('.', ',') + '%). '
+        + 'Restano tuoi ' + eur(t.totale * (1 - ACC_RATE)) + '.';
+    } else {
+      hint.style.display = 'none';
+    }
+  }
 }
 
 // ==============================================================

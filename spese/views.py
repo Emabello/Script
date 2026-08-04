@@ -1,5 +1,9 @@
 """
-spese/views.py — Area /spese, in stile launchpad B2F.
+spese/views.py — Area /spese: il conto personale.
+
+I movimenti della P.IVA (fatturato incassato, commercialista, licenze)
+vivono invece sotto /fatture/spese-piva, perche' entrano nel calcolo
+fiscale. Qui c'e' solo il personale.
 """
 from datetime import date
 
@@ -7,12 +11,9 @@ from flask import Response
 
 from . import spese_bp
 from shared.theme import render_page
+from shared.design import icon
+from shared.fmt import eur, eur_segno, data_breve
 from shared.supabase_client import get_client, is_configured
-
-
-def _fmt(v: float) -> str:
-    s = f"{v:,.2f}"
-    return s.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def _diag():
@@ -28,7 +29,7 @@ def _diag():
 
     try:
         r = (sb.table("spese").select("data,importo,descrizione,tipo")
-               .order("data", desc=True).limit(5).execute())
+               .order("data", desc=True).limit(8).execute())
         out["ultime"] = r.data or []
     except Exception:
         pass
@@ -41,8 +42,10 @@ def _diag():
         for row in (r.data or []):
             imp = float(row.get("importo") or 0)
             t = row.get("tipo") or ""
-            if t == "entrata": out["entrate_mese"] += imp
-            elif t == "uscita": out["uscite_mese"] += imp
+            if t == "entrata":
+                out["entrate_mese"] += imp
+            elif t == "uscita":
+                out["uscite_mese"] += imp
         out["saldo_mese"] = out["entrate_mese"] - out["uscite_mese"]
     except Exception:
         out["saldo_mese"] = None
@@ -65,62 +68,80 @@ def index():
         content = f'<div class="notice err">Errore <code>spese</code>: {d["err"]}</div>'
     else:
         saldo = d.get("saldo_mese") or 0
-        sign  = "+" if saldo >= 0 else "\u2212"
-        col   = "var(--emerald)" if saldo >= 0 else "var(--danger)"
 
-        rows = []
+        righe = []
         for r in d.get("ultime", []):
-            imp  = float(r.get("importo") or 0)
+            imp = float(r.get("importo") or 0)
             desc = (r.get("descrizione") or "").strip() or "—"
             tipo = r.get("tipo", "")
-            s = "\u2212" if tipo == "uscita" else "+" if tipo == "entrata" else ""
             cls = "neg" if tipo == "uscita" else "pos" if tipo == "entrata" else ""
-            rows.append(
+            firmato = imp if tipo == "entrata" else -imp
+            righe.append(
                 f'<div class="row">'
-                f'<div class="d">{r.get("data","")}</div>'
-                f'<div class="t">{desc}</div>'
-                f'<div class="a {cls} tnum">{s}{_fmt(imp)}</div>'
+                f'<span class="k">{data_breve(r.get("data"))}</span>'
+                f'<span class="t">{desc}</span>'
+                f'<span class="v tnum {cls}">{eur_segno(firmato)}</span>'
                 f'</div>'
             )
-        ultime_block = (f'<div class="card">'
-                        f'<div class="eyebrow" style="margin-bottom:10px">Ultime 5</div>'
-                        f'<div class="rows">{"".join(rows)}</div></div>' if rows else "")
+        ultimi = (
+            f'<div class="card">'
+            f'<div class="card-head"><div class="eyebrow">Ultimi movimenti</div></div>'
+            f'<div class="rows">{"".join(righe)}</div></div>'
+        ) if righe else (
+            '<div class="empty">'
+            + icon("spese")
+            + '<div class="t">Nessun movimento</div>'
+            + '<div class="s">La tabella <code>spese</code> è vuota.</div></div>'
+        )
 
         content = f"""
-        <div class="card">
-          <div class="eyebrow" style="margin-bottom:8px">Saldo mese corrente</div>
-          <div class="stat">
-            <div class="num tnum" style="color:{col}">{sign}€ {_fmt(abs(saldo))}</div>
-            <div class="lbl">Netti</div>
-          </div>
-          <div style="display:flex;gap:22px;margin-top:14px;font-size:12.5px;
-                      color:var(--muted);letter-spacing:.04em">
-            <div>Entrate <span class="tnum" style="color:var(--emerald);font-weight:500">+{_fmt(d['entrate_mese'])}</span></div>
-            <div>Uscite <span class="tnum" style="color:var(--danger);font-weight:500">\u2212{_fmt(d['uscite_mese'])}</span></div>
-          </div>
+        <div class="grid kpi mb-4">
+          <div class="card"><div class="stat">
+            <div class="val tnum {"pos" if saldo >= 0 else "neg"}">€ {eur_segno(saldo, 0)}</div>
+            <div class="lbl">Saldo del mese</div></div></div>
+          <div class="card"><div class="stat sm">
+            <div class="val tnum pos">€ {eur(d['entrate_mese'], 0)}</div>
+            <div class="lbl">Entrate</div></div></div>
+          <div class="card"><div class="stat sm">
+            <div class="val tnum neg">€ {eur(d['uscite_mese'], 0)}</div>
+            <div class="lbl">Uscite</div></div></div>
+          <div class="card"><div class="stat sm">
+            <div class="val tnum">{d.get('count', 0)}</div>
+            <div class="lbl">Movimenti totali</div></div></div>
         </div>
 
-        <div class="card">
-          <div class="stat">
-            <div class="num tnum">{d.get('count', 0)}</div>
-            <div class="lbl">Righe totali</div>
+        <div class="grid split">
+          <div class="stack">{ultimi}</div>
+          <div class="stack">
+            <div class="card">
+              <div class="card-head"><div class="eyebrow">Due conti separati</div></div>
+              <p class="small muted">
+                Qui c'è il conto personale. I movimenti della P.IVA — fatturato
+                incassato, commercialista, licenze — stanno sotto Fatture,
+                perché entrano nel calcolo fiscale.
+              </p>
+              <a class="btn ghost block mt-4" href="/fatture/spese-piva">
+                {icon("wallet")}Movimenti P.IVA
+              </a>
+            </div>
+
+            <div class="card">
+              <div class="card-head"><div class="eyebrow">In arrivo</div></div>
+              <p class="small muted">
+                L'inserimento dei movimenti personali non è ancora attivo da qui:
+                per ora la scrittura passa dal database.
+              </p>
+              <span class="btn is-disabled block mt-4" aria-disabled="true">
+                {icon("plus")}Nuovo movimento
+              </span>
+            </div>
           </div>
-        </div>
-
-        {ultime_block}
-
-        <div style="display:flex;gap:10px;margin-top:18px">
-          <a class="btn is-disabled" href="#" aria-disabled="true">Nuova spesa</a>
-        </div>
-        <div style="color:var(--faint);font-size:11px;margin-top:10px;
-                    letter-spacing:.05em;text-transform:uppercase">
-          Disponibile dallo step 7
         </div>
         """
 
     return Response(
         render_page(section="spese",
-                    eyebrow="Movimenti",
+                    eyebrow="Conto personale",
                     title_html='Le mie <em>spese</em>',
                     content=content),
         mimetype="text/html")

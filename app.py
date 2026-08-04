@@ -72,9 +72,104 @@ def _greet_name() -> str:
         return ""
 
 
+def _dashboard_data() -> dict:
+    """
+    Dati della home. Ogni blocco e' isolato in un try: se una query
+    fallisce la dashboard perde quel riquadro, non l'intera pagina.
+    """
+    if not is_configured():
+        return {"errore": "Supabase non configurato. Aggiungi <code>SUPABASE_URL</code> "
+                          "e <code>SUPABASE_KEY</code> alle env vars."}
+
+    from fatture.fiscale import situazione_data
+    from fatture import accantonamento as acc
+    from fatture.storico import cliente_label
+    from fatture.costanti import MESI_NOMI
+
+    sb = get_client()
+    today = date.today()
+    anno = today.year
+    out: dict = {"anno": anno}
+
+    # Situazione fiscale: da qui arrivano incassato del mese, scadenze e
+    # la base per il calcolo dell'accantonamento.
+    try:
+        s = situazione_data(sb, anno)
+        mese = s["mensile"][today.month - 1]
+        incassato_mese = mese["incasso"]
+        out["incassato_mese"] = incassato_mese
+        out["scadenze"] = [(x["data"], x["descrizione"], x["importo"])
+                           for x in s["scadenze"] if x["importo"] > 0]
+
+        scomposizione = acc.scomponi(
+            incassato_mese, s["parametri"],
+            fatturato_riferimento=s["totali"]["incasso"],
+        )
+        out["accantonamento"] = scomposizione
+        if incassato_mese > 0:
+            out["accantonamento_html"] = acc.card_html(
+                scomposizione,
+                titolo="Da accantonare",
+                contesto=f"Calcolato sugli incassi di {MESI_NOMI[today.month - 1].lower()}. "
+                         f"Le tasse del forfettario si pagano per cassa: conta quando "
+                         f"il denaro arriva, non quando emetti.",
+                uid="accHome",
+            )
+    except Exception as e:
+        out["errore"] = f"Situazione fiscale non disponibile: {str(e)[:160]}"
+
+    try:
+        r = (sb.table("b2f_fatture").select("*", count="exact", head=True)
+               .eq("anno", anno).in_("stato", ["emessa", "incassata"]).execute())
+        out["n_fatture_anno"] = r.count
+    except Exception:
+        pass
+
+    try:
+        r = (sb.table("b2f_fatture")
+               .select("id,numero,data,totale,stato,cliente_snapshot")
+               .in_("stato", ["emessa", "incassata"])
+               .order("data", desc=True).limit(4).execute())
+        out["ultime_fatture"] = [
+            (f["id"], f.get("numero") or "—", cliente_label(f),
+             f.get("data"), f.get("totale"))
+            for f in (r.data or [])
+        ]
+    except Exception:
+        pass
+
+    try:
+        d_from = today.replace(day=1).isoformat()
+        r = (sb.table("spese").select("importo,tipo")
+               .gte("data", d_from).lte("data", today.isoformat()).execute())
+        entrate = uscite = 0.0
+        for row in (r.data or []):
+            imp = float(row.get("importo") or 0)
+            if row.get("tipo") == "entrata":
+                entrate += imp
+            elif row.get("tipo") == "uscita":
+                uscite += imp
+        out["saldo_spese_mese"] = round(entrate - uscite, 2)
+    except Exception:
+        pass
+
+    try:
+        r = (sb.table("spese").select("data,importo,descrizione,tipo")
+               .order("data", desc=True).limit(4).execute())
+        out["ultimi_movimenti"] = [
+            ((m.get("descrizione") or "—"), m.get("data"),
+             float(m.get("importo") or 0), m.get("tipo") or "")
+            for m in (r.data or [])
+        ]
+    except Exception:
+        pass
+
+    return out
+
+
 @app.get("/")
 def launchpad():
-    html = render_launchpad(greet_name=_greet_name())
+    html = render_launchpad(greet_name=_greet_name(), dati=_dashboard_data())
     return Response(html, mimetype="text/html")
 
 

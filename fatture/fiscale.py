@@ -35,9 +35,12 @@ from datetime import date
 from flask import Response, request, jsonify, send_file
 
 from . import fatture_bp
+from . import accantonamento as acc
 from .costanti import CATEGORIE_SPESE_PIVA, MESI_NOMI
 from shared.theme import render_page
+from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
+from shared.fmt import eur as _fmt_eur, data_it as _fmt_date, pct
 
 
 PARAMETRI_DEFAULT = {
@@ -47,13 +50,14 @@ PARAMETRI_DEFAULT = {
     "aliquota_acconto": 0.80, "bollo_soglia": 77.47, "bollo_importo": 2.00,
     "limite_fatturato_anno": 85000, "data_apertura_piva": "2026-05-28",
     "anno_fine_regime_agevolato": 2031,
+    **acc.PARAMETRI_DEFAULT,
 }
 
 PARAMETRI_CAMPI = (
     "regime", "coeff_ateco", "aliquota_imposta", "aliquota_inps",
     "aliquota_acconto", "bollo_soglia", "bollo_importo",
     "limite_fatturato_anno", "data_apertura_piva", "anno_fine_regime_agevolato",
-)
+) + acc.PARAMETRI_CAMPI
 
 MOVIMENTO_CAMPI = (
     "data", "importo", "tipo", "descrizione", "categoria",
@@ -65,22 +69,6 @@ def _supabase_or_error():
     if not is_configured():
         return None, ('<div class="notice warn">Supabase non configurato.</div>')
     return get_client(), None
-
-
-def _fmt_eur(v) -> str:
-    try: v = float(v or 0)
-    except Exception: v = 0.0
-    s = f"{v:,.2f}"
-    return s.replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def _fmt_date(iso: str | None) -> str:
-    if not iso: return ""
-    try:
-        y, m, d = iso[:10].split("-")
-        return f"{d}/{m}/{y}"
-    except Exception:
-        return iso[:10]
 
 
 # ---------------------------------------------------------------------------
@@ -183,12 +171,18 @@ def _situazione_data(sb, anno: int) -> dict:
         incasso = incasso_mese[m]
         bollo = bollo_mese[m]
         comm = commercialista_mese[m]
+        # "Stipendio" del foglio di riferimento: incasso meno tutto, acconti
+        # inclusi. Resta per parita' con l'export Excel.
         netto = round(incasso - imposta - inps_saldo - inps_acconto - bollo - comm, 2)
+        # Quanto resta davvero di competenza: gli acconti sono un anticipo
+        # sull'anno successivo, non un costo dell'anno.
+        netto_comp = round(incasso - imposta - inps_saldo - bollo - comm, 2)
         mensile.append({
             "mese": m, "nome": MESI_NOMI[m - 1],
             "fatturato": fatt, "imponibile": imponibile, "incasso": incasso,
             "imposta": imposta, "inps_saldo": inps_saldo, "inps_acconto": inps_acconto,
-            "bollo": bollo, "commercialista": comm, "netto": netto,
+            "bollo": bollo, "commercialista": comm,
+            "netto": netto, "netto_competenza": netto_comp,
         })
         tot["fatturato"] += fatt
         tot["imponibile"] += imponibile
@@ -202,20 +196,42 @@ def _situazione_data(sb, anno: int) -> dict:
     for k in tot:
         tot[k] = round(tot[k], 2)
 
-    totale_da_versare = round(tot["imposta"] + tot["inps_saldo"] + tot["inps_acconto"], 2)
-    netto_stimato = round(tot["incasso"] - tot["imposta"] - tot["inps_saldo"]
-                          - tot["inps_acconto"] - tot["bollo"] - tot["commercialista"], 2)
-
     mesi_attivita = _mesi_attivita(anno, param["data_apertura_piva"])
     limite_ragguagliato = round(limite_anno / 12 * mesi_attivita, 2)
 
+    # L'acconto dell'imposta sostitutiva e' pari al 100 % del saldo (nessuna
+    # riduzione), a differenza dell'INPS che va all'80 % col metodo storico.
+    acc_imposta_perc = float(param.get("acconto_imposta_perc") or 1.0)
+    imposta_acconto = round(tot["imposta"] * acc_imposta_perc, 2)
+
     scadenza_giugno = round(tot["imposta"] + tot["inps_saldo"]
                             + tot["commercialista"] + tot["bollo"], 2)
-    scadenza_novembre = round(tot["imposta"] + tot["inps_acconto"], 2)
+    scadenza_novembre = round(imposta_acconto + tot["inps_acconto"], 2)
+
+    # Due grandezze che prima erano confuse in un unico "netto stimato":
+    #  - competenza: quanto dell'anno resta davvero tuo. Gli acconti non
+    #    sono un costo, sono un anticipo che si scomputa dal saldo dopo.
+    #  - cassa: quanto serve avere da parte per onorare le due scadenze,
+    #    che nell'anno di transizione cadono sullo stesso anno solare.
+    netto_competenza = round(tot["incasso"] - tot["imposta"] - tot["inps_saldo"]
+                             - tot["bollo"] - tot["commercialista"], 2)
+    dovuto_saldo = round(tot["imposta"] + tot["inps_saldo"], 2)
+    acconti = round(imposta_acconto + tot["inps_acconto"], 2)
+    cassa_da_riservare = round(scadenza_giugno + scadenza_novembre, 2)
+
+    # Accantonamento consigliato sull'incassato dell'anno, esposto anche
+    # dall'API cosi' le altre pagine non devono rifare il calcolo.
+    scomposizione = acc.scomponi(tot["incasso"], param,
+                                 fatturato_riferimento=tot["incasso"])
 
     return {
         "anno": anno,
         "parametri": param,
+        "accantonamento": {
+            **scomposizione["importi"],
+            "aliquote": scomposizione["aliquote"],
+            "netti": scomposizione["netti"],
+        },
         "limite_ragguagliato": limite_ragguagliato,
         "mesi_attivita": mesi_attivita,
         "totali": {
@@ -225,11 +241,18 @@ def _situazione_data(sb, anno: int) -> dict:
             "imposta_accantonata": tot["imposta"],
             "inps_saldo_accantonato": tot["inps_saldo"],
             "inps_acconto_accantonato": tot["inps_acconto"],
+            "imposta_acconto": imposta_acconto,
             "bollo_totale": tot["bollo"],
             "commercialista_totale": tot["commercialista"],
-            "totale_da_versare": totale_da_versare,
             "spese_piva_totali": round(spese_piva_uscite_tot, 2),
-            "netto_stimato": netto_stimato,
+            # Nuove grandezze, esplicite
+            "dovuto_saldo": dovuto_saldo,
+            "acconti": acconti,
+            "cassa_da_riservare": cassa_da_riservare,
+            "netto_competenza": netto_competenza,
+            # Alias storici, mantenuti per non rompere chi li leggeva
+            "totale_da_versare": cassa_da_riservare,
+            "netto_stimato": netto_competenza,
         },
         "mensile": mensile,
         "scadenze": [
@@ -241,6 +264,17 @@ def _situazione_data(sb, anno: int) -> dict:
              "importo": scadenza_novembre},
         ],
     }
+
+
+# Alias pubblici: app.py e i moduli fratelli hanno bisogno di questi due.
+def get_parametri(sb) -> dict:
+    """Parametri fiscali correnti, con i default applicati."""
+    return _get_parametri(sb)
+
+
+def situazione_data(sb, anno: int) -> dict:
+    """Situazione fiscale completa dell'anno indicato."""
+    return _situazione_data(sb, anno)
 
 
 # ---------------------------------------------------------------------------
@@ -267,83 +301,167 @@ def situazione_dashboard():
     pct_limite = 0.0
     if s["limite_ragguagliato"] > 0:
         pct_limite = min(t["fatturato"] / s["limite_ragguagliato"] * 100, 100)
+    limite_cls = "neg" if pct_limite >= 90 else "warn" if pct_limite >= 70 else ""
+    pct_it = f"{pct_limite:.1f}".replace(".", ",")
 
     anno_opts = "".join(
         f'<option value="{y}"{" selected" if y == anno else ""}>{y}</option>'
         for y in range(anno_default + 1, anno_default - 5, -1)
     )
+    selettore_anno = (
+        '<select class="select-pill" aria-label="Anno"'
+        ' onchange="location.href=\'/fatture/situazione?anno=\'+this.value">'
+        f'{anno_opts}</select>'
+    )
 
+    # --- Tessere principali -------------------------------------------------
+    kpi = f'''
+    <div class="grid kpi mb-4">
+      <div class="card"><div class="stat">
+        <div class="val tnum">€ {_fmt_eur(t["fatturato"], 0)}</div>
+        <div class="lbl">Fatturato {anno}</div></div></div>
+      <div class="card"><div class="stat">
+        <div class="val tnum">€ {_fmt_eur(t["incasso"], 0)}</div>
+        <div class="lbl">Incassato</div>
+        <div class="hint">su cui si pagano le tasse</div></div></div>
+      <div class="card"><div class="stat">
+        <div class="val tnum accent">€ {_fmt_eur(t["cassa_da_riservare"], 0)}</div>
+        <div class="lbl">Cassa da riservare</div>
+        <div class="hint">saldo + acconti</div></div></div>
+      <div class="card"><div class="stat">
+        <div class="val tnum pos">€ {_fmt_eur(t["netto_competenza"], 0)}</div>
+        <div class="lbl">Netto di competenza</div>
+        <div class="hint">quanto ti resta davvero</div></div></div>
+    </div>
+
+    <details class="explain card mb-4">
+      <summary>Due basi di calcolo diverse, ed è voluto</summary>
+      <p class="small muted mt-2">
+        Imposta, INPS e scadenze qui sopra sono calcolate sul <strong>fatturato
+        emesso</strong>, per restare allineate al foglio Excel di riferimento.
+        L'accantonamento qui sotto lavora invece sull'<strong>incassato</strong>,
+        che è la base corretta del forfettario (regime di cassa). Finché emetti
+        e incassi nello stesso anno i due numeri quasi coincidono; a cavallo di
+        fine anno divergono, ed è normale che sia così.
+      </p>
+    </details>'''
+
+    # --- Accantonamento sull'incassato dell'anno ----------------------------
+    scomposizione = acc.scomponi(t["incasso"], s["parametri"],
+                                 fatturato_riferimento=t["incasso"])
+    acc_card = acc.card_html(
+        scomposizione,
+        titolo=f"Da accantonare sul {anno}",
+        contesto="Calcolato sull'incassato dell'anno. Il minimo è il dovuto "
+                 "esatto; il sicuro copre anche l'anno in cui saldo e acconti "
+                 "cadono insieme.",
+        uid="accAnno",
+    ) if t["incasso"] > 0 else ""
+
+    # --- Limite forfettario --------------------------------------------------
+    residuo = max(s["limite_ragguagliato"] - t["fatturato"], 0)
+    limite = f'''
+    <div class="card">
+      <div class="card-head">
+        <div class="eyebrow">Limite forfettario</div>
+        <span class="chip {limite_cls or "accent"}">{pct_it} %</span>
+      </div>
+      <div class="meter"><i class="{limite_cls}" style="width:{pct_limite:.1f}%"></i></div>
+      <div class="small muted mt-3">
+        € {_fmt_eur(t["fatturato"])} su € {_fmt_eur(s["limite_ragguagliato"])}
+        ragguagliati a {s["mesi_attivita"]} mesi di attività.
+        Restano <strong>€ {_fmt_eur(residuo)}</strong>.
+      </div>
+    </div>'''
+
+    # --- Scadenze -------------------------------------------------------------
     scadenze_html = "".join(f'''
-    <div class="row">
-      <div class="d">{_fmt_date(sc["data"])}</div>
-      <div class="t">{sc["descrizione"]}</div>
-      <div class="a tnum">€ {_fmt_eur(sc["importo"])}</div>
-    </div>''' for sc in s["scadenze"])
+      <div class="row">
+        <div class="t">{sc["descrizione"]}<span class="sub">{_fmt_date(sc["data"])}</span></div>
+        <div class="v tnum">€ {_fmt_eur(sc["importo"])}</div>
+      </div>''' for sc in s["scadenze"])
+    scadenze = f'''
+    <div class="card">
+      <div class="card-head"><div class="eyebrow">Scadenze</div></div>
+      <div class="rows detail">{scadenze_html}</div>
+      <details class="explain mt-3">
+        <summary>Perché l'imposta compare due volte</summary>
+        <p class="small muted mt-2">
+          A giugno versi il <strong>saldo</strong> dell'anno appena chiuso; a novembre
+          l'<strong>acconto</strong> per l'anno in corso — INPS all'80 % col metodo
+          storico, imposta sostitutiva al 100 %. L'acconto non è una tassa in più:
+          si scomputa dal saldo successivo. Ma nell'anno in cui le due cose cadono
+          insieme devi avere in banca la somma di entrambe.
+        </p>
+      </details>
+    </div>'''
 
-    mensile_rows = "".join(f'''
-    <div class="row">
-      <div class="d">{m["nome"][:3]}</div>
-      <div class="t">Fatt. € {_fmt_eur(m["fatturato"])}</div>
-      <div class="a tnum {'pos' if m['netto'] > 0 else ''}">€ {_fmt_eur(m["netto"])}</div>
-    </div>''' for m in s["mensile"])
+    # --- Riepilogo mensile: solo i mesi con movimento -------------------------
+    mesi_attivi = [m for m in s["mensile"]
+                   if m["fatturato"] or m["incasso"] or m["commercialista"]]
+    if mesi_attivi:
+        righe = "".join(f'''
+        <tr>
+          <td>{m["nome"]}</td>
+          <td class="num">{_fmt_eur(m["fatturato"])}</td>
+          <td class="num">{_fmt_eur(m["incasso"])}</td>
+          <td class="num">{_fmt_eur(m["inps_saldo"])}</td>
+          <td class="num">{_fmt_eur(m["imposta"])}</td>
+          <td class="num">{_fmt_eur(m["netto_competenza"])}</td>
+        </tr>''' for m in mesi_attivi)
+        tabella = f'''
+        <div class="scroll-x">
+          <table class="table">
+            <thead><tr>
+              <th>Mese</th><th class="num">Fatturato</th><th class="num">Incassato</th>
+              <th class="num">INPS</th><th class="num">Imposta</th>
+              <th class="num">Netto</th>
+            </tr></thead>
+            <tbody>{righe}</tbody>
+            <tfoot><tr>
+              <td>Totale</td>
+              <td class="num">{_fmt_eur(t["fatturato"])}</td>
+              <td class="num">{_fmt_eur(t["incasso"])}</td>
+              <td class="num">{_fmt_eur(t["inps_saldo_accantonato"])}</td>
+              <td class="num">{_fmt_eur(t["imposta_accantonata"])}</td>
+              <td class="num">{_fmt_eur(t["netto_competenza"])}</td>
+            </tr></tfoot>
+          </table>
+        </div>'''
+    else:
+        tabella = ('<div class="small muted">Nessun movimento registrato '
+                   f'per il {anno}.</div>')
+
+    mensile = f'''
+    <div class="card">
+      <div class="card-head"><div class="eyebrow">Riepilogo mensile</div></div>
+      {tabella}
+    </div>'''
+
+    azioni = f'''
+    <div class="card">
+      <div class="card-head"><div class="eyebrow">Strumenti</div></div>
+      <div class="actions col mt-0">
+        <a class="btn" href="/fatture/api/export/xlsx?anno={anno}">
+          {_icon("download")}Esporta Excel
+        </a>
+        <a class="btn ghost" href="/fatture/parametri">Parametri fiscali</a>
+        <a class="btn ghost" href="/fatture/spese-piva">Movimenti P.IVA</a>
+      </div>
+    </div>'''
 
     body = f'''
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div class="eyebrow">Anno</div>
-        <select onchange="location.href='/fatture/situazione?anno='+this.value"
-                style="padding:8px 14px;border-radius:999px;
-                       background:var(--input-bg);border:1px solid var(--line-strong);
-                       color:var(--ink);font-size:14px">
-          {anno_opts}
-        </select>
-      </div>
-      <div class="grid2">
-        <div class="card"><div class="num tnum">€ {_fmt_eur(t["fatturato"])}</div>
-          <div class="lbl">Fatturato</div></div>
-        <div class="card"><div class="num tnum">€ {_fmt_eur(t["imponibile"])}</div>
-          <div class="lbl">Imponibile</div></div>
-      </div>
-      <div class="card" style="margin-top:10px">
-        <div class="num tnum">€ {_fmt_eur(t["totale_da_versare"])}</div>
-        <div class="lbl">Da versare (imposta + INPS)</div>
-      </div>
-      <div style="margin-top:14px">
-        <div style="height:8px;border-radius:999px;background:var(--input-bg);overflow:hidden">
-          <div style="height:100%;width:{pct_limite:.1f}%;background:var(--gold);border-radius:999px"></div>
-        </div>
-        <div style="color:var(--muted);font-size:12.5px;margin-top:6px">
-          {pct_limite:.1f}% del limite ragguagliato (€ {_fmt_eur(s["limite_ragguagliato"])}
-          · {s["mesi_attivita"]} mesi di attività)
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="eyebrow" style="margin-bottom:10px">Scadenze</div>
-      <div class="rows">{scadenze_html}</div>
-    </div>
-
-    <div class="card">
-      <div class="eyebrow" style="margin-bottom:10px">Riepilogo mensile</div>
-      <div class="rows">{mensile_rows}</div>
-    </div>
-
-    <div class="actions" style="flex-direction:column">
-      <a class="btn" href="/fatture/api/export/xlsx?anno={anno}">
-        <svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round">
-          <path d="M12 3v12M8 11l4 4 4-4M5 21h14"/></svg>
-        Esporta Excel
-      </a>
-      <div class="actions" style="margin-top:0">
-        <a class="btn ghost" href="/fatture/parametri">Parametri</a>
-        <a class="btn ghost" href="/fatture/spese-piva">Spese P.IVA</a>
-      </div>
+    {kpi}
+    {acc_card}
+    <div class="grid split mt-4">
+      <div class="stack">{mensile}</div>
+      <div class="stack">{limite}{scadenze}{azioni}</div>
     </div>
     '''
 
-    return _render(body, eyebrow="Situazione fiscale",
-                   title_html='Situazione <em>fiscale</em>', breadcrumb=breadcrumb)
+    return _render(body, eyebrow=f"Situazione fiscale {anno}",
+                   title_html='Situazione <em>fiscale</em>',
+                   breadcrumb=breadcrumb, actions_html=selettore_anno)
 
 
 @fatture_bp.get("/api/situazione")
@@ -530,44 +648,115 @@ def parametri_editor():
         return _render(err, breadcrumb=breadcrumb)
     p = _get_parametri(sb)
 
+    # Anteprima dal vivo: mostra subito l'effetto dei parametri su 1.000 €
+    anteprima = acc.scomponi(1000.0, p, fatturato_riferimento=0.0)
+    scen_opts = "".join(
+        f'<option value="{k}"{" selected" if p.get("scenario_preferito") == k else ""}>'
+        f'{acc.ETICHETTE[k][0]}</option>' for k in acc.SCENARI
+    )
+
     body = f'''
-    <div class="card">
-      <div class="field"><label>Regime</label>
-        <select id="f_regime">
-          <option value="RF19"{" selected" if p["regime"]=="RF19" else ""}>RF19 — Forfettario</option>
-        </select></div>
-      <div class="field"><label>ATECO (readonly)</label>
-        <input value="{p['ateco']} — {p.get('ateco_descrizione') or ''}" disabled></div>
-      <div class="field-group">
-        <div class="field"><label>Coefficiente redditività</label>
-          <input type="number" step="0.0001" id="f_coeff" value="{p['coeff_ateco']}"></div>
-        <div class="field"><label>Aliquota imposta sostitutiva</label>
-          <input type="number" step="0.0001" id="f_aliq_imp" value="{p['aliquota_imposta']}"></div>
+    <div class="grid split">
+      <div class="stack">
+
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Regime</div></div>
+          <div class="field"><label>Regime fiscale</label>
+            <select id="f_regime">
+              <option value="RF19"{" selected" if p["regime"] == "RF19" else ""}>RF19 — Forfettario</option>
+            </select></div>
+          <div class="field"><label>Codice ATECO</label>
+            <input value="{p['ateco']} — {p.get('ateco_descrizione') or ''}" disabled>
+            <div class="hint">Modificabile solo da database.</div></div>
+          <div class="field-group">
+            <div class="field"><label>Data apertura P.IVA</label>
+              <input type="date" id="f_data_apertura" value="{p['data_apertura_piva']}"></div>
+            <div class="field"><label>Fine regime agevolato</label>
+              <input type="number" id="f_anno_fine" value="{p.get('anno_fine_regime_agevolato') or ''}">
+              <div class="hint">Primo anno con aliquota al 15 %.</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Aliquote</div></div>
+          <div class="field-group">
+            <div class="field"><label>Coefficiente redditività</label>
+              <input type="number" step="0.0001" id="f_coeff" value="{p['coeff_ateco']}">
+              <div class="hint">0,67 per la consulenza informatica.</div></div>
+            <div class="field"><label>Imposta sostitutiva</label>
+              <input type="number" step="0.0001" id="f_aliq_imp" value="{p['aliquota_imposta']}">
+              <div class="hint">0,05 nei primi cinque anni.</div></div>
+          </div>
+          <div class="field-group">
+            <div class="field"><label>INPS gestione separata</label>
+              <input type="number" step="0.0001" id="f_aliq_inps" value="{p['aliquota_inps']}"></div>
+            <div class="field"><label>Acconto INPS</label>
+              <input type="number" step="0.0001" id="f_aliq_acc" value="{p['aliquota_acconto']}">
+              <div class="hint">0,80 col metodo storico.</div></div>
+          </div>
+          <div class="field-group">
+            <div class="field"><label>Acconto imposta</label>
+              <input type="number" step="0.01" id="f_acc_imp" value="{p.get('acconto_imposta_perc', 1.0)}">
+              <div class="hint">1,00 = 100 % del saldo, nessuna riduzione.</div></div>
+            <div class="field"><label>Limite fatturato annuo (€)</label>
+              <input type="number" step="0.01" id="f_limite" value="{p['limite_fatturato_anno']}"></div>
+          </div>
+          <div class="field-group">
+            <div class="field"><label>Bollo — soglia (€)</label>
+              <input type="number" step="0.01" id="f_bollo_soglia" value="{p['bollo_soglia']}"></div>
+            <div class="field"><label>Bollo — importo (€)</label>
+              <input type="number" step="0.01" id="f_bollo_importo" value="{p['bollo_importo']}"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Accantonamento</div></div>
+          <p class="small muted mb-3">
+            Questi tre valori determinano lo scarto tra il dovuto matematico e
+            quanto l'app ti consiglia di mettere da parte.
+          </p>
+          <div class="field-group">
+            <div class="field"><label>Margine di sicurezza</label>
+              <input type="number" step="0.01" id="f_margine" value="{p.get('margine_sicurezza', 0.10)}">
+              <div class="hint">0,10 = 10 % in più del dovuto.</div></div>
+            <div class="field"><label>Scenario preferito</label>
+              <select id="f_scenario">{scen_opts}</select>
+              <div class="hint">Quello mostrato per primo.</div></div>
+          </div>
+          <div class="field-group">
+            <div class="field"><label>Costi fissi annui (€)</label>
+              <input type="number" step="0.01" id="f_costi" value="{p.get('costi_fissi_annui', 0)}">
+              <div class="hint">Commercialista, PEC, bolli, commissioni.</div></div>
+            <div class="field"><label>Fatturato atteso annuo (€)</label>
+              <input type="number" step="0.01" id="f_atteso" value="{p.get('fatturato_atteso_anno', 0)}">
+              <div class="hint">Su cui spalmare i costi fissi. A zero li stima
+                dall'incassato dell'anno.</div></div>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn" onclick="onSalva()">Salva parametri</button>
+        </div>
       </div>
-      <div class="field-group">
-        <div class="field"><label>Aliquota INPS Gestione Separata</label>
-          <input type="number" step="0.0001" id="f_aliq_inps" value="{p['aliquota_inps']}"></div>
-        <div class="field"><label>Aliquota acconto (solo INPS)</label>
-          <input type="number" step="0.0001" id="f_aliq_acc" value="{p['aliquota_acconto']}"></div>
-      </div>
-      <div class="field-group">
-        <div class="field"><label>Bollo soglia (€)</label>
-          <input type="number" step="0.01" id="f_bollo_soglia" value="{p['bollo_soglia']}"></div>
-        <div class="field"><label>Bollo importo (€)</label>
-          <input type="number" step="0.01" id="f_bollo_importo" value="{p['bollo_importo']}"></div>
-      </div>
-      <div class="field"><label>Limite fatturato annuo (€)</label>
-        <input type="number" step="0.01" id="f_limite" value="{p['limite_fatturato_anno']}"></div>
-      <div class="field-group">
-        <div class="field"><label>Data apertura P.IVA</label>
-          <input type="date" id="f_data_apertura" value="{p['data_apertura_piva']}"></div>
-        <div class="field"><label>Anno fine regime agevolato</label>
-          <input type="number" id="f_anno_fine" value="{p.get('anno_fine_regime_agevolato') or ''}"></div>
-      </div>
-      <div class="actions">
-        <button type="button" class="btn" onclick="onSalva()">Salva</button>
+
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Effetto su 1.000 € incassati</div></div>
+          <div class="rows detail">
+            <div class="row"><span class="t">Minimo <span class="sub">{acc.ETICHETTE["minimo"][1]}</span></span>
+              <span class="v tnum">€ {_fmt_eur(anteprima["importi"]["minimo"])}</span></div>
+            <div class="row"><span class="t">Consigliato <span class="sub">{acc.ETICHETTE["consigliato"][1]}</span></span>
+              <span class="v tnum accent">€ {_fmt_eur(anteprima["importi"]["consigliato"])}</span></div>
+            <div class="row"><span class="t">Sicuro <span class="sub">{acc.ETICHETTE["sicuro"][1]}</span></span>
+              <span class="v tnum">€ {_fmt_eur(anteprima["importi"]["sicuro"])}</span></div>
+          </div>
+          <div class="small muted mt-3">
+            Salva per aggiornare l'anteprima.
+          </div>
+        </div>
       </div>
     </div>
+
     <div id="toast" class="toast"></div>
     <script>
     function toast(msg, cls) {{
@@ -577,17 +766,23 @@ def parametri_editor():
     }}
     async function onSalva() {{
       const g = id => Number(document.getElementById(id).value);
+      const v = id => document.getElementById(id).value;
       const body = {{
-        regime: document.getElementById('f_regime').value,
+        regime: v('f_regime'),
         coeff_ateco: g('f_coeff'),
         aliquota_imposta: g('f_aliq_imp'),
         aliquota_inps: g('f_aliq_inps'),
         aliquota_acconto: g('f_aliq_acc'),
+        acconto_imposta_perc: g('f_acc_imp'),
         bollo_soglia: g('f_bollo_soglia'),
         bollo_importo: g('f_bollo_importo'),
         limite_fatturato_anno: g('f_limite'),
-        data_apertura_piva: document.getElementById('f_data_apertura').value,
+        data_apertura_piva: v('f_data_apertura'),
         anno_fine_regime_agevolato: g('f_anno_fine'),
+        margine_sicurezza: g('f_margine'),
+        costi_fissi_annui: g('f_costi'),
+        fatturato_atteso_anno: g('f_atteso'),
+        scenario_preferito: v('f_scenario'),
       }};
       try {{
         const r = await fetch('/fatture/api/parametri', {{
@@ -597,6 +792,7 @@ def parametri_editor():
         const j = await r.json();
         if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
         toast('Parametri aggiornati', 'ok');
+        setTimeout(() => location.reload(), 700);
       }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
     }}
     </script>
@@ -670,43 +866,46 @@ def spese_piva_list():
         for k, lbl in (("entrata", "Entrata"), ("uscita", "Uscita"), ("giroconto", "Giroconto"))
     )
 
+    anno_o = "".join(f'<option value="{y}"{" selected" if y == anno else ""}>{y}</option>'
+                     for y in range(anno_default, anno_default - 6, -1))
     toolbar = f'''
-    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-      <select onchange="const u=new URL(location.href);u.searchParams.set('anno',this.value);location.href=u"
-              style="padding:10px 14px;border-radius:999px;background:var(--input-bg);
-                     border:1px solid var(--line-strong);color:var(--ink);font-size:14px">
-        {"".join(f'<option value="{y}"{" selected" if y==anno else ""}>{y}</option>' for y in range(anno_default, anno_default-6, -1))}
+    <div class="toolbar">
+      <select class="select-pill" aria-label="Anno"
+        onchange="const u=new URL(location.href);u.searchParams.set('anno',this.value);location.href=u">
+        {anno_o}
       </select>
-      <select onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('categoria',this.value)}}else{{u.searchParams.delete('categoria')}};location.href=u"
-              style="padding:10px 14px;border-radius:999px;background:var(--input-bg);
-                     border:1px solid var(--line-strong);color:var(--ink);font-size:14px">
+      <select class="select-pill" aria-label="Categoria"
+        onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('categoria',this.value)}}else{{u.searchParams.delete('categoria')}};location.href=u">
         <option value="">Tutte le categorie</option>{cat_opts}
       </select>
-      <select onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('tipo',this.value)}}else{{u.searchParams.delete('tipo')}};location.href=u"
-              style="padding:10px 14px;border-radius:999px;background:var(--input-bg);
-                     border:1px solid var(--line-strong);color:var(--ink);font-size:14px">
+      <select class="select-pill" aria-label="Tipo"
+        onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('tipo',this.value)}}else{{u.searchParams.delete('tipo')}};location.href=u">
         <option value="">Tutti i tipi</option>{tipo_opts}
       </select>
     </div>
     '''
 
-    tot = sum(float(r.get("importo") or 0) * (1 if r.get("tipo") == "entrata" else -1)
-              for r in rows if r.get("tipo") in ("entrata", "uscita"))
+    entrate = sum(float(r.get("importo") or 0) for r in rows if r.get("tipo") == "entrata")
+    uscite = sum(float(r.get("importo") or 0) for r in rows if r.get("tipo") == "uscita")
+    tot = entrate - uscite
     riepilogo = f'''
-    <div class="card">
-      <div class="eyebrow" style="margin-bottom:6px">Anno {anno}</div>
-      <div class="stat">
-        <div class="num tnum">€ {_fmt_eur(tot)}</div>
-        <div class="lbl">Saldo movimenti</div>
-      </div>
+    <div class="grid kpi lead mb-3">
+      <div class="card"><div class="stat">
+        <div class="val tnum {"pos" if tot >= 0 else "neg"}">€ {_fmt_eur(tot, 0)}</div>
+        <div class="lbl">Saldo {anno}</div></div></div>
+      <div class="card"><div class="stat sm">
+        <div class="val tnum pos">€ {_fmt_eur(entrate, 0)}</div>
+        <div class="lbl">Entrate</div></div></div>
+      <div class="card"><div class="stat sm">
+        <div class="val tnum neg">€ {_fmt_eur(uscite, 0)}</div>
+        <div class="lbl">Uscite</div></div></div>
     </div>
     '''
 
     if not rows:
         body = f'''{riepilogo}{toolbar}
         <div class="empty">
-          <svg viewBox="0 0 24 24"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h13A2.5 2.5 0 0 1 21 6.5V8H3z"/>
-          <path d="M3 8v9.5A2.5 2.5 0 0 0 5.5 20h13a2.5 2.5 0 0 0 2.5-2.5V8"/></svg>
+          {_icon("wallet")}
           <div class="t">Nessun movimento per il {anno}</div>
           <div class="s">Aggiungi il primo con il pulsante in basso.</div>
         </div>'''
@@ -715,17 +914,21 @@ def spese_piva_list():
         items = []
         for m in rows:
             segno, cls = _movimento_label(m)
+            cat = cat_lbl.get(m.get("categoria"), m.get("categoria") or "—")
             items.append(f'''
             <a class="item" href="/fatture/spese-piva/{m["id"]}">
-              <div class="info">
-                <div class="n">{(m.get("descrizione") or "—")[:40]}</div>
-                <div class="m">{_fmt_date(m.get("data"))} · {cat_lbl.get(m.get("categoria"), m.get("categoria") or "—")}</div>
-              </div>
-              <div class="end"><span class="tnum a {cls}">{segno} € {_fmt_eur(m.get("importo"))}</span></div>
+              <span class="ico {cls or "neutral"}">{_icon("wallet")}</span>
+              <span class="body">
+                <span class="n">{(m.get("descrizione") or "—")}</span>
+                <span class="m">{_fmt_date(m.get("data"))} · {cat}</span>
+              </span>
+              <span class="end">
+                <span class="amt tnum {cls}">{segno} € {_fmt_eur(m.get("importo"))}</span>
+              </span>
             </a>''')
         body = f'{riepilogo}{toolbar}<div class="list">{"".join(items)}</div>'
 
-    return _render(body, eyebrow="Spese P.IVA", title_html='Spese <em>P.IVA</em>',
+    return _render(body, eyebrow="Movimenti P.IVA", title_html='Movimenti <em>P.IVA</em>',
                    breadcrumb=breadcrumb, fab=("Nuovo movimento", "/fatture/spese-piva/nuova"))
 
 
@@ -741,21 +944,23 @@ def _movimento_form_html(m: dict | None = None) -> str:
     mid = m.get("id") or ""
     is_edit = bool(mid)
     submit_lbl = "Aggiorna" if is_edit else "Registra movimento"
-    delete_btn = (f'<button type="button" class="btn ghost" onclick="onElimina({mid})">Elimina</button>'
+    delete_btn = (f'<button type="button" class="btn danger" onclick="onElimina({mid})">Elimina</button>'
                   if is_edit else "")
 
     return f'''
     <div class="card">
-      <div class="field"><label>Data</label>
-        <input type="date" id="f_data" value="{v('data', date.today().isoformat())}"></div>
+      <div class="field-group">
+        <div class="field"><label>Data</label>
+          <input type="date" id="f_data" value="{v('data', date.today().isoformat())}"></div>
+        <div class="field"><label>Importo (€)</label>
+          <input type="number" step="0.01" inputmode="decimal" id="f_importo" value="{v('importo', 0)}"></div>
+      </div>
       <div class="field"><label>Tipo</label>
         <select id="f_tipo">
           <option value="entrata"{" selected" if tipo_current=="entrata" else ""}>Entrata</option>
           <option value="uscita"{" selected" if tipo_current=="uscita" else ""}>Uscita</option>
           <option value="giroconto"{" selected" if tipo_current=="giroconto" else ""}>Giroconto</option>
         </select></div>
-      <div class="field"><label>Importo (€)</label>
-        <input type="number" step="0.01" id="f_importo" value="{v('importo', 0)}"></div>
       <div class="field"><label>Descrizione</label>
         <input id="f_descrizione" value="{(v('descrizione') or '').replace(chr(34), '&quot;')}"></div>
       <div class="field-group">
@@ -764,10 +969,9 @@ def _movimento_form_html(m: dict | None = None) -> str:
         <div class="field"><label>Sottocategoria</label>
           <input id="f_sottocategoria" value="{v('sottocategoria') or ''}"></div>
       </div>
-      <div class="field" style="flex-direction:row;align-items:center;gap:8px">
-        <input type="checkbox" id="f_ricorrente" style="width:auto;min-height:auto"
-               {"checked" if m.get("ricorrente") else ""}>
-        <label style="margin:0">Movimento ricorrente</label>
+      <div class="field inline">
+        <input type="checkbox" id="f_ricorrente" {"checked" if m.get("ricorrente") else ""}>
+        <label for="f_ricorrente">Movimento ricorrente</label>
       </div>
       <div class="field"><label>Note</label>
         <textarea id="f_note">{m.get('note') or ''}</textarea></div>
@@ -929,9 +1133,10 @@ def api_spesa_piva_delete(mid):
 
 def _render(content: str, eyebrow: str = "Situazione fiscale",
             title_html: str = 'Situazione <em>fiscale</em>',
-            breadcrumb=None, fab=None) -> Response:
+            breadcrumb=None, fab=None, actions_html: str = "") -> Response:
     html = render_page(
         section="fatture", eyebrow=eyebrow, title_html=title_html,
         content=content, breadcrumb=breadcrumb, fab=fab,
+        actions_html=actions_html,
     )
     return Response(html, mimetype="text/html")

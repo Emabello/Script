@@ -484,70 +484,53 @@ def index():
     # + toggle tema) subito dentro <div class="wrap">, poi lasciamo il
     # PAGE intatto.
     from shared.theme import inject_app_header
+    # I due bottoni dell'header originale (riepilogo mese, impostazioni)
+    # salgono nella topbar della shell: gli id restano quelli attesi dal JS.
+    azioni = (
+        '<button class="icon-btn" id="open-month" title="Riepilogo mese"'
+        ' aria-label="Riepilogo mese">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+        ' stroke-width="1.7" stroke-linecap="round">'
+        '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></button>'
+        '<button class="icon-btn" id="open-settings" title="Impostazioni"'
+        ' aria-label="Impostazioni">'
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+        ' stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+        '<circle cx="12" cy="12" r="3"/>'
+        '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83'
+        'l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0'
+        'v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1'
+        '-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3'
+        'a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06'
+        'a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3'
+        'a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06'
+        'a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21'
+        'a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>'
+    )
     html = inject_app_header(PAGE, eyebrow="Timesheet",
-                             title_html='Le mie <em>ore</em>')
+                             title_html='Le mie <em>ore</em>',
+                             actions_html=azioni)
     return Response(html, mimetype="text/html")
 
 
-PAGE = r"""<!DOCTYPE html>
-<html lang="it">
-<head>
-<meta charset="utf-8">
-<script>document.documentElement.dataset.theme=localStorage.getItem("xs-theme")||"dark";</script>
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Le mie ore</title>
-<meta name="theme-color" content="#0b0c10">
-<link rel="manifest" href="/manifest.webmanifest">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Le mie ore">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+PAGE = r"""__HEAD__
 <style>
 /* --- Palette moderna: superfici scure profonde + accento indaco/violetto ---
    NB: la variabile storica --gold è ora l'accento (indaco): il nome resta per
    compatibilità con i riferimenti già presenti nel markup. */
+/* Il timesheet ha 600 righe di CSS componente scritte sui nomi storici
+   delle variabili (--gold, --muted, --card-grad, ...). Invece di riscriverle
+   tutte, le rimappiamo sui token del design system condiviso: la palette
+   diventa una sola per tutta l'app, il markup del timesheet resta intatto. */
 :root{
-  --bg:#0b0c10; --panel:#13151c; --card:#171a21; --ink:#f3f4f9; --ink-dim:#c4c7d4;
-  --muted:#8b8fa3; --faint:#565a6b; --line:rgba(255,255,255,.07); --line-strong:rgba(255,255,255,.13);
-  --gold:#7c6cff; --gold-deep:#5a49d1; --emerald:#2dd4bf; --danger:#ff6b81;
-  --on-gold:#ffffff; --input-bg:#0f1117; --card-grad:linear-gradient(180deg,#191c25,#14161d);
-  --weekend:#101219;
-  --page-bg:radial-gradient(1100px 620px at 82% -12%,rgba(124,108,255,.16),transparent 60%),radial-gradient(880px 520px at 4% 2%,rgba(45,212,191,.08),transparent 55%),#0b0c10;
-  --display:'Space Grotesk',system-ui,sans-serif;
-  --r:20px; --r-sm:13px; --shadow:0 30px 70px -34px rgba(0,0,0,.75),0 4px 14px -6px rgba(0,0,0,.5);
+  --panel:var(--surface); --card:var(--surface); --card-grad:var(--surface);
+  --ink-dim:var(--ink-2); --muted:var(--ink-3); --faint:var(--ink-4);
+  --gold:var(--accent); --gold-deep:var(--accent-hi); --on-gold:var(--on-accent);
+  --emerald:var(--pos); --danger:var(--neg);
+  --input-bg:var(--bg); --weekend:var(--surface-3);
+  --r:var(--r-md); --shadow:var(--e2);
 }
-html[data-theme="light"]{
-  --bg:#eef0f5; --panel:#ffffff; --card:#ffffff; --ink:#181a22; --ink-dim:#414556;
-  --muted:#6c7182; --faint:#a6abbb; --line:rgba(20,22,33,.08); --line-strong:rgba(20,22,33,.15);
-  --gold:#5b49d1; --gold-deep:#4534ad; --emerald:#0d9488; --danger:#e11d48;
-  --on-gold:#ffffff; --input-bg:#f5f6fb; --card-grad:linear-gradient(180deg,#ffffff,#f7f7fd);
-  --weekend:#f1f2f8;
-  --page-bg:radial-gradient(1100px 620px at 82% -12%,rgba(91,73,209,.12),transparent 60%),radial-gradient(880px 520px at 4% 2%,rgba(13,148,136,.07),transparent 55%),#eef0f5;
-  --shadow:0 28px 60px -34px rgba(40,34,90,.4),0 3px 12px -6px rgba(0,0,0,.12);
-}
-*{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;line-height:1.5;-webkit-tap-highlight-color:transparent}
-body{min-height:100vh;background:var(--page-bg);transition:background .3s,color .3s}
-.serif{font-family:var(--display);letter-spacing:-.01em}
-.eyebrow{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--muted);font-weight:500}
-.tnum{font-variant-numeric:tabular-nums}
-button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
-.wrap{max-width:600px;margin:0 auto;padding:26px 18px 80px}
 
-.top{display:flex;align-items:flex-end;gap:16px}
-.brand .eyebrow{margin-bottom:5px}
-.brand h1{font-weight:400;font-size:32px;line-height:1;margin:0;letter-spacing:-.01em}
-.brand h1 em{font-style:italic;color:var(--gold)}
-.spacer{flex:1}
-.icon-btn{width:42px;height:42px;border-radius:50%;border:1px solid var(--line-strong);display:grid;place-items:center;color:var(--ink-dim);transition:.2s}
-.icon-btn:active{transform:scale(.92)}
-.icon-btn:hover{border-color:var(--gold);color:var(--gold)}
-.icon-btn svg{width:19px;height:19px}
-.rule{height:1px;background:linear-gradient(90deg,var(--gold-deep),transparent 70%);opacity:.5;margin:18px 0 20px}
 
 .weekbar{display:flex;align-items:center;gap:12px;margin-bottom:14px}
 .nav{display:flex;align-items:center;gap:7px}
@@ -678,10 +661,6 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
 /* ===== Ritocchi moderni sui componenti esistenti ===== */
-.brand h1 em{font-style:normal;font-weight:500}
-.icon-btn{border-radius:13px;background:var(--card)}
-.icon-btn:hover{background:rgba(124,108,255,.10)}
-.rule{background:linear-gradient(90deg,var(--gold),transparent 78%);opacity:.6}
 .weekstrip .seg{height:40px;border-radius:11px}
 .day.today{box-shadow:0 0 40px -16px rgba(124,108,255,.55)}
 .viewhide{display:none}
@@ -754,17 +733,6 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
 </head>
 <body>
 <div class="wrap">
-  <div class="top">
-    <div class="brand"><div class="eyebrow">Timesheet</div><h1 class="serif">Le mie <em>ore</em></h1></div>
-    <div class="spacer"></div>
-    <button class="icon-btn" id="open-month" title="Riepilogo mese">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>
-    </button>
-    <button class="icon-btn" id="open-settings" title="Impostazioni">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>
-  </div>
-  <div class="rule"></div>
 
   <!-- ============ Vista settimana ============ -->
   <div id="week-view">
