@@ -6,3 +6,4 @@ fatture_bp = Blueprint("fatture", __name__)
 # rotte sul blueprint quando importati) e definisce la rotta principale /.
 from . import views  # noqa: E402,F401
 from . import fiscale  # noqa: E402,F401
+from . import emittente  # noqa: E402,F401
