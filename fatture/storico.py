@@ -16,41 +16,33 @@ from datetime import date
 from flask import Response, request, jsonify
 
 from . import fatture_bp
+from . import accantonamento as acc
 from .costanti import CATEGORIE_SPESE_PIVA
 from shared.theme import render_page
+from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
+from shared.fmt import eur as _fmt_eur, data_it as _fmt_date
 
 
 STATO_CHIP = {
-    "bozza":      ("n", "Bozza"),
-    "emessa":     ("",  "Emessa"),
-    "incassata":  ("g", "Incassata"),
-    "annullata":  ("r", "Annullata"),
+    "bozza":      ("",       "Bozza"),
+    "emessa":     ("accent", "Emessa"),
+    "incassata":  ("pos",    "Incassata"),
+    "annullata":  ("neg",    "Annullata"),
 }
 
 
-def _fmt_eur(v) -> str:
-    try: v = float(v or 0)
-    except Exception: v = 0.0
-    s = f"{v:,.2f}"
-    return s.replace(",", "X").replace(".", ",").replace("X", ".")
-
-
-def _fmt_date(iso: str | None) -> str:
-    if not iso: return ""
-    try:
-        y, m, d = iso[:10].split("-")
-        return f"{d}/{m}/{y}"
-    except Exception:
-        return iso[:10]
-
-
-def _cliente_label(f: dict) -> str:
+def cliente_label(f: dict) -> str:
+    """Nome leggibile del cliente a partire dallo snapshot della fattura."""
     snap = f.get("cliente_snapshot") or {}
     tipo = snap.get("tipo") or "azienda"
     if tipo == "privato":
         return f'{snap.get("nome","")} {snap.get("cognome","")}'.strip() or "—"
     return snap.get("denominazione") or "—"
+
+
+# Alias interno storico
+_cliente_label = cliente_label
 
 
 def _stato_chip(stato: str) -> str:
@@ -90,26 +82,27 @@ def storico_list():
                        breadcrumb=[("Fatture", "/fatture"), ("Storico", "")])
 
     # Riepilogo anno
-    tot_imp = sum(float(x.get("imponibile") or 0) for x in rows
-                  if x.get("stato") in ("emessa", "incassata"))
+    valide = [x for x in rows if x.get("stato") in ("emessa", "incassata")]
+    tot_fatturato = sum(float(x.get("totale") or 0) for x in valide)
+    tot_incassato = sum(float(x.get("totale") or 0) for x in rows
+                        if x.get("stato") == "incassata")
+    da_incassare = round(tot_fatturato - tot_incassato, 2)
 
     # Toolbar
     stato_opts = "".join(
-        f'<option value="{k}"{" selected" if stato==k else ""}>{lbl}</option>'
+        f'<option value="{k}"{" selected" if stato == k else ""}>{lbl}</option>'
         for k, (_, lbl) in STATO_CHIP.items()
     )
+    anno_opts = "".join(f'<option value="{y}"{" selected" if y == anno else ""}>{y}</option>'
+                        for y in range(anno_default, anno_default - 6, -1))
     toolbar = f'''
-    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-      <select onchange="location.href='/fatture/storico?anno='+this.value{("+'&stato={}'".format(stato)) if stato else ""}"
-              style="padding:10px 14px;border-radius:999px;
-                     background:var(--input-bg);border:1px solid var(--line-strong);
-                     color:var(--ink);font-size:14px">
-        {"".join(f'<option value="{y}"{" selected" if y==anno else ""}>{y}</option>' for y in range(anno_default, anno_default-6, -1))}
+    <div class="toolbar">
+      <select class="select-pill" aria-label="Anno"
+        onchange="const u=new URL(location.href);u.searchParams.set('anno',this.value);location.href=u">
+        {anno_opts}
       </select>
-      <select onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('stato',this.value)}}else{{u.searchParams.delete('stato')}};location.href=u"
-              style="padding:10px 14px;border-radius:999px;
-                     background:var(--input-bg);border:1px solid var(--line-strong);
-                     color:var(--ink);font-size:14px">
+      <select class="select-pill" aria-label="Stato"
+        onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('stato',this.value)}}else{{u.searchParams.delete('stato')}};location.href=u">
         <option value="">Tutti gli stati</option>
         {stato_opts}
       </select>
@@ -117,40 +110,48 @@ def storico_list():
     '''
 
     riepilogo = f'''
-    <div class="card">
-      <div class="eyebrow" style="margin-bottom:6px">Anno {anno}</div>
-      <div class="stat">
-        <div class="num tnum">€ {_fmt_eur(tot_imp)}</div>
-        <div class="lbl">Imponibile</div>
-      </div>
-      <div style="color:var(--muted);font-size:13px;margin-top:8px">
-        {len(rows)} document{"o" if len(rows)==1 else "i"} totali
-      </div>
+    <div class="grid kpi lead mb-3">
+      <div class="card"><div class="stat">
+        <div class="val tnum">€ {_fmt_eur(tot_fatturato, 0)}</div>
+        <div class="lbl">Fatturato {anno}</div>
+        <div class="hint">{len(valide)} document{"o" if len(valide) == 1 else "i"}</div>
+      </div></div>
+      <div class="card"><div class="stat sm">
+        <div class="val tnum pos">€ {_fmt_eur(tot_incassato, 0)}</div>
+        <div class="lbl">Incassato</div></div></div>
+      <div class="card"><div class="stat sm">
+        <div class="val tnum {"warn" if da_incassare > 0 else ""}">€ {_fmt_eur(da_incassare, 0)}</div>
+        <div class="lbl">Da incassare</div></div></div>
     </div>
     '''
 
     if not rows:
-        body = f'''{riepilogo}
-        {toolbar}
+        body = f'''{riepilogo}{toolbar}
         <div class="empty">
-          <svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v4h5"/></svg>
+          {_icon("empty-doc")}
           <div class="t">Nessuna fattura per il {anno}</div>
           <div class="s">Crea la prima con il pulsante in basso.</div>
         </div>'''
     else:
         items = []
         for f in rows:
+            stato = f.get("stato")
+            incasso = (f' · incassata il {_fmt_date(f.get("data_incasso"))}'
+                       if stato == "incassata" and f.get("data_incasso") else "")
             items.append(f'''
             <a class="item" href="/fatture/{f["id"]}">
-              <div class="info">
-                <div class="n">{f.get("numero","—")} · {_cliente_label(f)}</div>
-                <div class="m">{_fmt_date(f.get("data"))} · <span class="tnum">€ {_fmt_eur(f.get("totale"))}</span></div>
-              </div>
-              <div class="end">{_stato_chip(f.get("stato"))}</div>
+              <span class="body">
+                <span class="n">{f.get("numero", "—")} · {cliente_label(f)}</span>
+                <span class="m">{_fmt_date(f.get("data"))}{incasso}</span>
+              </span>
+              <span class="end">
+                <span class="amt tnum">€ {_fmt_eur(f.get("totale"))}</span>
+                {_stato_chip(stato)}
+              </span>
             </a>''')
         body = f'{riepilogo}{toolbar}<div class="list">{"".join(items)}</div>'
 
-    return _render(body,
+    return _render(body, eyebrow=f"Storico {anno}",
                    breadcrumb=[("Fatture", "/fatture"), ("Storico", "")],
                    fab=("Nuova fattura", "/fatture/nuova"))
 
@@ -185,13 +186,14 @@ def fattura_dettaglio(fid):
     righe = f.get("righe") or []
     righe_html = "".join(
         f'''<div class="row">
-          <div class="d">×{r.get("qta",1)}{" "+r.get("um") if r.get("um") else ""}</div>
-          <div class="t">{(r.get("descrizione") or "").strip() or "—"}</div>
-          <div class="a tnum">€ {_fmt_eur((r.get("qta") or 0) * (r.get("prezzo") or 0))}</div>
+          <span class="k">{r.get("qta", 1)}{" " + r.get("um") if r.get("um") else ""}</span>
+          <span class="t">{(r.get("descrizione") or "").strip() or "—"}
+            <span class="sub">€ {_fmt_eur(r.get("prezzo"))} cad.</span></span>
+          <span class="v tnum">€ {_fmt_eur((r.get("qta") or 0) * (r.get("prezzo") or 0))}</span>
         </div>''' for r in righe
     )
     if not righe_html:
-        righe_html = '<div class="row"><div class="t" style="color:var(--muted)">Nessuna riga</div></div>'
+        righe_html = '<div class="row"><span class="t muted">Nessuna riga</span></div>'
 
     # Numero display per il PDF: solo progressivo
     numero_full = f.get("numero") or ""
@@ -224,10 +226,7 @@ def fattura_dettaglio(fid):
     spesa_id_val = f.get("spesa_piva_id")
     registrata_chip = ""
     if spesa_id_val:
-        registrata_chip = (
-            f'<span class="chip g" style="margin-left:6px">'
-            f'Registrata su spese P.IVA</span>'
-        )
+        registrata_chip = '<span class="chip">Registrata su P.IVA</span>'
 
     # Bottone registra: nascosto se già registrata
     btn_registra_display = "none" if spesa_id_val else ""
@@ -246,147 +245,179 @@ def fattura_dettaglio(fid):
         for k, lbl in CATEGORIE_SPESE_PIVA
     )
 
+    # --- Accantonamento -----------------------------------------------------
+    # Il momento in cui questo numero serve e' l'incasso: fino ad allora e'
+    # una previsione, e va detto.
+    acc_card = ""
+    try:
+        from .fiscale import get_parametri
+        param = get_parametri(sb)
+        anno_f = int((f.get("data") or "")[:4] or date.today().year)
+        try:
+            r_anno = (sb.table("b2f_fatture").select("totale")
+                        .eq("stato", "incassata")
+                        .gte("data_incasso", f"{anno_f}-01-01")
+                        .lte("data_incasso", f"{anno_f}-12-31").execute())
+            incassato_anno = sum(float(x.get("totale") or 0) for x in (r_anno.data or []))
+        except Exception:
+            incassato_anno = 0.0
+
+        if stato_corrente in ("emessa", "incassata"):
+            scomposizione = acc.scomponi(f.get("totale"), param,
+                                         fatturato_riferimento=incassato_anno)
+            if stato_corrente == "incassata":
+                contesto = (f"Fattura incassata il {_fmt_date(f.get('data_incasso'))}. "
+                            f"Metti da parte questa quota prima di considerare "
+                            f"il resto disponibile.")
+                titolo = "Da accantonare"
+            else:
+                contesto = ("Fattura non ancora incassata: questa è una previsione. "
+                            "Le tasse del forfettario maturano all'incasso, non "
+                            "all'emissione.")
+                titolo = "Da accantonare all'incasso"
+            acc_card = acc.card_html(scomposizione, titolo=titolo,
+                                     contesto=contesto, uid="accFatt")
+    except Exception:
+        acc_card = ""
+
+    cassa_riga = ""
+    if float(f.get("cassa_importo") or 0) > 0:
+        perc = f'{float(f.get("cassa_perc") or 0):g}'.replace(".", ",")
+        cassa_riga = (f'<div class="row"><span class="t">Cassa previdenziale '
+                      f'{perc} %</span>'
+                      f'<span class="v tnum">€ {_fmt_eur(f.get("cassa_importo"))}</span></div>')
+    bollo_riga = ""
+    if float(f.get("bollo") or 0) > 0:
+        addeb = "addebitato" if f.get("bollo_addebitato") else "a tuo carico"
+        bollo_riga = (f'<div class="row"><span class="t">Bollo <span class="sub">{addeb}</span></span>'
+                      f'<span class="v tnum">€ {_fmt_eur(f.get("bollo"))}</span></div>')
+
+    pagamento = " · ".join(x for x in [
+        f.get("pagamento_mod"), f.get("pagamento_cond"),
+        f'scadenza {_fmt_date(f.get("scadenza"))}' if f.get("scadenza") else None,
+    ] if x)
+
     body = f'''
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
-        <div>
-          <div class="eyebrow" style="margin-bottom:4px">Fattura</div>
-          <h2 class="serif" style="margin:0;font-size:24px">{f.get("numero","—")}</h2>
-          <div style="color:var(--muted);font-size:13px;margin-top:3px">
-            {_fmt_date(f.get("data"))}
+    <div class="grid split">
+      <div class="stack">
+
+        <div class="card">
+          <div class="card-head">
+            <div class="eyebrow">Riepilogo</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              {_stato_chip(stato_corrente)}{registrata_chip}
+            </div>
+          </div>
+          <div class="stat">
+            <div class="val tnum accent">€ {_fmt_eur(f.get("totale"))}</div>
+            <div class="lbl">{f.get("numero", "—")} · {_fmt_date(f.get("data"))}</div>
+          </div>
+          <div class="rows detail mt-4">
+            <div class="row"><span class="t">Imponibile</span>
+              <span class="v tnum">€ {_fmt_eur(f.get("imponibile"))}</span></div>
+            {cassa_riga}{bollo_riga}
           </div>
         </div>
-        <div style="text-align:right">
-          {_stato_chip(stato_corrente)}
-          {registrata_chip}
+
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Righe</div></div>
+          <div class="rows detail">{righe_html}</div>
+        </div>
+
+        {acc_card}
+      </div>
+
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Cliente</div></div>
+          <div class="h3">{cliente_label(f)}</div>
+          <div class="small muted mt-2">
+            {(snap.get("piva") or snap.get("cf") or "—")}
+            {" · " + snap.get("comune", "") if snap.get("comune") else ""}
+          </div>
+          {f'<div class="small muted mt-2">{pagamento}</div>' if pagamento else ""}
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Azioni</div></div>
+          <div class="actions col mt-0">
+            <button type="button" class="btn" onclick="onRistampa()">
+              {_icon("download")}Scarica PDF
+            </button>
+            <button type="button" class="btn ghost" onclick="openModal('modalStato')">
+              Cambia stato
+            </button>
+            <button type="button" class="btn ghost" id="btnRegistra"
+                    style="display:{btn_registra_display}" onclick="openModal('modalEntrata')">
+              Registra entrata su P.IVA
+            </button>
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="card">
-      <div class="eyebrow" style="margin-bottom:6px">Cliente</div>
-      <div style="font-size:15px;font-weight:500">{_cliente_label(f)}</div>
-      <div style="color:var(--muted);font-size:12.5px;margin-top:4px">
-        {(snap.get("piva") or snap.get("cf") or "—")}
-        {" · " + snap.get("comune","") if snap.get("comune") else ""}
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="eyebrow" style="margin-bottom:10px">Righe</div>
-      <div class="rows">{righe_html}</div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;font-size:13.5px;margin:4px 0">
-        <span style="color:var(--muted)">Imponibile</span>
-        <span class="tnum">€ {_fmt_eur(f.get("imponibile"))}</span>
-      </div>
-      {f'''<div style="display:flex;justify-content:space-between;font-size:13.5px;margin:4px 0">
-        <span style="color:var(--muted)">Cassa {f.get("cassa_perc") or 0}%</span>
-        <span class="tnum">€ {_fmt_eur(f.get("cassa_importo"))}</span>
-      </div>''' if float(f.get("cassa_importo") or 0) > 0 else ""}
-      {f'''<div style="display:flex;justify-content:space-between;font-size:13.5px;margin:4px 0">
-        <span style="color:var(--muted)">Bollo</span>
-        <span class="tnum">€ {_fmt_eur(f.get("bollo"))}</span>
-      </div>''' if float(f.get("bollo") or 0) > 0 else ""}
-      <div style="display:flex;justify-content:space-between;margin-top:10px;
-                  padding-top:10px;border-top:1px solid var(--line);font-size:16px;font-weight:600">
-        <span>Totale</span>
-        <span class="tnum" style="color:var(--gold)">€ {_fmt_eur(f.get("totale"))}</span>
-      </div>
-    </div>
-
-    <div class="actions" style="margin-top:14px;flex-direction:column">
-      <button type="button" class="btn" onclick="onRistampa()">
-        <svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round">
-          <path d="M12 3v12M8 11l4 4 4-4M5 21h14"/></svg>
-        Scarica PDF
-      </button>
-      <button type="button" class="btn ghost" onclick="openStatoModal()">
-        Cambia stato
-      </button>
-      <button type="button" class="btn ghost" id="btnRegistra"
-              style="display:{btn_registra_display}" onclick="openEntrataModal()">
-        Registra come entrata su spese P.IVA
-      </button>
-    </div>
-
-    <!-- ===== Modal cambio stato ===== -->
-    <div class="modal-ov" id="modalStato" style="display:none">
-      <div class="modal-card">
-        <h3 class="serif" style="margin:0 0 4px">Cambia stato</h3>
-        <p style="color:var(--muted);font-size:13px;margin:0 0 16px">
-          Stato attuale: <strong>{stato_corrente}</strong>
-        </p>
+    <!-- ===== Foglio cambio stato ===== -->
+    <div class="sheet-ov" id="modalStato" role="dialog" aria-modal="true">
+      <div class="sheet">
+        <h3>Cambia stato</h3>
+        <div class="sheet-sub">Stato attuale: <strong>{STATO_CHIP.get(stato_corrente, ("", stato_corrente))[1]}</strong></div>
         <div class="field">
           <label>Nuovo stato</label>
           <select id="statoSel" onchange="onStatoChange()">
-            <option value="bozza"      {" selected" if stato_corrente=="bozza" else ""}>Bozza</option>
-            <option value="emessa"     {" selected" if stato_corrente=="emessa" else ""}>Emessa</option>
-            <option value="incassata"  {" selected" if stato_corrente=="incassata" else ""}>Incassata</option>
-            <option value="annullata"  {" selected" if stato_corrente=="annullata" else ""}>Annullata</option>
+            <option value="bozza"     {" selected" if stato_corrente == "bozza" else ""}>Bozza</option>
+            <option value="emessa"    {" selected" if stato_corrente == "emessa" else ""}>Emessa</option>
+            <option value="incassata" {" selected" if stato_corrente == "incassata" else ""}>Incassata</option>
+            <option value="annullata" {" selected" if stato_corrente == "annullata" else ""}>Annullata</option>
           </select>
         </div>
         <div class="field" id="fldDataIncasso"
-             style="display:{'block' if stato_corrente=='incassata' else 'none'}">
+             style="display:{'flex' if stato_corrente == 'incassata' else 'none'}">
           <label>Data incasso</label>
           <input type="date" id="dataIncasso" value="{data_incasso_default}">
         </div>
-        <div class="actions" style="margin-top:8px">
-          <button type="button" class="btn ghost" onclick="closeModal('modalStato')">Annulla</button>
+        <div class="notice info small" id="statoAccHint"
+             style="display:{'block' if stato_corrente == 'incassata' else 'none'}">
+          Segnandola incassata, l'importo entra nel calcolo dell'accantonamento
+          del mese.
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-close="modalStato">Annulla</button>
           <button type="button" class="btn" onclick="onSalvaStato()">Salva</button>
         </div>
       </div>
     </div>
 
-    <!-- ===== Modal registra entrata ===== -->
-    <div class="modal-ov" id="modalEntrata" style="display:none">
-      <div class="modal-card">
-        <h3 class="serif" style="margin:0 0 4px">Registra come entrata su spese P.IVA</h3>
-        <p style="color:var(--muted);font-size:13px;margin:0 0 16px">
-          Crea una riga <code>tipo=entrata</code> nella tabella spese P.IVA e collega
-          la fattura. Aggiorna anche lo stato a "incassata".
-        </p>
-        <div class="field">
-          <label>Data</label>
-          <input type="date" id="e_data" value="{data_incasso_default}">
+    <!-- ===== Foglio registra entrata ===== -->
+    <div class="sheet-ov" id="modalEntrata" role="dialog" aria-modal="true">
+      <div class="sheet">
+        <h3>Registra come entrata</h3>
+        <div class="sheet-sub">
+          Crea un movimento in entrata fra le spese P.IVA, lo collega a questa
+          fattura e porta lo stato a "incassata".
+        </div>
+        <div class="field-group">
+          <div class="field"><label>Data</label>
+            <input type="date" id="e_data" value="{data_incasso_default}"></div>
+          <div class="field"><label>Importo (€)</label>
+            <input type="number" step="0.01" inputmode="decimal" id="e_imp"
+                   value="{f.get('totale') or 0}"></div>
         </div>
         <div class="field">
           <label>Descrizione</label>
           <input id="e_desc" value="{desc_precompilata}">
         </div>
-        <div class="field">
-          <label>Importo (€)</label>
-          <input type="number" step="0.01" id="e_imp" value="{f.get('totale') or 0}">
-        </div>
         <div class="field-group">
           <div class="field"><label>Categoria</label>
             <select id="e_cat">{cat_options}</select></div>
-          <div class="field"><label>Sottocategoria (opz.)</label>
-            <input id="e_scat"></div>
+          <div class="field"><label>Sottocategoria</label>
+            <input id="e_scat" placeholder="facoltativa"></div>
         </div>
-        <div class="actions" style="margin-top:8px">
-          <button type="button" class="btn ghost" onclick="closeModal('modalEntrata')">Annulla</button>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-close="modalEntrata">Annulla</button>
           <button type="button" class="btn" onclick="onSalvaEntrata()">Registra</button>
         </div>
       </div>
     </div>
-
-    <style>
-      .modal-ov{{position:fixed;inset:0;z-index:500;background:rgba(11,12,16,.75);
-        backdrop-filter:blur(6px);display:flex;align-items:flex-end;justify-content:center;
-        padding:0}}
-      html[data-theme="light"] .modal-ov{{background:rgba(238,240,245,.86)}}
-      .modal-card{{width:100%;max-width:560px;background:var(--card-grad);
-        border:1px solid var(--line-strong);border-radius:20px 20px 0 0;
-        padding:22px 22px calc(22px + env(safe-area-inset-bottom,0px));
-        box-shadow:var(--shadow);max-height:88vh;overflow-y:auto}}
-      @media (min-width:640px){{
-        .modal-ov{{align-items:center;padding:20px}}
-        .modal-card{{border-radius:20px}}
-      }}
-    </style>
 
     {pdf_js}
     <div id="toast" class="toast"></div>
@@ -406,14 +437,15 @@ def fattura_dettaglio(fid):
         t.textContent = msg; t.className = 'toast show ' + (cls || '');
         setTimeout(()=>{{t.className='toast '+(cls||'')}}, cls==='err' ? 4500 : 2500);
       }}
-      function openModal(id) {{ document.getElementById(id).style.display = 'flex'; }}
-      function closeModal(id) {{ document.getElementById(id).style.display = 'none'; }}
+      function openModal(id) {{ document.getElementById(id).classList.add('show'); }}
+      function closeModal(id) {{ document.getElementById(id).classList.remove('show'); }}
 
       // --- cambio stato ---
-      function openStatoModal() {{ openModal('modalStato'); }}
       function onStatoChange() {{
         const v = document.getElementById('statoSel').value;
-        document.getElementById('fldDataIncasso').style.display = (v==='incassata' ? 'block' : 'none');
+        const incassata = (v === 'incassata');
+        document.getElementById('fldDataIncasso').style.display = incassata ? 'flex' : 'none';
+        document.getElementById('statoAccHint').style.display = incassata ? 'block' : 'none';
       }}
       async function onSalvaStato() {{
         const nuovo = document.getElementById('statoSel').value;
@@ -434,7 +466,6 @@ def fattura_dettaglio(fid):
       }}
 
       // --- registra come entrata ---
-      function openEntrataModal() {{ openModal('modalEntrata'); }}
       async function onSalvaEntrata() {{
         const body = {{
           data:         document.getElementById('e_data').value,

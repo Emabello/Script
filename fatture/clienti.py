@@ -14,6 +14,7 @@ from flask import Response, request, jsonify, redirect, url_for
 
 from . import fatture_bp
 from shared.theme import render_page
+from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
 
 
@@ -50,7 +51,7 @@ def _sub(c: dict) -> str:
 
 
 def _tipo_chip(tipo: str) -> str:
-    cls = {"azienda": "", "privato": "n", "pa": "a", "estero": "g"}.get(tipo, "n")
+    cls = {"azienda": "accent", "privato": "", "pa": "warn", "estero": "pos"}.get(tipo, "")
     lbl = dict(TIPI).get(tipo, tipo)
     return f'<span class="chip {cls}">{lbl}</span>'
 
@@ -104,25 +105,21 @@ def clienti_list():
         toggle_href = "/fatture/clienti" if show_inactive else "/fatture/clienti?all=1"
 
         toolbar = f'''
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-          <input id="q_search" placeholder="Cerca…" value="{q}"
-                 style="flex:1;min-width:140px;padding:10px 14px;border-radius:999px;
-                        background:var(--input-bg);border:1px solid var(--line-strong);
-                        color:var(--ink);font-size:14px;min-height:40px"
+        <div class="toolbar">
+          <input class="select-pill" id="q_search" type="search" aria-label="Cerca cliente"
+                 placeholder="Cerca…" value="{q}" style="flex:1;min-width:150px"
                  oninput="clearTimeout(window.__st);window.__st=setTimeout(()=>{{
                    const u=new URL(location.href);
                    if(this.value){{u.searchParams.set('q',this.value);}}else{{u.searchParams.delete('q');}}
                    location.href=u.toString();
                  }},420)">
-          <select onchange="location.href='/fatture/clienti'+(this.value?'?tipo='+this.value:'')"
-                  style="padding:10px 14px;border-radius:999px;
-                         background:var(--input-bg);border:1px solid var(--line-strong);
-                         color:var(--ink);font-size:14px;min-height:40px">
+          <select class="select-pill" aria-label="Tipo cliente"
+                  onchange="location.href='/fatture/clienti'+(this.value?'?tipo='+this.value:'')">
             <option value="">Tutti i tipi</option>
             {opts}
           </select>
-          <a href="{toggle_href}" class="chip"
-             style="text-decoration:none;padding:6px 12px;align-self:center">{inactive_toggle}</a>
+          <a href="{toggle_href}" class="btn ghost" style="min-height:40px;padding:8px 16px;
+             font-size:13.5px;font-weight:500">{inactive_toggle}</a>
         </div>
         '''
 
@@ -130,8 +127,7 @@ def clienti_list():
             body = f'''
             {toolbar}
             <div class="empty">
-              <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
-                <path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>
+              {_icon("clienti")}
               <div class="t">Nessun cliente</div>
               <div class="s">Nessun risultato con i filtri correnti.</div>
             </div>
@@ -139,15 +135,18 @@ def clienti_list():
         else:
             items = []
             for c in rows:
-                inactive = "" if c.get("attivo") else (
-                    ' <span class="chip n" style="margin-left:6px">Inattivo</span>')
+                inactive = ("" if c.get("attivo")
+                            else '<span class="chip">Inattivo</span>')
                 items.append(f'''
                 <a class="item" href="/fatture/clienti/{c["id"]}">
-                  <div class="info">
-                    <div class="n">{_label(c)}{inactive}</div>
-                    <div class="m">{_sub(c)}</div>
-                  </div>
-                  <div class="end">{_tipo_chip(c.get("tipo") or "azienda")}</div>
+                  <span class="ico neutral">{_icon("clienti")}</span>
+                  <span class="body">
+                    <span class="n">{_label(c)}</span>
+                    <span class="m">{_sub(c)}</span>
+                  </span>
+                  <span class="end">
+                    {_tipo_chip(c.get("tipo") or "azienda")}{inactive}
+                  </span>
                 </a>''')
             body = f'{toolbar}<div class="list">{"".join(items)}</div>'
 
@@ -183,12 +182,14 @@ def _form_html(c: dict | None = None) -> str:
     if is_edit:
         active_now = bool(c.get("attivo"))
         lbl = "Disattiva" if active_now else "Riattiva"
-        delete_btn = f'''<button type="button" class="btn ghost"
+        cls = "btn danger" if active_now else "btn ghost"
+        delete_btn = f'''<button type="button" class="{cls}"
           onclick="toggleActive({cid}, {str(not active_now).lower()})">{lbl}</button>'''
 
     submit_lbl = "Aggiorna" if is_edit else "Crea cliente"
 
     return f'''
+    <div class="narrow">
     {inactive_note}
     <div class="card">
       <div class="field">
@@ -250,6 +251,7 @@ def _form_html(c: dict | None = None) -> str:
         <button type="button" class="btn" onclick="onSubmit({cid or 'null'})">{submit_lbl}</button>
         {delete_btn}
       </div>
+    </div>
     </div>
 
     <div id="toast" class="toast"></div>

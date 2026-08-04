@@ -87,8 +87,9 @@ def emittente_editor():
     e = _get_emittente(sb)
 
     body = f'''
+    <div class="narrow">
     <div class="card">
-      <div class="notice" style="margin-bottom:14px">
+      <div class="notice info mb-4">
         Questi dati compaiono nell'intestazione dei PDF (fattura e proforma).
       </div>
       <div class="field-group">
@@ -140,6 +141,7 @@ def emittente_editor():
       <div class="actions">
         <button type="button" class="btn" onclick="onSalva()">Salva</button>
       </div>
+    </div>
     </div>
     <div id="toast" class="toast"></div>
     <script>
