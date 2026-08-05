@@ -327,7 +327,7 @@ ul,ol{margin:0;padding:0;list-style:none}
   padding-top:var(--sp-4);border-top:1px solid var(--line)}
 
 /* --- Colonna principale ---------------------------------------------- */
-.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.main{flex:1;min-width:0;max-width:100%;display:flex;flex-direction:column}
 
 .topbar{
   display:flex;align-items:center;gap:var(--sp-3);
@@ -338,6 +338,8 @@ ul,ol{margin:0;padding:0;list-style:none}
   max-width:var(--content-max);margin:0 auto;width:100%;
 }
 .topbar-title{flex:1;min-width:0}
+.topbar-title .eyebrow{white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
 .topbar-title .h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .topbar-actions{display:flex;align-items:center;gap:var(--sp-2);flex:none}
 
@@ -401,29 +403,31 @@ ul,ol{margin:0;padding:0;list-style:none}
    5. GRIGLIA
    ===================================================================== */
 
-.stack{display:flex;flex-direction:column;gap:var(--sp-3)}
+.stack{display:flex;flex-direction:column;gap:var(--sp-3);min-width:0}
+.stack>*{min-width:0}
 .stack.gap-lg{gap:var(--sp-5)}
 
-.grid{display:grid;gap:var(--sp-3)}
+.grid{display:grid;gap:var(--sp-3);min-width:0}
+.grid>*{min-width:0}
 /* Tessere KPI: si dispongono da sole, nessun breakpoint da mantenere. */
-.grid.kpi{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.grid.kpi{grid-template-columns:repeat(auto-fit,minmax(132px,1fr))}
 /* Con tre tessere su schermo stretto, due righe da 2+1 lasciano l'ultima
    spaiata. Con .lead la prima prende tutta la riga e le altre due si
    affiancano sotto: la gerarchia diventa anche visiva. */
 @media (max-width:719px){
   .grid.kpi.lead>:first-child{grid-column:1/-1}
 }
-.grid.cols-2{grid-template-columns:1fr}
-.grid.cols-3{grid-template-columns:1fr}
+.grid.cols-2{grid-template-columns:minmax(0,1fr)}
+.grid.cols-3{grid-template-columns:minmax(0,1fr)}
 @media (min-width:720px){
-  .grid.cols-2{grid-template-columns:repeat(2,1fr)}
-  .grid.cols-3{grid-template-columns:repeat(2,1fr)}
+  .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid.cols-3{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (min-width:1024px){
-  .grid.cols-3{grid-template-columns:repeat(3,1fr)}
+  .grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 /* Colonna larga + colonna stretta, tipica delle dashboard desktop */
-.grid.split{grid-template-columns:1fr}
+.grid.split{grid-template-columns:minmax(0,1fr)}
 @media (min-width:1024px){
   .grid.split{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:var(--sp-4)}
 }
@@ -435,6 +439,7 @@ ul,ol{margin:0;padding:0;list-style:none}
 
 /* --- Card ------------------------------------------------------------- */
 .card{
+  min-width:0;
   background:var(--surface);
   border:1px solid var(--line);
   border-radius:var(--r-md);
@@ -465,7 +470,7 @@ ul,ol{margin:0;padding:0;list-style:none}
 /* --- Righe tabellari ----------------------------------------------------
    Flex e non grid: cosi' la riga funziona sia con due figli (etichetta +
    valore) sia con tre (data + testo + valore) senza varianti.          */
-.rows{display:flex;flex-direction:column}
+.rows{display:flex;flex-direction:column;min-width:0}
 .row{
   display:flex;align-items:center;gap:var(--sp-3);
   padding:11px 0;border-bottom:1px solid var(--line);
@@ -473,9 +478,10 @@ ul,ol{margin:0;padding:0;list-style:none}
 .row:last-child{border-bottom:0}
 .row .k{flex:none;font-size:12.5px;color:var(--ink-3);white-space:nowrap;
   font-variant-numeric:tabular-nums}
-.row .t{flex:1;min-width:0;font-size:14px;
+.row .t{display:block;flex:1;min-width:0;font-size:14px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row .t .sub{display:block;font-size:12px;color:var(--ink-3)}
+.row .t .sub{display:block;font-size:12px;color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis}
 .row .v{flex:none;text-align:right;font-size:14px;font-weight:500;
   font-variant-numeric:tabular-nums;white-space:nowrap}
 /* Righe esplicative: il testo puo' andare a capo, niente ellissi. */
@@ -484,7 +490,7 @@ ul,ol{margin:0;padding:0;list-style:none}
 .rows.detail .row .t .sub{white-space:normal;line-height:1.4;margin-top:2px}
 
 /* --- Lista di elementi cliccabili ---------------------------------------- */
-.list{display:flex;flex-direction:column;gap:var(--sp-2)}
+.list{display:flex;flex-direction:column;gap:var(--sp-2);min-width:0}
 .item{
   display:flex;align-items:center;gap:var(--sp-3);
   padding:13px var(--sp-4);min-height:62px;
@@ -494,10 +500,10 @@ ul,ol{margin:0;padding:0;list-style:none}
 }
 .item:active{transform:scale(.99)}
 @media (hover:hover){.item:hover{border-color:var(--line-strong);background:var(--surface-2)}}
-.item .body{flex:1;min-width:0}
-.item .body .n{font-size:14.5px;font-weight:500;
+.item .body{display:block;flex:1;min-width:0}
+.item .body .n{display:block;font-size:14.5px;font-weight:500;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.item .body .m{font-size:12.5px;color:var(--ink-3);margin-top:1px;
+.item .body .m{display:block;font-size:12.5px;color:var(--ink-3);margin-top:1px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .item .end{flex:none;text-align:right;display:flex;flex-direction:column;
   align-items:flex-end;gap:4px}
@@ -634,10 +640,10 @@ html[data-theme="light"] .input{background:var(--surface-3)}
 .field.inline input[type=checkbox]{width:20px;height:20px;min-height:0;flex:none;
   accent-color:var(--accent)}
 
-.field-group{display:grid;grid-template-columns:1fr;gap:var(--sp-3)}
+.field-group{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--sp-3)}
 @media (min-width:520px){
-  .field-group{grid-template-columns:repeat(2,1fr)}
-  .field-group.c3{grid-template-columns:2fr 1fr 1fr}
+  .field-group{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .field-group.c3{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)}
 }
 .field-group>.field{margin-bottom:0}
 

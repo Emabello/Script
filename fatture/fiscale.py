@@ -308,10 +308,11 @@ def situazione_dashboard():
         f'<option value="{y}"{" selected" if y == anno else ""}>{y}</option>'
         for y in range(anno_default + 1, anno_default - 5, -1)
     )
-    selettore_anno = (
+    toolbar_anno = (
+        '<div class="toolbar">'
         '<select class="select-pill" aria-label="Anno"'
         ' onchange="location.href=\'/fatture/situazione?anno=\'+this.value">'
-        f'{anno_opts}</select>'
+        f'{anno_opts}</select></div>'
     )
 
     # --- Tessere principali -------------------------------------------------
@@ -451,6 +452,7 @@ def situazione_dashboard():
     </div>'''
 
     body = f'''
+    {toolbar_anno}
     {kpi}
     {acc_card}
     <div class="grid split mt-4">
@@ -459,9 +461,9 @@ def situazione_dashboard():
     </div>
     '''
 
-    return _render(body, eyebrow=f"Situazione fiscale {anno}",
+    return _render(body, eyebrow="Fiscale",
                    title_html='Situazione <em>fiscale</em>',
-                   breadcrumb=breadcrumb, actions_html=selettore_anno)
+                   breadcrumb=breadcrumb)
 
 
 @fatture_bp.get("/api/situazione")
