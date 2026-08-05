@@ -17,19 +17,16 @@ from flask import Response, request, jsonify
 
 from . import fatture_bp
 from . import accantonamento as acc
-from .costanti import CATEGORIE_SPESE_PIVA
+from .costanti import (
+    CATEGORIE_SPESE_PIVA, STATI, STATI_CHIAVI, STATI_LABEL, STATI_CLASSE,
+    STATI_DESCR, STATI_PERCORSO, STATI_EMESSE, DATE_STATO,
+    normalizza_stato, prossimo_stato, modificabile, motivo_blocco,
+    scorpora_rivalsa, RIVALSA_PERC,
+)
 from shared.theme import render_page
 from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
 from shared.fmt import eur as _fmt_eur, data_it as _fmt_date
-
-
-STATO_CHIP = {
-    "bozza":      ("",       "Bozza"),
-    "emessa":     ("accent", "Emessa"),
-    "incassata":  ("pos",    "Incassata"),
-    "annullata":  ("neg",    "Annullata"),
-}
 
 
 def cliente_label(f: dict) -> str:
@@ -46,7 +43,9 @@ _cliente_label = cliente_label
 
 
 def _stato_chip(stato: str) -> str:
-    cls, lbl = STATO_CHIP.get(stato, ("n", stato or "—"))
+    s = normalizza_stato(stato)
+    cls = STATI_CLASSE.get(s, "")
+    lbl = STATI_LABEL.get(s, s or "—")
     return f'<span class="chip {cls}">{lbl}</span>'
 
 
@@ -54,6 +53,61 @@ def _supabase_or_error():
     if not is_configured():
         return None, ('<div class="notice warn">Supabase non configurato.</div>')
     return get_client(), None
+
+
+def _timeline(f: dict, stato: str) -> str:
+    """
+    Il percorso della fattura, con le date dei passaggi gia' avvenuti.
+
+    Serve a rendere visibile una cosa che altrimenti resta implicita: dopo
+    "inviata allo studio" il documento non e' piu' in mano tua, ed e' per
+    questo che smette di essere modificabile.
+    """
+    if stato == "annullata":
+        return ('<div class="notice neg small">Fattura annullata: '
+                'non concorre ai calcoli fiscali.</div>')
+
+    campo_data = {k: v[0] for k, v in DATE_STATO.items()}
+    idx_corrente = (STATI_PERCORSO.index(stato)
+                    if stato in STATI_PERCORSO else -1)
+
+    passi = []
+    for i, chiave in enumerate(STATI_PERCORSO):
+        fatto = i <= idx_corrente
+        attuale = i == idx_corrente
+        data = f.get(campo_data.get(chiave, "")) if chiave in campo_data else f.get("data")
+        data_txt = _fmt_date(data) if (fatto and data) else ""
+        cls = "fatto" if fatto else ""
+        if attuale:
+            cls += " ora"
+        passi.append(f'''<li class="{cls.strip()}">
+          <span class="tl-lbl">{STATI_LABEL[chiave]}</span>
+          <span class="tl-data tnum">{data_txt}</span>
+          <span class="tl-descr">{STATI_DESCR[chiave]}</span>
+        </li>''')
+
+    return f'''
+    <style>
+      .tl{{list-style:none;margin:0;padding:0;position:relative}}
+      .tl li{{position:relative;padding:0 0 var(--sp-4) 26px;color:var(--ink-4)}}
+      .tl li:last-child{{padding-bottom:0}}
+      /* Il filo che collega i passi: si ferma prima dell'ultimo pallino. */
+      .tl li:not(:last-child)::after{{content:"";position:absolute;left:7px;top:16px;
+        bottom:2px;width:2px;background:var(--line-strong)}}
+      .tl li.fatto:not(:last-child)::after{{background:var(--accent)}}
+      .tl li::before{{content:"";position:absolute;left:2px;top:5px;
+        width:12px;height:12px;border-radius:50%;
+        border:2px solid var(--line-strong);background:var(--surface)}}
+      .tl li.fatto::before{{border-color:var(--accent);background:var(--accent)}}
+      .tl li.ora::before{{box-shadow:0 0 0 4px var(--accent-soft)}}
+      .tl .tl-lbl{{font-size:14px;font-weight:500;color:var(--ink-3)}}
+      .tl li.fatto .tl-lbl{{color:var(--ink)}}
+      .tl li.ora .tl-lbl{{color:var(--accent-text)}}
+      .tl .tl-data{{float:right;font-size:12.5px;color:var(--ink-3)}}
+      .tl .tl-descr{{display:block;font-size:12px;color:var(--ink-3);
+        margin-top:2px;line-height:1.4}}
+    </style>
+    <ol class="tl">{"".join(passi)}</ol>'''
 
 
 # ---------------------------------------------------------------------------
@@ -82,16 +136,16 @@ def storico_list():
                        breadcrumb=[("Fatture", "/fatture"), ("Storico", "")])
 
     # Riepilogo anno
-    valide = [x for x in rows if x.get("stato") in ("emessa", "incassata")]
+    valide = [x for x in rows if normalizza_stato(x.get("stato")) in STATI_EMESSE]
     tot_fatturato = sum(float(x.get("totale") or 0) for x in valide)
     tot_incassato = sum(float(x.get("totale") or 0) for x in rows
-                        if x.get("stato") == "incassata")
+                        if normalizza_stato(x.get("stato")) == "incassata")
     da_incassare = round(tot_fatturato - tot_incassato, 2)
 
     # Toolbar
     stato_opts = "".join(
         f'<option value="{k}"{" selected" if stato == k else ""}>{lbl}</option>'
-        for k, (_, lbl) in STATO_CHIP.items()
+        for k, lbl, _, _ in STATI
     )
     anno_opts = "".join(f'<option value="{y}"{" selected" if y == anno else ""}>{y}</option>'
                         for y in range(anno_default, anno_default - 6, -1))
@@ -135,7 +189,7 @@ def storico_list():
     else:
         items = []
         for f in rows:
-            stato = f.get("stato")
+            stato = normalizza_stato(f.get("stato"))
             incasso = (f' · incassata il {_fmt_date(f.get("data_incasso"))}'
                        if stato == "incassata" and f.get("data_incasso") else "")
             items.append(f'''
@@ -212,6 +266,9 @@ def fattura_dettaglio(fid):
         "cliente":        snap,
         "righe":          [{"descrizione": r.get("descrizione"), "qta": r.get("qta"),
                             "um": r.get("um"), "prezzo": r.get("prezzo")} for r in righe],
+        "corrispettivo":  float(f.get("imponibile") or 0),
+        "compenso":       round(float(f.get("imponibile") or 0)
+                                - float(f.get("cassa_importo") or 0), 2),
         "imponibile":     float(f.get("imponibile") or 0),
         "cassa_perc":     float(f.get("cassa_perc") or 0),
         "cassa_importo":  float(f.get("cassa_importo") or 0),
@@ -238,7 +295,7 @@ def fattura_dettaglio(fid):
     # Descrizione precompilata per la riga spese
     desc_precompilata = f"Fattura {f.get('numero','')} — {_cliente_label(f)}"
 
-    stato_corrente = f.get("stato") or "emessa"
+    stato_corrente = normalizza_stato(f.get("stato"))
 
     cat_options = "".join(
         f'<option value="{k}"{" selected" if k=="fatturato" else ""}>{lbl}</option>'
@@ -262,7 +319,7 @@ def fattura_dettaglio(fid):
         except Exception:
             incassato_anno = 0.0
 
-        if stato_corrente in ("emessa", "incassata"):
+        if stato_corrente in STATI_EMESSE:
             scomposizione = acc.scomponi(f.get("totale"), param,
                                          fatturato_riferimento=incassato_anno)
             if stato_corrente == "incassata":
@@ -280,24 +337,94 @@ def fattura_dettaglio(fid):
     except Exception:
         acc_card = ""
 
-    cassa_riga = ""
-    if float(f.get("cassa_importo") or 0) > 0:
+    # --- Scomposizione dello scorporo ---------------------------------------
+    # Il corrispettivo concordato non cambia: la rivalsa si estrae da dentro.
+    # Chi legge deve vedere entrambe le voci, perche' sono quelle che finiscono
+    # nella fattura elettronica preparata dallo studio.
+    corrispettivo = float(f.get("imponibile") or 0)
+    rivalsa = float(f.get("cassa_importo") or 0)
+    righe_totali = [
+        f'<div class="row"><span class="t">Corrispettivo concordato</span>'
+        f'<span class="v tnum">€ {_fmt_eur(corrispettivo)}</span></div>'
+    ]
+    if rivalsa > 0:
         perc = f'{float(f.get("cassa_perc") or 0):g}'.replace(".", ",")
-        cassa_riga = (f'<div class="row"><span class="t">Cassa previdenziale '
-                      f'{perc} %</span>'
-                      f'<span class="v tnum">€ {_fmt_eur(f.get("cassa_importo"))}</span></div>')
-    bollo_riga = ""
+        righe_totali.append(
+            f'<div class="row"><span class="t">di cui compenso</span>'
+            f'<span class="v tnum">€ {_fmt_eur(corrispettivo - rivalsa)}</span></div>'
+            f'<div class="row"><span class="t">di cui rivalsa INPS {perc} %'
+            f'<span class="sub">scorporata dal corrispettivo, non aggiunta</span></span>'
+            f'<span class="v tnum">€ {_fmt_eur(rivalsa)}</span></div>'
+        )
     if float(f.get("bollo") or 0) > 0:
-        addeb = "addebitato" if f.get("bollo_addebitato") else "a tuo carico"
-        bollo_riga = (f'<div class="row"><span class="t">Bollo <span class="sub">{addeb}</span></span>'
-                      f'<span class="v tnum">€ {_fmt_eur(f.get("bollo"))}</span></div>')
+        addeb = "addebitato al cliente" if f.get("bollo_addebitato") else "a tuo carico"
+        righe_totali.append(
+            f'<div class="row"><span class="t">Bollo <span class="sub">{addeb}</span></span>'
+            f'<span class="v tnum">€ {_fmt_eur(f.get("bollo"))}</span></div>'
+        )
+    totali_html = "".join(righe_totali)
 
     pagamento = " · ".join(x for x in [
         f.get("pagamento_mod"), f.get("pagamento_cond"),
         f'scadenza {_fmt_date(f.get("scadenza"))}' if f.get("scadenza") else None,
     ] if x)
 
+    # --- Linea temporale ------------------------------------------------------
+    timeline_html = _timeline(f, stato_corrente)
+
+    # --- Azioni contestuali ---------------------------------------------------
+    puo_modificare = modificabile(stato_corrente)
+    avanti = prossimo_stato(stato_corrente)
+    azione_principale = ""
+    if avanti:
+        etichette_azione = {
+            "inviata_studio": "Segna inviata allo studio",
+            "trasmessa_sdi":  "Segna trasmessa a SDI",
+            "incassata":      "Segna incassata",
+        }
+        azione_principale = (
+            f'<button type="button" class="btn" '
+            f'onclick="apriAvanzamento(\'{avanti}\')">'
+            f'{_icon("check")}{etichette_azione.get(avanti, "Avanza")}</button>'
+        )
+
+    if puo_modificare:
+        blocco_modifica = (
+            f'<a class="btn ghost" href="/fatture/{fid}/modifica">Modifica</a>'
+            f'<button type="button" class="btn danger" onclick="onElimina()">Elimina</button>'
+        )
+        avviso_blocco = ""
+    else:
+        blocco_modifica = ""
+        avviso_blocco = (
+            f'<div class="notice warn small mt-3">{motivo_blocco(stato_corrente)}</div>'
+        )
+
+    # Arrivo da un tentativo di modifica respinto: la spiegazione va in
+    # cima, dove si guarda, non in fondo alle azioni.
+    avviso_redirect = ""
+    if request.args.get("bloccata") and not puo_modificare:
+        avviso_redirect = (
+            f'<div class="notice warn mb-4">'
+            f'<strong>Modifica non possibile.</strong><br>{motivo_blocco(stato_corrente)}'
+            f'</div>'
+        )
+
+    opzioni_stato = "".join(
+        f'<option value="{k}"{" selected" if k == stato_corrente else ""}>{lbl}</option>'
+        for k, lbl, _, _ in STATI
+    )
+    # Precalcolati fuori dalla f-string: dentro, le graffe doppie servono
+    # a produrre graffe letterali e romperebbero le espressioni Python.
+    import json as _json
+    stati_label_js = _json.dumps(STATI_LABEL, ensure_ascii=False)
+    stati_descr_js = _json.dumps(STATI_DESCR, ensure_ascii=False)
+    stati_data_js = _json.dumps(
+        {k: [v[0], v[1]] for k, v in DATE_STATO.items()}, ensure_ascii=False)
+    oggi_iso = date.today().isoformat()
+
     body = f'''
+    {avviso_redirect}
     <div class="grid split">
       <div class="stack">
 
@@ -312,11 +439,7 @@ def fattura_dettaglio(fid):
             <div class="val tnum accent">€ {_fmt_eur(f.get("totale"))}</div>
             <div class="lbl">{f.get("numero", "—")} · {_fmt_date(f.get("data"))}</div>
           </div>
-          <div class="rows detail mt-4">
-            <div class="row"><span class="t">Imponibile</span>
-              <span class="v tnum">€ {_fmt_eur(f.get("imponibile"))}</span></div>
-            {cassa_riga}{bollo_riga}
-          </div>
+          <div class="rows detail mt-4">{totali_html}</div>
         </div>
 
         <div class="card">
@@ -328,6 +451,11 @@ def fattura_dettaglio(fid):
       </div>
 
       <div class="stack">
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Percorso</div></div>
+          {timeline_html}
+        </div>
+
         <div class="card">
           <div class="card-head"><div class="eyebrow">Cliente</div></div>
           <div class="h3">{cliente_label(f)}</div>
@@ -341,45 +469,58 @@ def fattura_dettaglio(fid):
         <div class="card">
           <div class="card-head"><div class="eyebrow">Azioni</div></div>
           <div class="actions col mt-0">
-            <button type="button" class="btn" onclick="onRistampa()">
-              {_icon("download")}Scarica PDF
+            {azione_principale}
+            <button type="button" class="btn ghost" onclick="onRistampa()">
+              {_icon("download")}Scarica facsimile
             </button>
-            <button type="button" class="btn ghost" onclick="openModal('modalStato')">
-              Cambia stato
-            </button>
+            {blocco_modifica}
             <button type="button" class="btn ghost" id="btnRegistra"
                     style="display:{btn_registra_display}" onclick="openModal('modalEntrata')">
               Registra entrata su P.IVA
             </button>
+            <button type="button" class="btn ghost" onclick="openModal('modalStato')">
+              Cambia stato manualmente
+            </button>
           </div>
+          {avviso_blocco}
         </div>
       </div>
     </div>
 
-    <!-- ===== Foglio cambio stato ===== -->
+    <!-- ===== Foglio avanzamento di stato ===== -->
+    <div class="sheet-ov" id="modalAvanza" role="dialog" aria-modal="true">
+      <div class="sheet">
+        <h3 id="avanzaTitolo">Avanza</h3>
+        <div class="sheet-sub" id="avanzaSub"></div>
+        <div class="field">
+          <label id="avanzaDataLbl">Data</label>
+          <input type="date" id="avanzaData" value="{date.today().isoformat()}">
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-close="modalAvanza">Annulla</button>
+          <button type="button" class="btn" onclick="onAvanza()">Conferma</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Foglio cambio stato manuale ===== -->
     <div class="sheet-ov" id="modalStato" role="dialog" aria-modal="true">
       <div class="sheet">
         <h3>Cambia stato</h3>
-        <div class="sheet-sub">Stato attuale: <strong>{STATO_CHIP.get(stato_corrente, ("", stato_corrente))[1]}</strong></div>
+        <div class="sheet-sub">
+          Stato attuale: <strong>{STATI_LABEL.get(stato_corrente, stato_corrente)}</strong>.
+          Usalo per correggere un passaggio sbagliato: il percorso normale è
+          il pulsante di avanzamento.
+        </div>
         <div class="field">
           <label>Nuovo stato</label>
-          <select id="statoSel" onchange="onStatoChange()">
-            <option value="bozza"     {" selected" if stato_corrente == "bozza" else ""}>Bozza</option>
-            <option value="emessa"    {" selected" if stato_corrente == "emessa" else ""}>Emessa</option>
-            <option value="incassata" {" selected" if stato_corrente == "incassata" else ""}>Incassata</option>
-            <option value="annullata" {" selected" if stato_corrente == "annullata" else ""}>Annullata</option>
-          </select>
+          <select id="statoSel" onchange="onStatoChange()">{opzioni_stato}</select>
         </div>
-        <div class="field" id="fldDataIncasso"
-             style="display:{'flex' if stato_corrente == 'incassata' else 'none'}">
-          <label>Data incasso</label>
-          <input type="date" id="dataIncasso" value="{data_incasso_default}">
+        <div class="field" id="fldDataStato" style="display:none">
+          <label id="lblDataStato">Data</label>
+          <input type="date" id="dataStato" value="{data_incasso_default}">
         </div>
-        <div class="notice info small" id="statoAccHint"
-             style="display:{'block' if stato_corrente == 'incassata' else 'none'}">
-          Segnandola incassata, l'importo entra nel calcolo dell'accantonamento
-          del mese.
-        </div>
+        <div class="notice info small" id="statoDescr"></div>
         <div class="actions">
           <button type="button" class="btn ghost" data-close="modalStato">Annulla</button>
           <button type="button" class="btn" onclick="onSalvaStato()">Salva</button>
@@ -440,19 +581,50 @@ def fattura_dettaglio(fid):
       function openModal(id) {{ document.getElementById(id).classList.add('show'); }}
       function closeModal(id) {{ document.getElementById(id).classList.remove('show'); }}
 
-      // --- cambio stato ---
+      // Etichette e campi data associati a ciascuno stato, dal server:
+      // una sola definizione, in fatture/costanti.py.
+      const STATI_LABEL = {stati_label_js};
+      const STATI_DESCR = {stati_descr_js};
+      const STATI_DATA  = {stati_data_js};
+      const OGGI = "{oggi_iso}";
+
+      // --- avanzamento lungo il percorso ---
+      let statoTarget = null;
+      function apriAvanzamento(target) {{
+        statoTarget = target;
+        document.getElementById('avanzaTitolo').textContent = STATI_LABEL[target] || target;
+        document.getElementById('avanzaSub').textContent = STATI_DESCR[target] || '';
+        const meta = STATI_DATA[target];
+        document.getElementById('avanzaDataLbl').textContent = meta ? meta[1] : 'Data';
+        document.getElementById('avanzaData').value = OGGI;
+        openModal('modalAvanza');
+      }}
+      async function onAvanza() {{
+        const body = {{stato: statoTarget}};
+        const meta = STATI_DATA[statoTarget];
+        if (meta) body[meta[0]] = document.getElementById('avanzaData').value;
+        await salvaStato(body);
+      }}
+
+      // --- cambio stato manuale ---
       function onStatoChange() {{
         const v = document.getElementById('statoSel').value;
-        const incassata = (v === 'incassata');
-        document.getElementById('fldDataIncasso').style.display = incassata ? 'flex' : 'none';
-        document.getElementById('statoAccHint').style.display = incassata ? 'block' : 'none';
+        const meta = STATI_DATA[v];
+        document.getElementById('fldDataStato').style.display = meta ? 'flex' : 'none';
+        if (meta) document.getElementById('lblDataStato').textContent = meta[1];
+        document.getElementById('statoDescr').textContent = STATI_DESCR[v] || '';
       }}
+      onStatoChange();
+
       async function onSalvaStato() {{
         const nuovo = document.getElementById('statoSel').value;
         const body = {{stato: nuovo}};
-        if (nuovo === 'incassata') {{
-          body.data_incasso = document.getElementById('dataIncasso').value;
-        }}
+        const meta = STATI_DATA[nuovo];
+        if (meta) body[meta[0]] = document.getElementById('dataStato').value;
+        await salvaStato(body);
+      }}
+
+      async function salvaStato(body) {{
         try {{
           const r = await fetch(`/fatture/api/fatture/${{FATTURA_ID}}/stato`, {{
             method: 'PATCH', headers: {{'Content-Type': 'application/json'}},
@@ -462,6 +634,20 @@ def fattura_dettaglio(fid):
           if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
           toast('Stato aggiornato', 'ok');
           setTimeout(()=>location.reload(), 500);
+        }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
+      }}
+
+      // --- eliminazione (solo in bozza, il server ricontrolla) ---
+      async function onElimina() {{
+        if (!confirm('Eliminare definitivamente questa bozza?\\n\\n'
+                     + 'Se invece la fattura è già uscita, usa "Annullata" '
+                     + 'come stato: resta nello storico ma non conta nei calcoli.')) return;
+        try {{
+          const r = await fetch(`/fatture/api/fatture/${{FATTURA_ID}}`, {{method: 'DELETE'}});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
+          toast('Bozza eliminata', 'ok');
+          setTimeout(()=>{{ location.href = '/fatture/storico'; }}, 600);
         }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
       }}
 
@@ -555,21 +741,149 @@ def api_next_progressivo():
 
 @fatture_bp.patch("/api/fatture/<int:fid>/stato")
 def api_fattura_stato(fid):
-    """Cambia stato fattura. Se stato=incassata richiede/genera data_incasso."""
+    """
+    Cambia lo stato della fattura, registrando la data del passaggio.
+
+    Le date dei passi gia' percorsi non vengono azzerate tornando indietro:
+    se ti accorgi di aver segnato "incassata" per sbaglio e torni a
+    "trasmessa", la data di trasmissione resta quella vera. L'unica che si
+    cancella e' quella dello stato che stai lasciando.
+    """
     sb, err = _supabase_or_error()
-    if err: return jsonify({"error": "supabase not configured"}), 503
+    if err:
+        return jsonify({"error": "supabase not configured"}), 503
     data = request.get_json(silent=True) or {}
-    stato = data.get("stato")
-    if stato not in ("bozza", "emessa", "incassata", "annullata"):
+    stato = normalizza_stato(data.get("stato"))
+    if stato not in STATI_CHIAVI:
         return jsonify({"error": "stato non valido"}), 400
+
+    f, errore = _carica_fattura(sb, fid)
+    if errore:
+        return errore
+
     payload = {"stato": stato}
-    if stato == "incassata":
-        payload["data_incasso"] = data.get("data_incasso") or date.today().isoformat()
-    else:
-        payload["data_incasso"] = None
+
+    # Data del passo in cui si entra. Se ne arriva una, vince. Altrimenti
+    # si mette oggi solo se non ce n'era gia' una: rientrare in uno stato
+    # gia' attraversato non deve riscriverne la data con quella di oggi,
+    # altrimenti tornare indietro per correggere un errore falsifica la
+    # cronologia.
+    if stato in DATE_STATO:
+        campo, _ = DATE_STATO[stato]
+        fornita = data.get(campo)
+        if fornita:
+            payload[campo] = fornita
+        elif not f.get(campo):
+            payload[campo] = date.today().isoformat()
+
+    # Tornando indietro nel percorso, ripulisci le date dei passi che non
+    # sono piu' stati raggiunti: altrimenti la linea temporale mostrerebbe
+    # un incasso su una fattura che risulta non ancora inviata.
+    if stato in STATI_PERCORSO:
+        i = STATI_PERCORSO.index(stato)
+        for chiave in STATI_PERCORSO[i + 1:]:
+            if chiave in DATE_STATO:
+                payload[DATE_STATO[chiave][0]] = None
+
     try:
         r = sb.table("b2f_fatture").update(payload).eq("id", fid).execute()
         return jsonify(r.data[0] if r.data else {"id": fid})
+    except Exception as e:
+        return jsonify({"error": str(e)[:200]}), 500
+
+
+def _carica_fattura(sb, fid):
+    """Ritorna (fattura, errore_response). L'errore e' gia' pronto da restituire."""
+    try:
+        r = sb.table("b2f_fatture").select("*").eq("id", fid).single().execute()
+        if not r.data:
+            return None, (jsonify({"error": "fattura non trovata"}), 404)
+        return r.data, None
+    except Exception as e:
+        return None, (jsonify({"error": f"fattura non trovata: {str(e)[:120]}"}), 404)
+
+
+@fatture_bp.patch("/api/fatture/<int:fid>")
+def api_fattura_update(fid):
+    """
+    Aggiorna una fattura in bozza.
+
+    La guardia sta qui e non solo nell'interfaccia: nascondere un pulsante
+    non impedisce a nessuno di chiamare l'endpoint, e una fattura gia'
+    mandata allo studio non deve poter cambiare da nessuna strada.
+    """
+    sb, err = _supabase_or_error()
+    if err:
+        return jsonify({"error": "supabase not configured"}), 503
+
+    f, errore = _carica_fattura(sb, fid)
+    if errore:
+        return errore
+
+    stato = normalizza_stato(f.get("stato"))
+    if not modificabile(stato):
+        return jsonify({
+            "error": motivo_blocco(stato),
+            "stato": stato,
+            "modificabile": False,
+        }), 409
+
+    data = request.get_json(silent=True) or {}
+    campi = ("data", "tipo_doc", "natura_iva", "cliente_id", "cliente_snapshot",
+             "righe", "imponibile", "bollo", "bollo_addebitato", "cassa_perc",
+             "cassa_importo", "totale", "divisa", "pagamento_mod",
+             "pagamento_cond", "scadenza", "iban", "note")
+    payload = {k: data[k] for k in campi if k in data}
+    if not payload:
+        return jsonify({"error": "nessun campo da aggiornare"}), 400
+
+    # L'anno segue la data del documento: il progressivo resta quello.
+    if "data" in payload and payload["data"]:
+        try:
+            payload["anno"] = int(str(payload["data"])[:4])
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        r = sb.table("b2f_fatture").update(payload).eq("id", fid).execute()
+        return jsonify(r.data[0] if r.data else {"id": fid})
+    except Exception as e:
+        return jsonify({"error": str(e)[:250]}), 500
+
+
+@fatture_bp.delete("/api/fatture/<int:fid>")
+def api_fattura_delete(fid):
+    """
+    Elimina una bozza. Le fatture uscite non si cancellano: si annullano,
+    cosi' il numero resta occupato e lo storico resta leggibile.
+    """
+    sb, err = _supabase_or_error()
+    if err:
+        return jsonify({"error": "supabase not configured"}), 503
+
+    f, errore = _carica_fattura(sb, fid)
+    if errore:
+        return errore
+
+    stato = normalizza_stato(f.get("stato"))
+    if not modificabile(stato):
+        return jsonify({
+            "error": ("Solo le bozze si eliminano. Questa fattura è già uscita: "
+                      "portala su \"Annullata\", così resta nello storico col suo "
+                      "numero ma non conta nei calcoli."),
+            "stato": stato,
+        }), 409
+
+    if f.get("spesa_piva_id"):
+        return jsonify({
+            "error": ("Questa fattura è collegata a un movimento P.IVA. "
+                      "Elimina prima il movimento, altrimenti resterebbe una "
+                      "entrata senza fattura."),
+        }), 409
+
+    try:
+        sb.table("b2f_fatture").delete().eq("id", fid).execute()
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 500
 
@@ -661,7 +975,9 @@ def api_fattura_create():
         "pagamento_cond":    data.get("pagamento_cond"),
         "scadenza":          data.get("scadenza"),
         "iban":              data.get("iban"),
-        "stato":             data.get("stato") or "emessa",
+        # Si nasce bozza: il documento diventa "inviata allo studio" solo
+        # quando lo mandi davvero, non nel momento in cui lo salvi.
+        "stato":             normalizza_stato(data.get("stato") or "bozza"),
         "note":              data.get("note"),
     }
 

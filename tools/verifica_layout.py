@@ -29,6 +29,7 @@ PAGINE = [
     ("dettaglio",  "/fatture/1"),
     ("situazione", "/fatture/situazione"),
     ("editor",     "/fatture/nuova"),
+    ("modifica",   "/fatture/7/modifica"),
     ("clienti",    "/fatture/clienti"),
     ("cliente",    "/fatture/clienti/1"),
     ("spesepiva",  "/fatture/spese-piva"),
