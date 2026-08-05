@@ -1,9 +1,17 @@
 """
-shared/pdfgen.py — Script JavaScript condiviso per la generazione PDF fattura.
+shared/pdfgen.py — Generazione del facsimile di fattura (PDF).
 
-Replica fedelmente il layout del fatturatore.html originale ma senza i
-codici SDI (MP05, TD01, N2.2 non compaiono nel PDF) e senza il blocco
-"DOCUMENTO NON VALIDO AI FINI FISCALI" (che era per la proforma).
+ATTENZIONE: questo documento NON e' la fattura elettronica.
+
+Il giro concordato con lo studio (mail del 5 agosto 2026) e': tu emetti il
+facsimile e lo mandi allo studio, loro predispongono e trasmettono l'XML
+allo SDI. Il documento fiscale e' quello, non questo. Per questo il PDF si
+intitola FACSIMILE e lo dice esplicitamente in calce: se somigliasse a una
+fattura vera, prima o poi finirebbe in mano a un cliente al posto di
+quella giusta.
+
+La rivalsa INPS del 4 % e' SCORPORATA dal corrispettivo, non aggiunta:
+il totale che il cliente paga non cambia, e' il compenso a ridursi.
 
 Espone globalmente:
   window.b2fRenderInvoicePDF(payload)
@@ -16,9 +24,11 @@ payload shape:
     cliente:        {tipo, denominazione, nome, cognome, piva, cf,
                      indirizzo, cap, comune, provincia},
     righe:          [{descrizione, qta, um, prezzo}],
-    imponibile:     Number,
+    corrispettivo:  Number,               // concordato col cliente
+    compenso:       Number,               // corrispettivo - rivalsa
+    imponibile:     Number,               // = corrispettivo (compenso+rivalsa)
     cassa_perc:     Number,               // 0 o 4
-    cassa_importo:  Number,
+    cassa_importo:  Number,               // rivalsa scorporata
     bollo_add:      Boolean,              // bollo addebitato al cliente?
     bollo_dovuto:   Boolean,              // dovuto in generale (imponibile > 77.47)
     totale:         Number,
@@ -55,6 +65,10 @@ def emittente_to_json(em: dict) -> str:
         "pec":          em.get("pec") or "",
         "iban":         em.get("iban") or "",
         "aliquota_cassa": float(em.get("aliquota_cassa") or 0),
+        # Chi predispone e trasmette la fattura elettronica. Se vuoti, il
+        # PDF usa una dicitura generica.
+        "studio_nome":  em.get("studio_nome") or "",
+        "studio_email": em.get("studio_email") or "",
     }
     return json.dumps(d, ensure_ascii=False)
 
@@ -74,7 +88,10 @@ def pdf_script(emittente: dict) -> str:
 #   - rimosso il blocco disclaimer "DOCUMENTO NON VALIDO AI FINI FISCALI"
 #   - nome file "Fattura_N_Cliente.pdf"
 _JS_TEMPLATE = r"""
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- jsPDF 2.5.1 (MIT), ospitata dall'app: il facsimile e' il documento
+     che finisce dal commercialista, non puo' dipendere da un CDN
+     raggiungibile. Cosi' funziona anche offline, come i caratteri. -->
+<script src="/static/vendor/jspdf.umd.min.js"></script>
 <script>
 (function(){
   const EMITTENTE = __EMITTENTE_JSON__;
@@ -83,7 +100,7 @@ _JS_TEMPLATE = r"""
   const DIC_REGIME   = "Operazione senza applicazione dell'IVA ex art. 1, c. 54-89, L. 190/2014 - regime forfettario.";
   const DIC_RITENUTA = "Compenso non soggetto a ritenuta d'acconto ex art. 1, c. 67, L. 190/2014.";
 
-  const TIPI = { TD01: 'FATTURA', TD04: 'NOTA CREDITO', TD06: 'PARCELLA' };
+  const TIPI = { TD01: 'FATTURA', TD04: 'NOTA DI CREDITO', TD06: 'PARCELLA' };
 
   const r2 = n => Math.round((Number(n)+Number.EPSILON)*100)/100;
   const nf = n => r2(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -150,13 +167,17 @@ _JS_TEMPLATE = r"""
     if (cont.length) d.text(cont.join('   ·   '), nx, y+13.5);
 
     // ===== BADGE TITOLO DOC =====
-    const bw = 46, bx = RX - bw, by = y - 5;
-    d.setFillColor(...tint); d.roundedRect(bx, by, bw, 18, 2.2, 2.2, 'F');
+    // "FACSIMILE" in grande e il tipo sotto: chi lo riceve deve capire al
+    // primo sguardo che il documento fiscale non e' questo.
+    const bw = 52, bx = RX - bw, by = y - 5;
+    d.setFillColor(...tint); d.roundedRect(bx, by, bw, 22, 2.2, 2.2, 'F');
     d.setTextColor(...accD); d.setFont('helvetica','bold'); d.setFontSize(12.5);
-    d.text(tipoLabel, bx + bw/2, by + 7.5, {align:'center'});
-    d.setFont('helvetica','normal'); d.setFontSize(8); d.setTextColor(...acc);
+    d.text('FACSIMILE', bx + bw/2, by + 7.5, {align:'center'});
+    d.setFont('helvetica','normal'); d.setFontSize(7.5); d.setTextColor(...acc);
+    d.text('per ' + tipoLabel.toLowerCase(), bx + bw/2, by + 12, {align:'center'});
+    d.setFontSize(8);
     d.text(`n. ${payload.numero_display}   ·   ${itDate(payload.data_iso)}`,
-           bx + bw/2, by + 13, {align:'center'});
+           bx + bw/2, by + 17, {align:'center'});
 
     y += 24;
     d.setDrawColor(...line); d.setLineWidth(0.3); d.line(M, y, RX, y);
@@ -217,22 +238,41 @@ _JS_TEMPLATE = r"""
       drawRow(r.descrizione || 'Prestazione', qStr, nf(p), nf(q * p), zebra);
       zebra = !zebra;
     });
-    if (payload.cassa_perc > 0 && payload.cassa_importo > 0) {
-      drawRow(`Rivalsa INPS Gestione Separata ${payload.cassa_perc}%`,
-              null, null, nf(payload.cassa_importo), zebra);
-      zebra = !zebra;
-    }
+    // La rivalsa NON compare come riga aggiuntiva: e' scorporata dal
+    // corrispettivo, quindi aggiungerla in fondo farebbe sembrare che il
+    // totale cresca. Sta nel blocco totali, come scomposizione.
 
     // ===== TOTALI (destra) + PAGAMENTO (sinistra) affiancati =====
     const yBlock = y + 7;
 
     // Totali a destra
     y = yBlock; const tlx = 120;
+    const conRivalsa = payload.cassa_perc > 0 && payload.cassa_importo > 0;
+    const corrisp = payload.corrispettivo != null
+                    ? payload.corrispettivo : payload.imponibile;
+
     d.setFont('helvetica','normal'); d.setFontSize(9.5); d.setTextColor(...mut);
-    d.text('Imponibile', tlx, y);
+    d.text(conRivalsa ? 'Corrispettivo' : 'Imponibile', tlx, y);
     d.setFont('courier','normal'); d.setTextColor(...ink);
-    d.text(nf(payload.imponibile) + ' €', RX, y, {align:'right'});
+    d.text(nf(corrisp) + ' €', RX, y, {align:'right'});
     y += 6;
+
+    if (conRivalsa) {
+      // Le due voci che servono allo studio per compilare l'XML: compenso
+      // in DettaglioLinee, rivalsa in DatiCassaPrevidenziale.
+      d.setFont('helvetica','normal'); d.setFontSize(8.5); d.setTextColor(...soft);
+      d.text('di cui compenso', tlx + 3, y);
+      d.setFont('courier','normal'); d.setTextColor(...mut);
+      d.text(nf(payload.compenso != null ? payload.compenso
+                : corrisp - payload.cassa_importo) + ' €', RX, y, {align:'right'});
+      y += 5;
+      d.setFont('helvetica','normal'); d.setTextColor(...soft);
+      d.text(`di cui rivalsa INPS ${payload.cassa_perc}%`, tlx + 3, y);
+      d.setFont('courier','normal'); d.setTextColor(...mut);
+      d.text(nf(payload.cassa_importo) + ' €', RX, y, {align:'right'});
+      y += 6.5;
+      d.setFontSize(9.5);
+    }
 
     if (payload.bollo_add) {
       d.setFont('helvetica','normal'); d.setTextColor(...mut);
@@ -281,6 +321,11 @@ _JS_TEMPLATE = r"""
 
     d.setFont('helvetica','normal'); d.setFontSize(7.5); d.setTextColor(...mut);
     const notes = [DIC_REGIME, DIC_RITENUTA];
+    if (payload.cassa_perc > 0 && payload.cassa_importo > 0) {
+      notes.push(`Rivalsa INPS Gestione Separata ${payload.cassa_perc}% scorporata dal `
+                 + `corrispettivo ai sensi dell'art. 1, c. 212, L. 662/1996: il totale `
+                 + `a carico del committente non varia.`);
+    }
     if (payload.bollo_dovuto && !payload.bollo_add) {
       notes.push('Imposta di bollo di € 2,00 assolta virtualmente ai sensi del D.M. 17/06/2014.');
     }
@@ -290,7 +335,22 @@ _JS_TEMPLATE = r"""
       y += nl.length * 3.6 + 1.6;
     });
 
-    // (BLOCCO DISCLAIMER "DOCUMENTO NON VALIDO..." rimosso)
+    // ===== AVVISO: questo non e' il documento fiscale =====
+    // Va detto in modo che non si possa scambiare: e' l'unica difesa
+    // contro l'errore di mandarlo al cliente al posto della fattura vera.
+    y += 2.5;
+    const chi = e.studio_nome
+      ? `${e.studio_nome}${e.studio_email ? ' (' + e.studio_email + ')' : ''}`
+      : 'lo studio incaricato';
+    const avviso = 'FACSIMILE — documento non valido ai fini fiscali. '
+      + `La fattura elettronica viene predisposta e trasmessa al Sistema di `
+      + `Interscambio da ${chi}. Fa fede il documento trasmesso allo SDI.`;
+    const al = d.splitTextToSize(avviso, CW - 8);
+    const ah = al.length * 3.6 + 7;
+    d.setFillColor(...tint); d.roundedRect(M, y, CW, ah, 1.8, 1.8, 'F');
+    d.setTextColor(...accD); d.setFont('helvetica','bold'); d.setFontSize(7.5);
+    d.text(al, M + 4, y + 5);
+    y += ah;
 
     // ===== FOOTER =====
     const fy = 288;
@@ -302,7 +362,7 @@ _JS_TEMPLATE = r"""
 
     // ===== SALVA (compatibile mobile + PWA) =====
     const safeCli = cNome.replace(/[^\w]+/g, '_').slice(0, 30);
-    const fname = `Fattura_${payload.numero_display}_${safeCli}.pdf`;
+    const fname = `Facsimile_${payload.numero_display}_${safeCli}.pdf`;
 
     try {
       // Approccio universale: blob + anchor con download attribute

@@ -22,6 +22,7 @@ import xs_server
 from xs_server import app  # importa la Flask app esistente
 
 from fatture import fatture_bp
+from fatture.costanti import STATI_EMESSE
 from spese import spese_bp
 from shared.webauthn import webauthn_bp
 
@@ -120,7 +121,7 @@ def _dashboard_data() -> dict:
 
     try:
         r = (sb.table("b2f_fatture").select("*", count="exact", head=True)
-               .eq("anno", anno).in_("stato", ["emessa", "incassata"]).execute())
+               .eq("anno", anno).in_("stato", list(STATI_EMESSE)).execute())
         out["n_fatture_anno"] = r.count
     except Exception:
         pass
@@ -128,7 +129,7 @@ def _dashboard_data() -> dict:
     try:
         r = (sb.table("b2f_fatture")
                .select("id,numero,data,totale,stato,cliente_snapshot")
-               .in_("stato", ["emessa", "incassata"])
+               .in_("stato", list(STATI_EMESSE))
                .order("data", desc=True).limit(4).execute())
         out["ultime_fatture"] = [
             (f["id"], f.get("numero") or "—", cliente_label(f),
@@ -191,13 +192,13 @@ def kpi_fatture():
         r_count = (sb.table("b2f_fatture")
                      .select("*", count="exact", head=True)
                      .eq("anno", anno)
-                     .in_("stato", ["emessa", "incassata"])
+                     .in_("stato", list(STATI_EMESSE))
                      .execute())
         # Imponibile del mese corrente
         r_mese = (sb.table("b2f_fatture")
                     .select("imponibile,stato")
                     .gte("data", d_from).lte("data", d_to)
-                    .in_("stato", ["emessa", "incassata"])
+                    .in_("stato", list(STATI_EMESSE))
                     .execute())
         imp = sum(float(row.get("imponibile") or 0) for row in (r_mese.data or []))
         return jsonify({

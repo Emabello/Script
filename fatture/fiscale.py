@@ -36,7 +36,7 @@ from flask import Response, request, jsonify, send_file
 
 from . import fatture_bp
 from . import accantonamento as acc
-from .costanti import CATEGORIE_SPESE_PIVA, MESI_NOMI
+from .costanti import CATEGORIE_SPESE_PIVA, MESI_NOMI, STATI_EMESSE
 from shared.theme import render_page
 from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
@@ -122,7 +122,7 @@ def _situazione_data(sb, anno: int) -> dict:
         r = (sb.table("b2f_fatture")
                .select("data,data_incasso,totale,bollo,bollo_addebitato,stato")
                .gte("data", f"{anno}-01-01").lte("data", f"{anno}-12-31")
-               .in_("stato", ["emessa", "incassata"]).execute())
+               .in_("stato", list(STATI_EMESSE)).execute())
         for f in (r.data or []):
             mese = int(f["data"][5:7])
             fatturato_mese[mese] += float(f.get("totale") or 0)

@@ -24,6 +24,8 @@ DB = {
         "email": "ebellotti01@gmail.com", "pec": "e.bellotti@pec.it",
         "telefono": "+39 345 1122334", "iban": "IT60X0542811101000000123456",
         "cassa_prev": "INPS Gestione Separata", "aliquota_cassa": 4.00,
+        "studio_nome": "Studio Bagaglia",
+        "studio_email": "amministrazione@studiobagaglia.it",
     }],
     "b2f_parametri_fiscali": [{
         "id": 1, "regime": "RF19", "ateco": "622010",
@@ -113,9 +115,11 @@ def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
     snap = {k: cli.get(k) for k in ("tipo", "denominazione", "nome", "cognome",
                                     "piva", "cf", "indirizzo", "cap", "comune",
                                     "provincia", "nazione", "sdi", "pec", "email")}
-    base = round(sum(r["qta"] * r["prezzo"] for r in righe), 2)
-    cassa_imp = round(base * 0.04, 2) if cassa else 0.0
-    imponibile = round(base + cassa_imp, 2)
+    # Scorporo, come nell'app: il corrispettivo concordato non cambia, la
+    # rivalsa si estrae da dentro.
+    corrispettivo = round(sum(r["qta"] * r["prezzo"] for r in righe), 2)
+    cassa_imp = round(corrispettivo - corrispettivo / 1.04, 2) if cassa else 0.0
+    imponibile = corrispettivo
     bollo_dovuto = imponibile > 77.47
     bollo = 2.00 if bollo_dovuto else 0.0
     totale = round(imponibile + (bollo if bollo_dovuto else 0), 2)
@@ -130,6 +134,9 @@ def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
         "pagamento_mod": "Bonifico bancario", "pagamento_cond": "30 gg data fattura",
         "scadenza": None, "iban": DB["b2f_emittente"][0]["iban"],
         "stato": stato, "data_incasso": data_incasso,
+        "data_invio_studio": (data if stato != "bozza" else None),
+        "data_trasmissione_sdi": (data if stato in ("trasmessa_sdi", "incassata") else None),
+        "numero_sdi": None,
         "spesa_piva_id": spesa_piva_id, "pdf_url": None, "xml_url": None,
         "note": None,
     }
@@ -151,10 +158,10 @@ DB["b2f_fatture"] = [
              "incassata", "2026-08-01", cassa=False, spesa_piva_id=8),
     _fattura(5, 5, "2026-08-01", 1,
              [{"descrizione": "Manutenzione evolutiva agosto", "qta": 18, "um": "h", "prezzo": 190.00}],
-             "emessa"),
+             "trasmessa_sdi"),
     _fattura(6, 6, "2026-08-03", 2,
              [{"descrizione": "Intervento urgente su backup", "qta": 5, "um": "h", "prezzo": 195.00}],
-             "emessa"),
+             "inviata_studio"),
     _fattura(7, 7, "2026-08-04", 4,
              [{"descrizione": "Recupero dati da disco danneggiato", "qta": 3, "um": "h", "prezzo": 90.00}],
              "bozza"),

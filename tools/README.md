@@ -60,6 +60,24 @@ Le due cause quasi sempre sono:
    `minmax(auto, 1fr)`, e `auto` non scende sotto il min-content: una
    riga non spezzabile allarga la colonna oltre lo schermo.
 
+## `verifica_facsimile.py` — il PDF che esce dall'app
+
+Genera il facsimile della fattura di prova, ne estrae il testo e controlla
+che ci sia quello che deve esserci.
+
+```bash
+.venv/bin/python tools/verifica_facsimile.py   # serve anche pypdf
+```
+
+E' l'unico artefatto che lascia l'app e finisce in mano a un altro: lo
+studio ci costruisce sopra la fattura elettronica. Se cambia per sbaglio
+non se ne accorge nessuno finche' non e' troppo tardi.
+
+Controlla in particolare i numeri dello **scorporo**: su 5.000 concordati
+il compenso deve essere 4.807,69 e la rivalsa 192,31, totale 5.002 col
+bollo. Se ricomparisse 5.200 vorrebbe dire che e' tornato l'addebito, cioe'
+un facsimile che non combacia con la fattura vera.
+
 ## `verifica_contrasti.py` — soglie WCAG
 
 Legge i token dal CSS reale (non da una copia riscritta a mano) e
