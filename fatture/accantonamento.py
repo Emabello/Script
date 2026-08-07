@@ -42,11 +42,19 @@ PERCHE' 19,94 % NON E' LA CIFRA DA METTERE DA PARTE
 2. I costi fissi. Commercialista, PEC, bolli, commissioni: non sono
    tasse, ma sono uscite certe che escono dagli stessi soldi.
 
-I TRE SCENARI
--------------
-    minimo       C + T                        il puro dovuto, margine zero
-    consigliato  minimo x (1+margine) + costi  quello che l'app evidenzia
-    sicuro       1,8C + 2T + costi             copre l'anno degli acconti
+I QUATTRO SCENARI
+-----------------
+    minimo       C + T                          il puro dovuto, margine zero
+    consigliato  minimo x (1+margine) + costi   quello che l'app evidenzia
+    prudente     minimo + meta' acconti
+                 + costi + margine              la via di mezzo
+    sicuro       1,8C + 2T + costi              copre l'anno degli acconti
+
+Perche' esiste "prudente": fra consigliato (~22 %) e sicuro (~36 %) c'e'
+un salto grosso, e immobilizzare il 36 % di ogni incasso e' pesante se
+l'anno degli acconti non e' imminente. "Prudente" mette da parte il
+dovuto pieno piu' meta' degli acconti: ci arrivi in due anni invece che
+in uno, senza scoprirti del tutto.
 
 Il margine di sicurezza, i costi fissi annui e il fatturato atteso sono
 parametri modificabili in /fatture/parametri.
@@ -64,13 +72,18 @@ PARAMETRI_DEFAULT = {
 
 PARAMETRI_CAMPI = tuple(PARAMETRI_DEFAULT.keys())
 
-SCENARI = ("minimo", "consigliato", "sicuro")
+SCENARI = ("minimo", "consigliato", "prudente", "sicuro")
 
 ETICHETTE = {
     "minimo":      ("Minimo", "Il puro dovuto: nessun margine, nessun costo fisso coperto."),
     "consigliato": ("Consigliato", "Dovuto + costi fissi pro-quota + margine di sicurezza."),
+    "prudente":    ("Prudente", "Dovuto + metà degli acconti + costi + margine: ci arrivi in due anni."),
     "sicuro":      ("Sicuro", "Copre anche l'anno in cui saldo e acconti cadono insieme."),
 }
+
+# Quota degli acconti coperta dallo scenario "prudente". A 0,5 il
+# fabbisogno dell'anno-picco si accumula in due anni invece che in uno.
+PRUDENTE_QUOTA_ACCONTI = 0.5
 
 
 def _f(param: dict, chiave: str, default: float) -> float:
@@ -158,8 +171,15 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0) -> d
     margine = round(minimo * margine_perc, 2)
     consigliato = round(minimo + costi + margine, 2)
     sicuro = round(lordo * a["picco_cassa"] + costi, 2)
+    # Via di mezzo: il dovuto pieno piu' una frazione degli acconti.
+    # `picco_cassa - dovuto` e' esattamente la quota-acconti sul lordo.
+    quota_acconti = max(a["picco_cassa"] - a["dovuto"], 0.0)
+    prudente = round(
+        lordo * (a["dovuto"] + PRUDENTE_QUOTA_ACCONTI * quota_acconti)
+        + costi + margine, 2)
 
-    importi = {"minimo": minimo, "consigliato": consigliato, "sicuro": sicuro}
+    importi = {"minimo": minimo, "consigliato": consigliato,
+               "prudente": prudente, "sicuro": sicuro}
 
     return {
         "lordo": round(lordo, 2),
@@ -176,6 +196,7 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0) -> d
         "aliquote": {
             "minimo": a["dovuto"],
             "consigliato": (consigliato / lordo) if lordo else 0.0,
+            "prudente": (prudente / lordo) if lordo else 0.0,
             "sicuro": (sicuro / lordo) if lordo else 0.0,
             "inps": a["inps"],
             "imposta": a["imposta"],
