@@ -59,6 +59,32 @@ def _carica(sb, fid):
         return None, (jsonify({"error": f"fattura non trovata: {str(e)[:120]}"}), 404)
 
 
+def _inserisci_spesa(sb, riga: dict) -> int | None:
+    """
+    Inserisce un movimento sul conto personale, ritornando il suo id.
+
+    La tabella `spese` e' preesistente all'app e la sua chiave primaria
+    non ha un default visibile: puo' essere una colonna IDENTITY (che si
+    genera da sola) oppure un bigint da valorizzare a mano. Invece di
+    indovinare, si prova senza id e — solo se il database si lamenta che
+    manca — si ripiega sul massimo esistente piu' uno.
+    """
+    try:
+        r = sb.table("spese").insert(riga).execute()
+        return (r.data or [{}])[0].get("id")
+    except Exception as e:
+        msg = str(e).lower()
+        manca_id = ("id" in msg and ("null value" in msg or "not-null" in msg
+                                     or "not null" in msg))
+        if not manca_id:
+            raise
+    r = (sb.table("spese").select("id").order("id", desc=True)
+           .limit(1).execute())
+    ultimo = (r.data or [{}])[0].get("id") or 0
+    r = sb.table("spese").insert({**riga, "id": int(ultimo) + 1}).execute()
+    return (r.data or [{}])[0].get("id")
+
+
 def calcola(f: dict, param: dict, scenario: str,
             incassato_anno: float = 0.0,
             importo_personalizzato=None) -> dict:
@@ -179,17 +205,18 @@ def api_giroconto_esegui(fid):
         return jsonify({"error": f"errore sul conto P.IVA: {str(e)[:200]}"}), 500
 
     # --- 2) Entrata sul conto personale -----------------------------------
-    # Solo le colonne che l'app gia' legge da `spese`: la tabella e'
-    # preesistente e non ne governiamo lo schema.
     riga_pers = {
         "data":        quando,
         "tipo":        "entrata",
         "importo":     calc["giroconto"],
         "descrizione": f"Giroconto da P.IVA — fattura {numero}",
+        # `spese` tiene mese e anno denormalizzati e NOT NULL: le viste del
+        # conto personale (v_risparmi_mese, v_spese) ci si appoggiano.
+        "mese":        int(quando[5:7]),
+        "anno":        int(quando[:4]),
     }
     try:
-        ins = sb.table("spese").insert(riga_pers).execute()
-        id_pers = (ins.data or [{}])[0].get("id")
+        id_pers = _inserisci_spesa(sb, riga_pers)
     except Exception as e:
         # Rollback: senza la riga sul personale il giroconto sarebbe monco,
         # e il conto P.IVA risulterebbe svuotato verso il nulla.

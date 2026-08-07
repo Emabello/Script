@@ -10,12 +10,44 @@
 -- deciso, ne' il denaro si muoveva. Queste colonne registrano la
 -- decisione e collegano i due movimenti che la realizzano.
 --
+-- AUTOSUFFICIENTE: include le colonne di migration_accantonamento.sql,
+-- che sul database di produzione non risultavano ancora applicate. Se
+-- l'hai gia' eseguita non succede nulla, sono tutte "if not exists".
+--
 -- DA ESEGUIRE nell'SQL Editor di Supabase.
 -- Idempotente: puoi rilanciarlo.
 -- ==================================================================
 
 -- ------------------------------------------------------------------
--- 1) Nuovo scenario "prudente"
+-- 1) Parametri di accantonamento
+--    Erano previsti da migration_accantonamento.sql ma la tabella non
+--    li aveva: senza, l'app funziona sui valori di default scritti nel
+--    codice e la pagina /fatture/parametri non riesce a salvare.
+-- ------------------------------------------------------------------
+
+alter table b2f_parametri_fiscali
+  -- Cuscinetto relativo sul dovuto. 0,10 = accantona il 10 % in piu'
+  -- del conto matematico.
+  add column if not exists margine_sicurezza numeric(5,4) not null default 0.10,
+
+  -- Costi fissi annui della P.IVA: commercialista, PEC, bolli,
+  -- commissioni. Non sono tasse, ma escono dagli stessi soldi.
+  add column if not exists costi_fissi_annui numeric(12,2) not null default 0,
+
+  -- Fatturato atteso dell'anno, su cui spalmare i costi fissi. A zero,
+  -- l'app li spalma sull'incassato effettivo dell'anno in corso.
+  add column if not exists fatturato_atteso_anno numeric(12,2) not null default 0,
+
+  -- Acconto dell'imposta sostitutiva: 1,00 = 100 % del saldo, nessuna
+  -- riduzione. A differenza dell'INPS, che va all'80 %.
+  add column if not exists acconto_imposta_perc numeric(5,4) not null default 1.00,
+
+  -- Scenario mostrato per primo: minimo | consigliato | prudente | sicuro
+  add column if not exists scenario_preferito text not null default 'consigliato';
+
+
+-- ------------------------------------------------------------------
+-- 2) Nuovo scenario "prudente"
 --    Fra consigliato (~22 %) e sicuro (~36 %) c'era un salto troppo
 --    grande. "Prudente" copre il dovuto piu' meta' degli acconti
 --    (~30 %): ci si arriva in due anni invece che in uno.
@@ -30,15 +62,14 @@ alter table b2f_parametri_fiscali
 
 
 -- ------------------------------------------------------------------
--- 2) La decisione di accantonamento, sulla fattura
+-- 3) La decisione di accantonamento, sulla fattura
 --    Si registra sulla fattura e non altrove perche' e' li' che nasce:
 --    ogni incasso ha la sua quota, con lo scenario scelto in quel
 --    momento. Cambiare i parametri dopo non deve riscrivere la storia.
 -- ------------------------------------------------------------------
 
 alter table b2f_fatture
-  -- Scenario scelto al momento del giroconto: minimo | consigliato |
-  -- prudente | sicuro. NULL = non ancora deciso.
+  -- Scenario scelto al momento del giroconto. NULL = non ancora deciso.
   add column if not exists accantonamento_scenario text,
 
   -- Quota rimasta sul conto P.IVA per tasse, costi e margine.
@@ -72,8 +103,7 @@ begin
   end if;
 end $$;
 
--- Ritrovare in fretta le fatture incassate ma non ancora girocontate:
--- e' la lista di lavoro della pagina "da sistemare".
+-- Ritrovare in fretta le fatture incassate ma non ancora girocontate.
 create index if not exists idx_b2f_fatture_da_girocontare
   on b2f_fatture (stato) where data_giroconto is null;
 
@@ -81,6 +111,9 @@ create index if not exists idx_b2f_fatture_da_girocontare
 -- ==================================================================
 -- Verifica
 -- ==================================================================
+-- select margine_sicurezza, costi_fissi_annui, scenario_preferito
+--   from b2f_parametri_fiscali where id = 1;
+--
 -- select numero, stato, totale, accantonamento_scenario,
 --        accantonamento_importo, giroconto_importo, data_giroconto
 --   from b2f_fatture order by anno desc, progressivo desc;
