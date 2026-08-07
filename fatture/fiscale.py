@@ -898,18 +898,26 @@ def spese_piva_list():
 
     entrate = sum(float(r.get("importo") or 0) for r in rows if r.get("tipo") == "entrata")
     uscite = sum(float(r.get("importo") or 0) for r in rows if r.get("tipo") == "uscita")
-    tot = entrate - uscite
+    # I giroconti escono dal conto P.IVA verso il personale: non sono una
+    # spesa (restano tuoi), ma il saldo deve vederli uscire, altrimenti
+    # mostrerebbe soldi che sull'altro conto ci sono gia'.
+    girati = sum(float(r.get("importo") or 0) for r in rows if r.get("tipo") == "giroconto")
+    tot = entrate - uscite - girati
     riepilogo = f'''
     <div class="grid kpi lead mb-3">
       <div class="card"><div class="stat">
         <div class="val tnum {"pos" if tot >= 0 else "neg"}">€ {_fmt_eur(tot, 0)}</div>
-        <div class="lbl">Saldo {anno}</div></div></div>
+        <div class="lbl">Saldo {anno}</div>
+        <div class="hint">al netto dei giroconti</div></div></div>
       <div class="card"><div class="stat sm">
         <div class="val tnum pos">€ {_fmt_eur(entrate, 0)}</div>
         <div class="lbl">Entrate</div></div></div>
       <div class="card"><div class="stat sm">
         <div class="val tnum neg">€ {_fmt_eur(uscite, 0)}</div>
         <div class="lbl">Uscite</div></div></div>
+      <div class="card"><div class="stat sm">
+        <div class="val tnum">€ {_fmt_eur(girati, 0)}</div>
+        <div class="lbl">Girati al personale</div></div></div>
     </div>
     '''
 

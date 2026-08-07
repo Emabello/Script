@@ -26,7 +26,7 @@ from .costanti import (
 from shared.theme import render_page
 from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
-from shared.fmt import eur as _fmt_eur, data_it as _fmt_date
+from shared.fmt import eur as _fmt_eur, data_it as _fmt_date, pct
 
 
 def cliente_label(f: dict) -> str:
@@ -306,6 +306,7 @@ def fattura_dettaglio(fid):
     # Il momento in cui questo numero serve e' l'incasso: fino ad allora e'
     # una previsione, e va detto.
     acc_card = ""
+    scomposizione = None
     try:
         from .fiscale import get_parametri
         param = get_parametri(sb)
@@ -336,6 +337,76 @@ def fattura_dettaglio(fid):
                                      contesto=contesto, uid="accFatt")
     except Exception:
         acc_card = ""
+
+    # --- Giroconto al conto personale ---------------------------------------
+    # La quota che avanza e' tua: sta sul conto P.IVA solo perche' e' li'
+    # che il cliente ha pagato. Finche' non la sposti, il saldo P.IVA
+    # racconta una disponibilita' che in parte non e' spendibile.
+    giroconto_fatto = bool(f.get("data_giroconto"))
+    giroconto_card = ""
+    scelte_giro_html = ""
+    lordo_f = float(f.get("totale") or 0)
+
+    if giroconto_fatto:
+        scen_scelto = f.get("accantonamento_scenario") or ""
+        etichetta_scelta = acc.ETICHETTE.get(scen_scelto, (scen_scelto or "—",))[0]
+        giroconto_card = f'''
+        <div class="card">
+          <div class="card-head">
+            <div class="eyebrow">Ripartizione eseguita</div>
+            <span class="chip pos">{etichetta_scelta}</span>
+          </div>
+          <div class="rows detail">
+            <div class="row"><span class="t">Rimasto sul conto P.IVA
+              <span class="sub">accantonato per tasse, costi e margine</span></span>
+              <span class="v tnum">€ {_fmt_eur(f.get("accantonamento_importo"))}</span></div>
+            <div class="row"><span class="t">Spostato sul conto personale
+              <span class="sub">giroconto del {_fmt_date(f.get("data_giroconto"))}</span></span>
+              <span class="v tnum pos">€ {_fmt_eur(f.get("giroconto_importo"))}</span></div>
+          </div>
+          <div class="actions mt-4">
+            <button type="button" class="btn ghost"
+                    onclick="onAnnullaGiroconto()">Annulla la ripartizione</button>
+          </div>
+        </div>'''
+    elif stato_corrente == "incassata" and scomposizione and lordo_f > 0:
+        # Le quattro scelte, con i numeri veri di questa fattura: e' piu'
+        # onesto di quattro etichette astratte da interpretare.
+        righe_scelte = []
+        pref = scomposizione["scenario_preferito"]
+        for k in acc.SCENARI:
+            quota = scomposizione["importi"][k]
+            resta = scomposizione["netti"][k]
+            titolo_s, spiega = acc.ETICHETTE[k]
+            righe_scelte.append(f'''
+            <label class="scelta-giro">
+              <input type="radio" name="scenGiro" value="{k}"
+                     {"checked" if k == pref else ""} onchange="aggiornaGiro()">
+              <span class="sg-body">
+                <span class="sg-top">
+                  <span class="sg-nome">{titolo_s}</span>
+                  <span class="sg-pct tnum">{pct(scomposizione["aliquote"][k])}</span>
+                </span>
+                <span class="sg-descr">{spiega}</span>
+                <span class="sg-num">
+                  Accantoni <strong class="tnum">€ {_fmt_eur(quota)}</strong>
+                  · sposti <strong class="tnum pos">€ {_fmt_eur(resta)}</strong>
+                </span>
+              </span>
+            </label>''')
+        scelte_giro_html = "".join(righe_scelte)
+        giroconto_card = f'''
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Ripartizione dell'incasso</div></div>
+          <p class="small muted">
+            L'incasso è tutto sul conto P.IVA, ma non è tutto tuo. Scegli quanto
+            lasciare da parte: il resto viene spostato sul conto personale con un
+            giroconto registrato su entrambi i conti.
+          </p>
+          <button type="button" class="btn block mt-4" onclick="openModal('modalGiro')">
+            {_icon("wallet")}Ripartisci e sposta sul personale
+          </button>
+        </div>'''
 
     # --- Scomposizione dello scorporo ---------------------------------------
     # Il corrispettivo concordato non cambia: la rivalsa si estrae da dentro.
@@ -423,6 +494,14 @@ def fattura_dettaglio(fid):
         {k: [v[0], v[1]] for k, v in DATE_STATO.items()}, ensure_ascii=False)
     oggi_iso = date.today().isoformat()
 
+    # Importi dei quattro scenari per il foglio di ripartizione. Calcolati
+    # qui una volta sola: il client li rilegge, non li ricalcola.
+    scelte_js = _json.dumps(
+        {k: {"accantonamento": scomposizione["importi"][k],
+             "giroconto": scomposizione["netti"][k]}
+         for k in acc.SCENARI} if scomposizione else {},
+        ensure_ascii=False)
+
     body = f'''
     {avviso_redirect}
     <div class="grid split">
@@ -448,6 +527,7 @@ def fattura_dettaglio(fid):
         </div>
 
         {acc_card}
+        {giroconto_card}
       </div>
 
       <div class="stack">
@@ -527,6 +607,44 @@ def fattura_dettaglio(fid):
         </div>
       </div>
     </div>
+
+    <!-- ===== Foglio ripartizione + giroconto ===== -->
+    <div class="sheet-ov" id="modalGiro" role="dialog" aria-modal="true">
+      <div class="sheet">
+        <h3>Ripartisci l'incasso</h3>
+        <div class="sheet-sub">
+          Su € {_fmt_eur(f.get("totale"))} incassati, quanto lasci sul conto P.IVA
+          per tasse e costi. Il resto si sposta sul personale.
+        </div>
+        <div class="scelte-giro">{scelte_giro_html}</div>
+        <div class="field">
+          <label>Data del giroconto</label>
+          <input type="date" id="g_data" value="{data_incasso_default}">
+        </div>
+        <div class="notice info small" id="g_riepilogo"></div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-close="modalGiro">Annulla</button>
+          <button type="button" class="btn" onclick="onGiroconto()">Conferma e sposta</button>
+        </div>
+      </div>
+    </div>
+
+    <style>
+      .scelte-giro{{display:flex;flex-direction:column;gap:8px;margin-bottom:var(--sp-4)}}
+      .scelta-giro{{display:flex;gap:10px;align-items:flex-start;padding:12px;
+        border:1px solid var(--line-strong);border-radius:12px;cursor:pointer;
+        background:var(--surface);transition:border-color .15s,background .15s}}
+      .scelta-giro:hover{{border-color:var(--accent)}}
+      .scelta-giro:has(input:checked){{border-color:var(--accent);
+        background:var(--accent-soft)}}
+      .scelta-giro input{{margin-top:3px;accent-color:var(--accent);flex:none}}
+      .sg-body{{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}}
+      .sg-top{{display:flex;justify-content:space-between;gap:8px;align-items:baseline}}
+      .sg-nome{{font-weight:600;font-size:14.5px;color:var(--ink)}}
+      .sg-pct{{font-size:13px;color:var(--accent-text)}}
+      .sg-descr{{font-size:12px;color:var(--ink-3);line-height:1.4}}
+      .sg-num{{font-size:12.5px;color:var(--ink-2);margin-top:3px}}
+    </style>
 
     <!-- ===== Foglio registra entrata ===== -->
     <div class="sheet-ov" id="modalEntrata" role="dialog" aria-modal="true">
@@ -650,6 +768,62 @@ def fattura_dettaglio(fid):
           setTimeout(()=>{{ location.href = '/fatture/storico'; }}, 600);
         }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
       }}
+
+      // --- ripartizione dell'incasso e giroconto ---
+      // Gli importi dei quattro scenari arrivano gia' calcolati dal server:
+      // il riepilogo si limita a rileggerli, senza rifare i conti a meta'.
+      const GIRO_SCELTE = {scelte_js};
+
+      function scenarioGiro() {{
+        const el = document.querySelector('input[name="scenGiro"]:checked');
+        return el ? el.value : null;
+      }}
+      function aggiornaGiro() {{
+        const box = document.getElementById('g_riepilogo');
+        if (!box) return;
+        const s = scenarioGiro();
+        const d = s && GIRO_SCELTE[s];
+        if (!d) {{ box.textContent = ''; return; }}
+        const fmt = v => new Intl.NumberFormat('it-IT',
+          {{minimumFractionDigits:2, maximumFractionDigits:2}}).format(v);
+        box.innerHTML = 'Restano sul conto P.IVA <strong>€ ' + fmt(d.accantonamento)
+          + '</strong>, si spostano sul personale <strong>€ ' + fmt(d.giroconto)
+          + '</strong>.';
+      }}
+
+      async function onGiroconto() {{
+        const scenario = scenarioGiro();
+        if (!scenario) {{ toast('Scegli quanto accantonare', 'err'); return; }}
+        const body = {{
+          scenario,
+          data: document.getElementById('g_data').value,
+        }};
+        try {{
+          const r = await fetch(`/fatture/api/fatture/${{FATTURA_ID}}/giroconto`, {{
+            method: 'POST', headers: {{'Content-Type':'application/json'}},
+            body: JSON.stringify(body),
+          }});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
+          toast('Spostati € ' + j.giroconto.toFixed(2) + ' sul personale', 'ok');
+          setTimeout(()=>location.reload(), 700);
+        }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
+      }}
+
+      async function onAnnullaGiroconto() {{
+        if (!confirm('Annullare la ripartizione?\\n\\n'
+                     + 'Verranno tolti i due movimenti dai conti P.IVA e personale. '
+                     + 'Potrai rifarla con un altro scenario.')) return;
+        try {{
+          const r = await fetch(`/fatture/api/fatture/${{FATTURA_ID}}/giroconto`,
+                                {{method: 'DELETE'}});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
+          toast('Ripartizione annullata', 'ok');
+          setTimeout(()=>location.reload(), 600);
+        }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
+      }}
+      aggiornaGiro();
 
       // --- registra come entrata ---
       async function onSalvaEntrata() {{

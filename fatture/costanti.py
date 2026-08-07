@@ -13,8 +13,14 @@ CATEGORIE_SPESE_PIVA = [
     ("bollo_pagato",     "Bollo pagato"),
     ("bancarie",         "Commissioni bancarie"),
     ("formazione",       "Formazione"),
+    ("giroconto_personale", "Giroconto al personale"),
     ("altro",            "Altro"),
 ]
+
+# Categoria dei giroconti che spostano la quota tua dal conto P.IVA a
+# quello personale. Non e' una spesa: e' denaro che cambia conto, e per
+# questo va tenuta fuori dai totali delle uscite.
+CATEGORIA_GIROCONTO = "giroconto_personale"
 
 MESI_NOMI = [
     "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
