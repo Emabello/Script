@@ -59,29 +59,66 @@ def _carica(sb, fid):
         return None, (jsonify({"error": f"fattura non trovata: {str(e)[:120]}"}), 404)
 
 
+# Categoria del conto personale su cui atterrano i giroconti dalla P.IVA.
+# Deve esistere in cfg_categorie: la crea migration_giroconto_categoria.sql.
+CATEGORIA_PERSONALE = "Giroconto P.IVA"
+
+
+def _link_categoria(sb, nome: str = CATEGORIA_PERSONALE):
+    """
+    id del legame categoria/sottocategoria da mettere su `spese`.
+
+    Perche' la categoria conta davvero: la vista v_risparmi_mese somma le
+    altre entrate con `tipo = 'entrata' and categoria <> 'Stipendio'`. Su
+    una riga senza categoria quel confronto vale NULL, non vero, e il
+    movimento sparisce dal calcolo del risparmio: i soldi arriverebbero
+    sul conto ma il budget personale non li vedrebbe. Serve una categoria
+    vera — e non 'Stipendio', che in v_periodi_stipendio delimita i
+    periodi e ne creerebbe uno fasullo.
+    """
+    try:
+        r = (sb.table("cfg_categorie").select("id")
+               .eq("nome", nome).limit(1).execute())
+        cat = (r.data or [{}])[0].get("id") if r.data else None
+        if not cat:
+            return None
+        r = (sb.table("cfg_categoria_sottocategoria").select("id")
+               .eq("categoria_id", cat).is_("sottocategoria_id", "null")
+               .limit(1).execute())
+        return (r.data or [{}])[0].get("id") if r.data else None
+    except Exception:
+        return None
+
+
 def _inserisci_spesa(sb, riga: dict) -> int | None:
     """
     Inserisce un movimento sul conto personale, ritornando il suo id.
 
-    La tabella `spese` e' preesistente all'app e la sua chiave primaria
-    non ha un default visibile: puo' essere una colonna IDENTITY (che si
-    genera da sola) oppure un bigint da valorizzare a mano. Invece di
-    indovinare, si prova senza id e — solo se il database si lamenta che
-    manca — si ripiega sul massimo esistente piu' uno.
+    Passa dalla funzione `insert_spesa_first_free_id` gia' presente nel
+    database: prende un lock e riusa il primo id libero, che e' come il
+    conto personale ha sempre numerato le sue righe. Se non risponde si
+    ripiega sull'insert diretto — `spese.id` e' una colonna IDENTITY e
+    quindi si genera da sola.
     """
     try:
-        r = sb.table("spese").insert(riga).execute()
-        return (r.data or [{}])[0].get("id")
-    except Exception as e:
-        msg = str(e).lower()
-        manca_id = ("id" in msg and ("null value" in msg or "not-null" in msg
-                                     or "not null" in msg))
-        if not manca_id:
-            raise
-    r = (sb.table("spese").select("id").order("id", desc=True)
-           .limit(1).execute())
-    ultimo = (r.data or [{}])[0].get("id") or 0
-    r = sb.table("spese").insert({**riga, "id": int(ultimo) + 1}).execute()
+        r = sb.rpc("insert_spesa_first_free_id", {
+            "p_data":              riga["data"],
+            "p_importo":           riga["importo"],
+            "p_tipo":              riga["tipo"],
+            "p_mese":              riga["mese"],
+            "p_anno":              riga["anno"],
+            "p_descrizione":       riga.get("descrizione"),
+            "p_metodo_pagamento":  riga.get("metodo_pagamento"),
+            "p_categoria_link_id": riga.get("categoria_link_id"),
+        }).execute()
+        dato = r.data
+        if isinstance(dato, list):
+            dato = dato[0] if dato else {}
+        if isinstance(dato, dict) and dato.get("id"):
+            return dato["id"]
+    except Exception:
+        pass
+    r = sb.table("spese").insert(riga).execute()
     return (r.data or [{}])[0].get("id")
 
 
@@ -212,8 +249,10 @@ def api_giroconto_esegui(fid):
         "descrizione": f"Giroconto da P.IVA — fattura {numero}",
         # `spese` tiene mese e anno denormalizzati e NOT NULL: le viste del
         # conto personale (v_risparmi_mese, v_spese) ci si appoggiano.
-        "mese":        int(quando[5:7]),
-        "anno":        int(quando[:4]),
+        "mese":              int(quando[5:7]),
+        "anno":              int(quando[:4]),
+        "metodo_pagamento":  "Giroconto",
+        "categoria_link_id": _link_categoria(sb),
     }
     try:
         id_pers = _inserisci_spesa(sb, riga_pers)
