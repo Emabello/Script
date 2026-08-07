@@ -222,16 +222,20 @@ def kpi_spese():
         r = (sb.table("spese")
                .select("importo,tipo")
                .gte("data", d_from).lte("data", d_to).execute())
-        entrate = uscite = 0.0
+        entrate = uscite = girati = 0.0
         for row in (r.data or []):
-            imp = float(row.get("importo") or 0)
+            imp = abs(float(row.get("importo") or 0))
             t = row.get("tipo") or ""
             if t == "entrata": entrate += imp
             elif t == "uscita": uscite += imp
+            # Un giroconto sul conto personale e' denaro che arriva dalla
+            # P.IVA: ignorarlo faceva sembrare il saldo piu' basso del vero.
+            elif t == "giroconto": girati += imp
         return jsonify({
             "entrate_mese": round(entrate, 2),
             "uscite_mese":  round(uscite, 2),
-            "saldo_mese":   round(entrate - uscite, 2),
+            "girati_mese":  round(girati, 2),
+            "saldo_mese":   round(entrate + girati - uscite, 2),
         })
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 500
