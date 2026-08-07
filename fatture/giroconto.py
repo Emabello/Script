@@ -59,67 +59,11 @@ def _carica(sb, fid):
         return None, (jsonify({"error": f"fattura non trovata: {str(e)[:120]}"}), 404)
 
 
-# Categoria del conto personale su cui atterrano i giroconti dalla P.IVA.
-# Deve esistere in cfg_categorie: la crea migration_giroconto_categoria.sql.
-CATEGORIA_PERSONALE = "Giroconto P.IVA"
-
-
-def _link_categoria(sb, nome: str = CATEGORIA_PERSONALE):
-    """
-    id del legame categoria/sottocategoria da mettere su `spese`.
-
-    Perche' la categoria conta davvero: la vista v_risparmi_mese somma le
-    altre entrate con `tipo = 'entrata' and categoria <> 'Stipendio'`. Su
-    una riga senza categoria quel confronto vale NULL, non vero, e il
-    movimento sparisce dal calcolo del risparmio: i soldi arriverebbero
-    sul conto ma il budget personale non li vedrebbe. Serve una categoria
-    vera — e non 'Stipendio', che in v_periodi_stipendio delimita i
-    periodi e ne creerebbe uno fasullo.
-    """
-    try:
-        r = (sb.table("cfg_categorie").select("id")
-               .eq("nome", nome).limit(1).execute())
-        cat = (r.data or [{}])[0].get("id") if r.data else None
-        if not cat:
-            return None
-        r = (sb.table("cfg_categoria_sottocategoria").select("id")
-               .eq("categoria_id", cat).is_("sottocategoria_id", "null")
-               .limit(1).execute())
-        return (r.data or [{}])[0].get("id") if r.data else None
-    except Exception:
-        return None
-
-
-def _inserisci_spesa(sb, riga: dict) -> int | None:
-    """
-    Inserisce un movimento sul conto personale, ritornando il suo id.
-
-    Passa dalla funzione `insert_spesa_first_free_id` gia' presente nel
-    database: prende un lock e riusa il primo id libero, che e' come il
-    conto personale ha sempre numerato le sue righe. Se non risponde si
-    ripiega sull'insert diretto — `spese.id` e' una colonna IDENTITY e
-    quindi si genera da sola.
-    """
-    try:
-        r = sb.rpc("insert_spesa_first_free_id", {
-            "p_data":              riga["data"],
-            "p_importo":           riga["importo"],
-            "p_tipo":              riga["tipo"],
-            "p_mese":              riga["mese"],
-            "p_anno":              riga["anno"],
-            "p_descrizione":       riga.get("descrizione"),
-            "p_metodo_pagamento":  riga.get("metodo_pagamento"),
-            "p_categoria_link_id": riga.get("categoria_link_id"),
-        }).execute()
-        dato = r.data
-        if isinstance(dato, list):
-            dato = dato[0] if dato else {}
-        if isinstance(dato, dict) and dato.get("id"):
-            return dato["id"]
-    except Exception:
-        pass
-    r = sb.table("spese").insert(riga).execute()
-    return (r.data or [{}])[0].get("id")
+# La scrittura sul conto personale passa dal suo livello dati
+# (spese/dati.py): li' stanno le regole di quella tabella — mese e anno
+# obbligatori, id col primo libero, categoria come rimando e non come
+# testo. Riscriverle qui significherebbe tenerne due copie allineate a
+# mano, e prima o poi divergono.
 
 
 def calcola(f: dict, param: dict, scenario: str,
@@ -242,28 +186,32 @@ def api_giroconto_esegui(fid):
         return jsonify({"error": f"errore sul conto P.IVA: {str(e)[:200]}"}), 500
 
     # --- 2) Entrata sul conto personale -----------------------------------
-    riga_pers = {
-        "data":        quando,
-        "tipo":        "entrata",
-        "importo":     calc["giroconto"],
-        "descrizione": f"Giroconto da P.IVA — fattura {numero}",
-        # `spese` tiene mese e anno denormalizzati e NOT NULL: le viste del
-        # conto personale (v_risparmi_mese, v_spese) ci si appoggiano.
-        "mese":              int(quando[5:7]),
-        "anno":              int(quando[:4]),
+    # Import qui dentro e non in testa: `fatture` e `spese` sono due
+    # blueprint indipendenti, e legarli al caricamento del modulo
+    # imporrebbe un ordine di import fra i due.
+    from spese import dati as personale
+
+    # `tipo=entrata` e non `giroconto`: v_risparmi_mese conta le entrate,
+    # e un movimento marcato giroconto resterebbe fuori dal budget.
+    esito = personale.crea(sb, {
+        "data":              quando,
+        "tipo":              "entrata",
+        "importo":           calc["giroconto"],
+        "descrizione":       f"Giroconto da P.IVA — fattura {numero}",
         "metodo_pagamento":  "Giroconto",
-        "categoria_link_id": _link_categoria(sb),
-    }
-    try:
-        id_pers = _inserisci_spesa(sb, riga_pers)
-    except Exception as e:
+        "categoria_link_id": personale.link_categoria(
+            sb, personale.CATEGORIA_GIROCONTO),
+    })
+    if esito.get("error") or not esito.get("id"):
         # Rollback: senza la riga sul personale il giroconto sarebbe monco,
         # e il conto P.IVA risulterebbe svuotato verso il nulla.
         try:
             sb.table("b2f_spese_piva").delete().eq("id", id_piva).execute()
         except Exception:
             pass
-        return jsonify({"error": f"errore sul conto personale: {str(e)[:200]}"}), 500
+        return jsonify({"error": "errore sul conto personale: "
+                                 f'{esito.get("error") or "nessun id di ritorno"}'}), 500
+    id_pers = esito["id"]
 
     # --- 3) La decisione, sulla fattura -----------------------------------
     upd = {

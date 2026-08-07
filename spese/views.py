@@ -2,146 +2,131 @@
 spese/views.py — Area /spese: il conto personale.
 
 I movimenti della P.IVA (fatturato incassato, commercialista, licenze)
-vivono invece sotto /fatture/spese-piva, perche' entrano nel calcolo
-fiscale. Qui c'e' solo il personale.
+vivono sotto /fatture/spese-piva, perche' entrano nel calcolo fiscale.
+Qui c'e' il conto personale — dove finiscono i soldi una volta tolta la
+quota da accantonare, tramite il giroconto della ripartizione.
 """
 from datetime import date
 
 from flask import Response
 
 from . import spese_bp
+from . import dati as D
 from shared.theme import render_page
 from shared.design import icon
 from shared.fmt import eur, eur_segno, data_breve
-from shared.supabase_client import get_client, is_configured
 
-
-def _diag():
-    if not is_configured():
-        return None
-    sb = get_client()
-    out = {"ultime": [], "entrate_mese": 0.0, "uscite_mese": 0.0}
-    try:
-        r = sb.table("spese").select("*", count="exact", head=True).execute()
-        out["count"] = r.count
-    except Exception as e:
-        return {"err": str(e)[:200]}
-
-    try:
-        r = (sb.table("spese").select("data,importo,descrizione,tipo")
-               .order("data", desc=True).limit(8).execute())
-        out["ultime"] = r.data or []
-    except Exception:
-        pass
-
-    today = date.today()
-    d_from = today.replace(day=1).isoformat()
-    try:
-        r = (sb.table("spese").select("importo,tipo")
-               .gte("data", d_from).lte("data", today.isoformat()).execute())
-        for row in (r.data or []):
-            imp = float(row.get("importo") or 0)
-            t = row.get("tipo") or ""
-            if t == "entrata":
-                out["entrate_mese"] += imp
-            elif t == "uscita":
-                out["uscite_mese"] += imp
-        out["saldo_mese"] = out["entrate_mese"] - out["uscite_mese"]
-    except Exception:
-        out["saldo_mese"] = None
-
-    return out
+# I sotto-moduli registrano le loro rotte sul blueprint quando importati.
+from . import movimenti   # noqa: E402,F401
+from . import risparmi    # noqa: E402,F401
 
 
 @spese_bp.get("/")
 def index():
-    d = _diag()
-
-    if d is None:
-        content = """
-        <div class="notice warn">
+    client = D.sb()
+    if client is None:
+        return _wrap('''<div class="notice warn">
           Supabase non configurato. Aggiungi <code>SUPABASE_URL</code> e
           <code>SUPABASE_KEY</code> alle env vars di Render.
+        </div>''')
+
+    oggi = date.today()
+    righe_anno = D.movimenti(client, anno=oggi.year)
+    righe_mese = [r for r in righe_anno if int(r.get("mese") or 0) == oggi.month]
+    t_mese = D.totali(righe_mese)
+    t_anno = D.totali(righe_anno)
+
+    ultimi = "".join(f'''
+      <div class="row">
+        <span class="k">{data_breve(r.get("data"))}</span>
+        <span class="t">{(r.get("descrizione") or "—")[:44]}
+          <span class="sub">{r.get("categoria") or "senza categoria"}</span></span>
+        <span class="v tnum {"pos" if D.TIPI_SEGNO.get(r.get("tipo"), 0) > 0 else "neg"}">
+          {eur_segno(abs(float(r.get("importo") or 0)) * (D.TIPI_SEGNO.get(r.get("tipo"), 1)))}</span>
+      </div>''' for r in righe_anno[:8])
+
+    blocco_ultimi = (f'''
+      <div class="card">
+        <div class="card-head">
+          <div class="eyebrow">Ultimi movimenti</div>
+          <a class="small accent" href="/spese/movimenti">Vedi tutti ›</a>
         </div>
-        """
-    elif "err" in d:
-        content = f'<div class="notice err">Errore <code>spese</code>: {d["err"]}</div>'
-    else:
-        saldo = d.get("saldo_mese") or 0
+        <div class="rows detail">{ultimi}</div>
+      </div>''' if ultimi else f'''
+      <div class="empty">{icon("spese")}
+        <div class="t">Nessun movimento nel {oggi.year}</div>
+        <div class="s">Registra il primo dal pulsante in basso.</div>
+      </div>''')
 
-        righe = []
-        for r in d.get("ultime", []):
-            imp = float(r.get("importo") or 0)
-            desc = (r.get("descrizione") or "").strip() or "—"
-            tipo = r.get("tipo", "")
-            cls = "neg" if tipo == "uscita" else "pos" if tipo == "entrata" else ""
-            firmato = imp if tipo == "entrata" else -imp
-            righe.append(
-                f'<div class="row">'
-                f'<span class="k">{data_breve(r.get("data"))}</span>'
-                f'<span class="t">{desc}</span>'
-                f'<span class="v tnum {cls}">{eur_segno(firmato)}</span>'
-                f'</div>'
-            )
-        ultimi = (
-            f'<div class="card">'
-            f'<div class="card-head"><div class="eyebrow">Ultimi movimenti</div></div>'
-            f'<div class="rows">{"".join(righe)}</div></div>'
-        ) if righe else (
-            '<div class="empty">'
-            + icon("spese")
-            + '<div class="t">Nessun movimento</div>'
-            + '<div class="s">La tabella <code>spese</code> è vuota.</div></div>'
-        )
-
-        content = f"""
-        <div class="grid kpi mb-4">
-          <div class="card"><div class="stat">
-            <div class="val tnum {"pos" if saldo >= 0 else "neg"}">€ {eur_segno(saldo, 0)}</div>
-            <div class="lbl">Saldo del mese</div></div></div>
-          <div class="card"><div class="stat sm">
-            <div class="val tnum pos">€ {eur(d['entrate_mese'], 0)}</div>
-            <div class="lbl">Entrate</div></div></div>
-          <div class="card"><div class="stat sm">
-            <div class="val tnum neg">€ {eur(d['uscite_mese'], 0)}</div>
-            <div class="lbl">Uscite</div></div></div>
-          <div class="card"><div class="stat sm">
-            <div class="val tnum">{d.get('count', 0)}</div>
-            <div class="lbl">Movimenti totali</div></div></div>
+    # Quanto e' arrivato dalla P.IVA: e' la domanda che ci si fa dopo aver
+    # premuto "ripartisci" su una fattura, e merita un posto suo.
+    girati = t_anno["giroconti"]
+    blocco_giroconti = f'''
+      <div class="card">
+        <div class="card-head"><div class="eyebrow">Arrivato dalla P.IVA</div></div>
+        <div class="stat">
+          <div class="val tnum accent">€ {eur(girati, 0)}</div>
+          <div class="lbl">girati sul personale nel {oggi.year}</div>
         </div>
+        <p class="small muted mt-4">
+          Sono i giroconti creati quando ripartisci una fattura incassata: la
+          quota da accantonare resta sul conto P.IVA, il resto arriva qui.
+        </p>
+        <a class="btn ghost block mt-4" href="/spese/movimenti?tipo=giroconto">
+          {icon("wallet")}Vedi i giroconti
+        </a>
+      </div>'''
 
-        <div class="grid split">
-          <div class="stack">{ultimi}</div>
-          <div class="stack">
-            <div class="card">
-              <div class="card-head"><div class="eyebrow">Due conti separati</div></div>
-              <p class="small muted">
-                Qui c'è il conto personale. I movimenti della P.IVA — fatturato
-                incassato, commercialista, licenze — stanno sotto Fatture,
-                perché entrano nel calcolo fiscale.
-              </p>
-              <a class="btn ghost block mt-4" href="/fatture/spese-piva">
-                {icon("wallet")}Movimenti P.IVA
-              </a>
-            </div>
+    body = f'''
+    <div class="grid kpi lead mb-3">
+      <div class="card"><div class="stat">
+        <div class="val tnum {"pos" if t_mese["saldo"] >= 0 else "neg"}">€ {eur_segno(t_mese["saldo"], 0)}</div>
+        <div class="lbl">Saldo del mese</div>
+        <div class="hint">{t_mese["n"]} moviment{"o" if t_mese["n"] == 1 else "i"}</div>
+      </div></div>
+      <div class="card"><div class="stat sm">
+        <div class="val tnum pos">€ {eur(t_mese["entrate"], 0)}</div>
+        <div class="lbl">Entrate</div></div></div>
+      <div class="card"><div class="stat sm">
+        <div class="val tnum neg">€ {eur(t_mese["uscite"], 0)}</div>
+        <div class="lbl">Uscite</div></div></div>
+      <div class="card"><div class="stat sm">
+        <div class="val tnum">€ {eur(t_anno["saldo"], 0)}</div>
+        <div class="lbl">Saldo {oggi.year}</div></div></div>
+    </div>
 
-            <div class="card">
-              <div class="card-head"><div class="eyebrow">In arrivo</div></div>
-              <p class="small muted">
-                L'inserimento dei movimenti personali non è ancora attivo da qui:
-                per ora la scrittura passa dal database.
-              </p>
-              <span class="btn is-disabled block mt-4" aria-disabled="true">
-                {icon("plus")}Nuovo movimento
-              </span>
-            </div>
+    <div class="grid split">
+      <div class="stack">{blocco_ultimi}</div>
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Sezioni</div></div>
+          <div class="list">
+            <a class="item" href="/spese/movimenti">
+              <span class="ico">{icon("wallet")}</span>
+              <span class="body"><span class="n">Movimenti</span></span>
+              <span class="chev">{icon("chevron")}</span>
+            </a>
+            <a class="item" href="/spese/risparmi">
+              <span class="ico">{icon("fiscale")}</span>
+              <span class="body"><span class="n">Risparmi</span></span>
+              <span class="chev">{icon("chevron")}</span>
+            </a>
+            <a class="item" href="/fatture/spese-piva">
+              <span class="ico">{icon("fatture")}</span>
+              <span class="body"><span class="n">Movimenti P.IVA</span></span>
+              <span class="chev">{icon("chevron")}</span>
+            </a>
           </div>
         </div>
-        """
+        {blocco_giroconti}
+      </div>
+    </div>'''
 
+    return _wrap(body, fab=("Nuovo movimento", "/spese/movimenti/nuovo"))
+
+
+def _wrap(content: str, fab=None) -> Response:
     return Response(
-        render_page(section="spese",
-                    eyebrow="Conto personale",
-                    title_html='Le mie <em>spese</em>',
-                    content=content),
+        render_page(section="spese", eyebrow="Conto personale",
+                    title_html='Le mie <em>spese</em>', content=content, fab=fab),
         mimetype="text/html")

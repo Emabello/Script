@@ -935,6 +935,20 @@ def api_fattura_stato(fid):
     if errore:
         return errore
 
+    # Uscire da "incassata" con la ripartizione gia' fatta lascerebbe i due
+    # movimenti sui conti senza piu' un incasso che li giustifichi: il conto
+    # P.IVA resterebbe alleggerito e il personale gonfiato, senza che nulla
+    # lo segnali. Prima si annulla la ripartizione, poi si cambia stato.
+    if (stato != "incassata" and normalizza_stato(f.get("stato")) == "incassata"
+            and f.get("data_giroconto")):
+        return jsonify({
+            "error": ("Questa fattura è già stata ripartita: i soldi sono stati "
+                      "spostati sul conto personale. Annulla prima la "
+                      "ripartizione, altrimenti resterebbero due movimenti "
+                      "senza un incasso che li giustifichi."),
+            "data_giroconto": f.get("data_giroconto"),
+        }), 409
+
     payload = {"stato": stato}
 
     # Data del passo in cui si entra. Se ne arriva una, vince. Altrimenti
