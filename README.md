@@ -362,13 +362,14 @@ sezione ne tiene conto separatamente.
 Da lanciare nell'**SQL Editor di Supabase**, in quest'ordine. Sono tutte
 idempotenti: rilanciarle non fa danni.
 
-Lo schema fino al ciclo di vita e alla ripartizione è già applicato. Verificato
-sullo snapshot del 2026-08-12 ([`docs/schema_supabase.md`](docs/schema_supabase.md)):
-**8.2 e 8.4 sono già a posto** (vista e RLS coerenti con qui sotto, colonna
-presente). 8.1 e 8.3 toccano dati, non schema: da confermare quando arriva un
-export delle righe.
+**Tutte e quattro sono confermate applicate** — verificato il 2026-08-12
+incrociando lo snapshot dello schema ([`docs/schema_supabase.md`](docs/schema_supabase.md))
+e un export completo dei dati: categoria "Giroconto P.IVA" presente e
+collegata (8.1), vista e RLS allineate (8.2), dati emittente popolati (8.3),
+colonna del giroconto manuale presente (8.4). Restano solo come riferimento
+storico. L'unica nuova, discrezionale, è la [8.6](#86--foreign-key-mancante-su-spesa_piva_id).
 
-### 8.1 — Categoria del giroconto sul conto personale
+### 8.1 — Categoria del giroconto sul conto personale ✅ già applicata
 
 Senza, il giroconto arriva sul conto ma resta invisibile al budget (vedi
 [le trappole](#7-le-trappole-del-database)).
@@ -394,7 +395,7 @@ select c.nome, l.id as categoria_link_id
  where c.nome = 'Giroconto P.IVA' and l.sottocategoria_id is null;
 ```
 
-### 8.2 — Vista fiscale riallineata e Row Level Security
+### 8.2 — Vista fiscale riallineata e Row Level Security ✅ già applicata
 
 `v_situazione_annuale` era rimasta indietro su due punti: filtrava uno stato
 che non esiste più (`emessa`), quindi vedeva le sole incassate, e calcolava
@@ -477,7 +478,7 @@ alter table b2f_parametri_fiscali    enable row level security;
 > -- alter table risparmi_periodo enable row level security;
 > ```
 
-### 8.3 — Dati dell'emittente
+### 8.3 — Dati dell'emittente ✅ già applicata
 
 Senza, l'intestazione del facsimile esce col solo nome: il PDF legge
 `b2f_emittente`, dove P.IVA, codice fiscale, indirizzo, email, PEC e IBAN erano
@@ -569,12 +570,32 @@ select riga from (
 ) t order by s, k;
 ```
 
+### 8.6 — Foreign key mancante su `spesa_piva_id`
+
+`b2f_fatture.giroconto_piva_id` ha una FK verso `b2f_spese_piva(id)` (`on
+delete set null`); `spesa_piva_id` — che punta alla stessa tabella, per la
+riga "registra incasso" — non ce l'ha mai avuta. Verificato sui dati reali
+del 2026-08-12 che non ci sono `spesa_piva_id` orfani, quindi si può
+aggiungere senza rischio di far fallire la migrazione:
+
+```sql
+alter table b2f_fatture
+  add constraint b2f_fatture_spesa_piva_id_fkey
+  foreign key (spesa_piva_id) references b2f_spese_piva(id) on delete set null;
+```
+
+Senza, l'app se ne occupa comunque da sola via codice (`_stacca_da_fattura`
+in `fatture/fiscale.py`), ma senza la FK il database non lo garantisce: è
+un rinforzo, non un blocco a qualcosa che oggi si rompe.
+
 ---
 
 ## 9. Sicurezza
 
-**Accesso all'app.** PIN, più sblocco biometrico via WebAuthn. Le rotte `/api/*`,
-`/fatture/api/*` e `/spese/api/*` sono protette dal gate in `xs_server.py`.
+**Accesso all'app.** PIN, più sblocco biometrico via WebAuthn. Il gate in
+`xs_server.py` protegge sia le pagine HTML sia le rotte `/api/*`,
+`/fatture/api/*` e `/spese/api/*`: senza sessione valida, una pagina mostra
+solo l'overlay di sblocco, mai il contenuto.
 
 **Accesso al database.** L'app si collega con la chiave `service_role`, che
 bypassa la RLS. La chiave `anon`, invece, **non è un segreto**: nasce per stare

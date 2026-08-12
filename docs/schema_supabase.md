@@ -168,13 +168,12 @@ Ultimo aggiornamento: 2026-08-12.
 - `b2f_fatture_giroconto_piva_id_fkey`: FOREIGN KEY (giroconto_piva_id) REFERENCES b2f_spese_piva(id) ON DELETE SET NULL
 - `b2f_fatture_pkey`: PRIMARY KEY (id)
 
-> **Asimmetria da verificare**: `giroconto_piva_id` ha una FK verso
-> `b2f_spese_piva(id)` (`ON DELETE SET NULL`), ma `spesa_piva_id` — che punta
-> alla stessa tabella per lo stesso motivo, la riga "registra incasso" — non
-> ce l'ha. In pratica l'app se ne occupa da sola (vedi `_stacca_da_fattura`
-> in `fatture/fiscale.py`), ma senza la FK il database non lo garantisce.
-> Da aggiungere una volta confermato, sui dati veri, che non ci sono già
-> `spesa_piva_id` orfani (altrimenti la ALTER TABLE fallisce):
+> **Asimmetria, migrazione pronta in README §8.6**: `giroconto_piva_id` ha
+> una FK verso `b2f_spese_piva(id)` (`ON DELETE SET NULL`), ma `spesa_piva_id`
+> — che punta alla stessa tabella per lo stesso motivo, la riga "registra
+> incasso" — non ce l'ha. Verificato sui dati reali del 2026-08-12 (export
+> completo, tutti gli 8 controlli di integrità a zero righe): nessun
+> `spesa_piva_id` orfano, si può aggiungere senza rischio:
 > ```sql
 > alter table b2f_fatture
 >   add constraint b2f_fatture_spesa_piva_id_fkey
