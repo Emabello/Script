@@ -47,8 +47,10 @@ def _riga_movimento(m: dict) -> str:
     cat = m.get("categoria") or "Senza categoria"
     if m.get("sottocategoria"):
         cat += f' · {m["sottocategoria"]}'
+    # Per categoria e non per tipo: il giroconto dalla P.IVA e' sempre
+    # tipo=entrata (vedi D.totali), "tipo=giroconto" non lo distingue.
     marchio = ('<span class="chip">giroconto</span>'
-               if tipo == "giroconto" else "")
+               if m.get("categoria") == D.CATEGORIA_GIROCONTO else "")
     return f'''
     <a class="item" href="/spese/movimenti/{m["id"]}">
       <span class="body">

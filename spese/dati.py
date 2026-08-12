@@ -38,14 +38,19 @@ from shared.supabase_client import get_client, is_configured
 TIPI = (
     ("entrata",   "Entrata"),
     ("uscita",    "Uscita"),
-    ("giroconto", "Giroconto"),
 )
 TIPI_CHIAVI = tuple(k for k, _ in TIPI)
 TIPI_LABEL = dict(TIPI)
 
-# Segno con cui ogni tipo entra nel saldo. Il giroconto e' un
-# trasferimento fra conti tuoi: qui *arriva*, quindi somma. Sul lato
-# P.IVA la stessa riga viene sottratta.
+# Segno con cui ogni tipo entra nel saldo. "giroconto" non e' piu' una
+# scelta del form (era una seconda via, indipendente dalla categoria,
+# per dire "e' un trasferimento" — la stessa cosa che gia' fa la
+# categoria "Giroconto P.IVA"; le due si erano disallineate: 4 righe
+# reali con tipo=giroconto restavano invisibili a v_risparmi_mese, che
+# controlla solo tipo=entrata — vedi migrazione 8.9). La chiave resta
+# qui solo come compatibilita' di lettura per righe non ancora
+# migrate: non e' piu' scrivibile da nessun form ne' dall'API
+# (TIPI_CHIAVI non la contiene).
 TIPI_SEGNO = {"entrata": 1, "uscita": -1, "giroconto": 1}
 
 # Categoria su cui atterrano i giroconti dalla P.IVA.
@@ -382,9 +387,11 @@ def totali(righe: list[dict]) -> dict:
     non usano mai: "Dalla P.IVA" risultava sempre zero anche quando il
     denaro era arrivato (e gia' contato, correttamente, in "entrate").
 
-    Resta comunque gestito anche `tipo == "giroconto"` (l'opzione libera
-    del form "Nuovo movimento", scelta a mano): per quello si', si somma
-    a parte, perche' non e' mai stato incluso in "entrate".
+    Resta comunque gestito anche `tipo == "giroconto"`, per compatibilita'
+    con righe storiche non ancora passate dalla migrazione 8.9 (il form
+    non offre piu' questa scelta, era un secondo modo — indipendente
+    dalla categoria — di dire "e' un trasferimento", che restava invisibile
+    a v_risparmi_mese).
     """
     t = {"entrate": 0.0, "uscite": 0.0, "giroconti": 0.0, "n": len(righe)}
     for r in righe:
