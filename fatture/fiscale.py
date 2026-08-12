@@ -119,13 +119,14 @@ def _situazione_data(sb, anno: int) -> dict:
 
     fatturato_mese = {m: 0.0 for m in range(1, 13)}
     bollo_mese = {m: 0.0 for m in range(1, 13)}
+    rivalsa_mese = {m: 0.0 for m in range(1, 13)}
     incasso_mese = {m: 0.0 for m in range(1, 13)}
     commercialista_mese = {m: 0.0 for m in range(1, 13)}
     spese_piva_uscite_tot = 0.0
 
     try:
         r = (sb.table("b2f_fatture")
-               .select("data,data_incasso,totale,bollo,bollo_addebitato,stato")
+               .select("data,data_incasso,totale,bollo,bollo_addebitato,cassa_importo,stato")
                .gte("data", f"{anno}-01-01").lte("data", f"{anno}-12-31")
                .in_("stato", list(STATI_EMESSE)).execute())
         for f in (r.data or []):
@@ -133,6 +134,10 @@ def _situazione_data(sb, anno: int) -> dict:
             fatturato_mese[mese] += float(f.get("totale") or 0)
             if f.get("bollo_addebitato"):
                 bollo_mese[mese] += float(f.get("bollo") or 0)
+            # Solo per trasparenza nell'export: la rivalsa resta dentro
+            # "fatturato"/"totale" (concorre al reddito, vedi accantonamento.py),
+            # qui si somma a parte solo per mostrarne la quota.
+            rivalsa_mese[mese] += float(f.get("cassa_importo") or 0)
     except Exception:
         pass
 
@@ -164,7 +169,8 @@ def _situazione_data(sb, anno: int) -> dict:
 
     mensile = []
     tot = {k: 0.0 for k in ("fatturato", "imponibile", "incasso", "imposta",
-                             "inps_saldo", "inps_acconto", "bollo", "commercialista")}
+                             "inps_saldo", "inps_acconto", "bollo", "commercialista",
+                             "rivalsa")}
     for m in range(1, 13):
         fatt = fatturato_mese[m]
         imponibile = round(fatt * coeff, 2)
@@ -176,6 +182,7 @@ def _situazione_data(sb, anno: int) -> dict:
         incasso = incasso_mese[m]
         bollo = bollo_mese[m]
         comm = commercialista_mese[m]
+        rivalsa = rivalsa_mese[m]
         # "Stipendio" del foglio di riferimento: incasso meno tutto, acconti
         # inclusi. Resta per parita' con l'export Excel.
         netto = round(incasso - imposta - inps_saldo - inps_acconto - bollo - comm, 2)
@@ -186,7 +193,7 @@ def _situazione_data(sb, anno: int) -> dict:
             "mese": m, "nome": MESI_NOMI[m - 1],
             "fatturato": fatt, "imponibile": imponibile, "incasso": incasso,
             "imposta": imposta, "inps_saldo": inps_saldo, "inps_acconto": inps_acconto,
-            "bollo": bollo, "commercialista": comm,
+            "bollo": bollo, "commercialista": comm, "rivalsa": rivalsa,
             "netto": netto, "netto_competenza": netto_comp,
         })
         tot["fatturato"] += fatt
@@ -194,6 +201,7 @@ def _situazione_data(sb, anno: int) -> dict:
         tot["incasso"] += incasso
         tot["imposta"] += imposta
         tot["inps_saldo"] += inps_saldo
+        tot["rivalsa"] += rivalsa
         tot["inps_acconto"] += inps_acconto
         tot["bollo"] += bollo
         tot["commercialista"] += comm
@@ -227,7 +235,8 @@ def _situazione_data(sb, anno: int) -> dict:
     # Accantonamento consigliato sull'incassato dell'anno, esposto anche
     # dall'API cosi' le altre pagine non devono rifare il calcolo.
     scomposizione = acc.scomponi(tot["incasso"], param,
-                                 fatturato_riferimento=tot["incasso"])
+                                 fatturato_riferimento=tot["incasso"],
+                                 rivalsa=tot["rivalsa"], bollo_addebitato=tot["bollo"])
 
     return {
         "anno": anno,
@@ -248,6 +257,7 @@ def _situazione_data(sb, anno: int) -> dict:
             "inps_acconto_accantonato": tot["inps_acconto"],
             "imposta_acconto": imposta_acconto,
             "bollo_totale": tot["bollo"],
+            "rivalsa_totale": tot["rivalsa"],
             "commercialista_totale": tot["commercialista"],
             "spese_piva_totali": round(spese_piva_uscite_tot, 2),
             # Nuove grandezze, esplicite
@@ -354,7 +364,9 @@ def situazione_dashboard():
 
     # --- Accantonamento sull'incassato dell'anno ----------------------------
     scomposizione = acc.scomponi(t["incasso"], s["parametri"],
-                                 fatturato_riferimento=t["incasso"])
+                                 fatturato_riferimento=t["incasso"],
+                                 rivalsa=t.get("rivalsa_totale", 0),
+                                 bollo_addebitato=t.get("bollo_totale", 0))
     acc_card = acc.card_html(
         scomposizione,
         titolo=f"Da accantonare sul {anno}",
@@ -556,8 +568,13 @@ def _build_workbook(sb, anno: int):
     cell("G5", float(param["aliquota_acconto"]), fmt="0%")
 
     # --- Riga 6: intestazioni tabella ---
+    # "Rivalsa INPS" e' in coda e non fra Fatturato e Imponibile apposta:
+    # e' gia' dentro "Fatturato" (concorre al reddito, vedi accantonamento.py
+    # e Risposta Agenzia Entrate 428/2022) — qui e' solo la quota mostrata
+    # a parte per trasparenza, non un valore da sommare a se'.
     headers = ["Mese", "Fatturato", "Imponibile", "Incasso", "Imposta",
-               "INPS Saldo", "INPS Acconto", "Bollo Fattura", "Commercialista", "Stipendio"]
+               "INPS Saldo", "INPS Acconto", "Bollo Fattura", "Commercialista",
+               "Stipendio", "di cui Rivalsa INPS"]
     header_border = Border(bottom=thin)
     for i, h in enumerate(headers):
         col = chr(ord("A") + i)
@@ -576,10 +593,11 @@ def _build_workbook(sb, anno: int):
         cell(f"H{r}", m["bollo"], fmt=money_fmt, fill=input_fill)
         cell(f"I{r}", m["commercialista"], fmt=money_fmt, fill=input_fill)
         cell(f"J{r}", f"=D{r}-E{r}-F{r}-G{r}-H{r}-I{r}", fmt=money_fmt)
+        cell(f"K{r}", m["rivalsa"], fmt=money_fmt, fill=input_fill)
 
     # --- Riga 19: Totale ---
     top_border = Border(top=thin, bottom=Side(style="double"))
-    for col in "BCDEFGHIJ":
+    for col in "BCDEFGHIJK":
         cell(f"{col}19", f"=SUM({col}7:{col}18)", bold=True, fmt=money_fmt, border=top_border)
     cell("A19", "Totale", bold=True, border=top_border)
 
@@ -615,7 +633,7 @@ def _build_workbook(sb, anno: int):
 
     # Larghezza colonne
     widths = {"A": 22, "B": 13, "C": 13, "D": 13, "E": 12, "F": 12,
-              "G": 13, "H": 14, "I": 15, "J": 13}
+              "G": 13, "H": 14, "I": 15, "J": 13, "K": 18}
     for col, w in widths.items():
         ws.column_dimensions[col].width = w
 

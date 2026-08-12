@@ -105,6 +105,7 @@ def _dashboard_data() -> dict:
         scomposizione = acc.scomponi(
             incassato_mese, s["parametri"],
             fatturato_riferimento=s["totali"]["incasso"],
+            rivalsa=mese.get("rivalsa", 0), bollo_addebitato=mese.get("bollo", 0),
         )
         out["accantonamento"] = scomposizione
         if incassato_mese > 0:

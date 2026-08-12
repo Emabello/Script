@@ -198,10 +198,34 @@ Il totale non cambia: è il compenso a ridursi. Nell'accantonamento la rivalsa
 non sposta nulla, perché nel forfettario l'imponibile è il corrispettivo
 intero: è una suddivisione che serve alla fattura elettronica.
 
+**Verificato il 2026-08-12** contro la normativa aggiornata (non è scontato:
+è diverso dal contributo integrativo delle Casse professionali, che invece
+*è* escluso): la rivalsa INPS facoltativa (art. 1 co. 212 L. 662/1996)
+concorre per intero al reddito imponibile forfettario, alla base di
+imposta sostitutiva e INPS, e al limite degli € 85.000. Non va mai
+sottratta prima di calcolare percentuali o scaglioni — dove succede oggi
+(`fatture/accantonamento.py`, `fatture/fiscale.py`) è corretto così.
+Fonti: [Fiscozen](https://www.fiscozen.it/guide/rivalsa-inps-regime-forfettario-reddito/),
+[Fiscomania](https://fiscomania.com/rivalsa-inps/).
+
+Resta comunque **mostrata a parte** ovunque compaia (pagina di dettaglio
+fattura, card di accantonamento — sezione "Come esce questo numero" —
+colonna "di cui Rivalsa INPS" nell'Excel della situazione): non cambia il
+calcolo, ma senza quella riga la sua quota resta invisibile dentro un
+unico numero.
+
 ### Bollo
 
 Dovuto sopra i 77,47 €, importo 2,00 €. Può essere addebitato al cliente
 oppure restare a carico dell'emittente.
+
+**Se addebitato al cliente**, i 2 € smettono di essere un semplice
+rimborso: la Risposta a interpello Agenzia delle Entrate n. 428/2022 ha
+chiarito che assumono natura di compenso e concorrono al reddito, alla
+base INPS e al limite di € 85.000 — esattamente come la rivalsa. Se
+resta a carico dell'emittente (come nelle due fatture emesse finora),
+non genera alcun reddito: è solo una spesa registrata su Spese P.IVA
+(categoria "Bollo pagato").
 
 ---
 
