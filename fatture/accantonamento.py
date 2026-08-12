@@ -142,7 +142,8 @@ def quota_costi_fissi(param: dict, fatturato_riferimento: float = 0.0) -> float:
     return min(costi / base, 0.5)   # tetto di sicurezza: mai oltre il 50 %
 
 
-def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0) -> dict:
+def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0,
+            rivalsa: float = 0.0, bollo_addebitato: float = 0.0) -> dict:
     """
     Scompone un incasso lordo e calcola i tre scenari di accantonamento.
 
@@ -151,6 +152,10 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0) -> d
       param: parametri fiscali uniti a quelli di accantonamento.
       fatturato_riferimento: base su cui spalmare i costi fissi, usata
         solo se `fatturato_atteso_anno` non e' impostato.
+      rivalsa, bollo_addebitato: gia' inclusi in `lordo` (concorrono al
+        reddito, vedi il modulo — Risposta Agenzia Entrate 428/2022 per
+        il bollo). Non entrano in nessun calcolo qui: servono solo a
+        `card_html()` per mostrarne la quota, a scopo di trasparenza.
     """
     try:
         lordo = float(lordo or 0)
@@ -183,6 +188,8 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0) -> d
 
     return {
         "lordo": round(lordo, 2),
+        "rivalsa": round(float(rivalsa or 0), 2),
+        "bollo_addebitato": round(float(bollo_addebitato or 0), 2),
         "coeff": coeff,
         "imponibile": imponibile,
         "inps": inps,
@@ -215,6 +222,31 @@ def totali_periodo(incassato: float, param: dict,
 
 # ---------------------------------------------------------------------------
 # Presentazione
+def _riga_rivalsa_bollo(s: dict) -> str:
+    """
+    Riga informativa: quanto del lordo e' rivalsa INPS o bollo addebitato
+    al cliente. Non cambia nessun conto (sono gia' dentro "lordo" e
+    "imponibile" — concorrono al reddito, vedi scomponi()): serve solo a
+    far vedere la composizione, non lasciarla nascosta dentro un unico
+    numero. Non renderizza nulla se la fattura non li ha.
+    """
+    from shared.fmt import eur
+    rivalsa = s.get("rivalsa", 0)
+    bollo = s.get("bollo_addebitato", 0)
+    if not rivalsa and not bollo:
+        return ""
+    righe = ""
+    if rivalsa:
+        righe += (f'<div class="row"><span class="t">di cui rivalsa INPS '
+                  f'<span class="sub">inclusa nel lordo, concorre al reddito</span></span>'
+                  f'<span class="v tnum">€ {eur(rivalsa)}</span></div>')
+    if bollo:
+        righe += (f'<div class="row"><span class="t">di cui bollo addebitato al cliente '
+                  f'<span class="sub">inclusa nel lordo, concorre al reddito</span></span>'
+                  f'<span class="v tnum">€ {eur(bollo)}</span></div>')
+    return righe
+
+
 # ---------------------------------------------------------------------------
 
 def card_html(s: dict, titolo: str = "Da accantonare",
@@ -301,6 +333,7 @@ def card_html(s: dict, titolo: str = "Da accantonare",
   <details class="explain mt-4">
     <summary>Come esce questo numero</summary>
     <div class="rows">
+      {_riga_rivalsa_bollo(s)}
       <div class="row"><span class="t">Imponibile <span class="sub">lordo × coefficiente {pct(s.get("coeff", 0.67), 0)}</span></span>
         <span class="v tnum">€ {eur(s["imponibile"])}</span></div>
       <div class="row"><span class="t">INPS gestione separata</span>

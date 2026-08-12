@@ -333,8 +333,10 @@ def fattura_dettaglio(fid):
             incassato_anno = 0.0
 
         if stato_corrente in STATI_EMESSE:
-            scomposizione = acc.scomponi(f.get("totale"), param,
-                                         fatturato_riferimento=incassato_anno)
+            scomposizione = acc.scomponi(
+                f.get("totale"), param, fatturato_riferimento=incassato_anno,
+                rivalsa=f.get("cassa_importo") or 0,
+                bollo_addebitato=(f.get("bollo") or 0) if f.get("bollo_addebitato") else 0)
             if stato_corrente == "incassata":
                 contesto = (f"Fattura incassata il {_fmt_date(f.get('data_incasso'))}. "
                             f"Metti da parte questa quota prima di considerare "
