@@ -333,7 +333,7 @@ coppie valide. Una categoria senza sottocategoria ha comunque la sua riga, con
 `v_risparmi_mese` somma le altre entrate con:
 
 ```sql
-tipo = 'entrata' and categoria <> 'Stipendio'
+tipo = 'entrata' and categoria not in ('Stipendio', 'Giroconto P.IVA')
 ```
 
 Su una riga **senza categoria** quel confronto non è falso: è `NULL`. Il
@@ -342,13 +342,27 @@ denaro risulterebbe sul conto ma il *Risparmio consigliato* verrebbe calcolato
 su una base più bassa del vero, senza alcun errore visibile.
 
 Per questo il giroconto usa una categoria dedicata, **e non `Stipendio`**:
-`v_periodi_stipendio` usa proprio quelle entrate per delimitare i periodi, e
-marcarlo così aprirebbe un periodo fasullo sfasando tutto lo storico.
+`v_periodi_stipendio` usa proprio quelle entrate (categoria `Stipendio` o
+`Giroconto P.IVA`) per delimitare i periodi, e marcarlo diversamente
+aprirebbe un periodo fasullo sfasando tutto lo storico.
 
 ### Il tipo dà la direzione, non il segno
 
-Gli importi sono sempre positivi. La direzione la dà `tipo`. Due convenzioni
-sovrapposte si annullerebbero a vicenda.
+Gli importi sono sempre positivi. La direzione la dà `tipo` (`entrata` o
+`uscita`, nient'altro — vedi sotto). Due convenzioni sovrapposte si
+annullerebbero a vicenda.
+
+### "È un trasferimento" si dice solo con la categoria, non con `tipo`
+
+`spese.tipo` accettava anche `giroconto`, indipendente dalla categoria — e
+la categoria ha già "Giroconto P.IVA" per lo stesso concetto. Le due
+segnalazioni si erano disallineate: righe con `tipo=giroconto` (bonifici da
+terzi, non collegati alla P.IVA) restavano invisibili a
+`v_periodi_stipendio`/`v_risparmi_mese`, che guardano solo `tipo=entrata`
+(vedi [migrazione 8.9](#89--spesetipo-non-ha-più-giroconto)). Il form non
+offre più questa scelta: `tipo` è solo `entrata`/`uscita`, e "che tipo di
+entrata è" (P.IVA, stipendio, bonifico da qualcuno) lo dice sempre e solo
+la categoria — come per ogni altro movimento.
 
 ### Il giroconto ha segno opposto sui due conti
 
@@ -368,9 +382,11 @@ e un export completo dei dati: categoria "Giroconto P.IVA" presente e
 collegata (8.1), vista e RLS allineate (8.2), dati emittente popolati (8.3),
 colonna del giroconto manuale presente (8.4). Restano solo come riferimento
 storico. **8.7 lanciata e confermata il 2026-08-12.** Da lanciare ancora:
-[8.6](#86--foreign-key-mancante-su-spesa_piva_id) (discrezionale) e
+[8.6](#86--foreign-key-mancante-su-spesa_piva_id) (discrezionale),
 [8.8](#88--pulizia-di-5-righe-con-dati-inconsistenti) (5 righe da correggere,
-consigliata).
+consigliata) e
+[8.9](#89--spesetipo-non-ha-più-giroconto) (4 righe con `tipo=giroconto`
+diventate invisibili ai risparmi, consigliata).
 
 ### 8.1 — Categoria del giroconto sul conto personale ✅ già applicata
 
@@ -813,6 +829,31 @@ lo genera — non è una vista o un endpoint di questo repo, quindi non è
 qualcosa che questa migrazione o il codice dell'Hub possano correggere;
 l'audit sopra è stato fatto sui dati reali via export CSV completo
 (1021 righe), non su quell'Excel.
+
+### 8.9 — `spese.tipo` non ha più "Giroconto"
+
+Il form "Nuovo movimento" offriva tre `tipo` (Entrata, Uscita,
+Giroconto) **indipendenti dalla categoria** — che ha già una categoria
+"Giroconto P.IVA" per lo stesso concetto. Due modi di dire la stessa
+cosa, e solo uno collegato a `v_periodi_stipendio`/`v_risparmi_mese`
+(controllano `tipo = 'entrata'`): 4 righe reali con `tipo = 'giroconto'`
+— bonifici ricevuti da terzi (matrimonio, hotel, vino, vacanza — non
+c'entrano con la P.IVA), categoria "Personale › Bonifici` — risultavano
+invisibili ai risparmi per periodo, per un totale di € 635.
+
+```sql
+update spese
+   set tipo = 'entrata'
+ where tipo = 'giroconto';
+```
+
+Idempotente (dopo la prima esecuzione non trova più righe). La
+categoria di quelle righe non cambia: era già corretta ("Personale ›
+Bonifici"), il problema era solo `tipo`. Il codice non offre più
+"Giroconto" nel form né lo accetta in scrittura (`spese/dati.py`,
+`TIPI`); resta gestito in lettura per compatibilità finché questa
+migrazione non è lanciata, quindi l'ordine non è critico — ma senza
+la migrazione quelle 4 righe restano fuori da `v_risparmi_mese`.
 
 ---
 
