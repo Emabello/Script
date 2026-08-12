@@ -306,18 +306,36 @@ def collegato(client, mid: int) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def totali(righe: list[dict]) -> dict:
-    """Entrate, uscite, giroconti e saldo di un insieme di movimenti."""
+    """
+    Entrate, uscite, quota delle entrate arrivata dalla P.IVA, e saldo.
+
+    Il giroconto dalla P.IVA arriva come riga `tipo=entrata`, categoria
+    "Giroconto P.IVA" — apposta, cosi' v_risparmi_mese lo conta nel
+    budget (vedi fatture/giroconto.py). "giroconti" qui NON e' quindi un
+    terzo bucket da sommare al saldo: e' un sotto-totale di "entrate",
+    solo per mostrarlo separato. Il vecchio codice cercava `tipo ==
+    "giroconto"`, un valore che i giroconti automatici P.IVA->personale
+    non usano mai: "Dalla P.IVA" risultava sempre zero anche quando il
+    denaro era arrivato (e gia' contato, correttamente, in "entrate").
+
+    Resta comunque gestito anche `tipo == "giroconto"` (l'opzione libera
+    del form "Nuovo movimento", scelta a mano): per quello si', si somma
+    a parte, perche' non e' mai stato incluso in "entrate".
+    """
     t = {"entrate": 0.0, "uscite": 0.0, "giroconti": 0.0, "n": len(righe)}
     for r in righe:
         imp = abs(float(r.get("importo") or 0))
         tipo = r.get("tipo")
         if tipo == "entrata":
             t["entrate"] += imp
+            if r.get("categoria") == CATEGORIA_GIROCONTO:
+                t["giroconti"] += imp
         elif tipo == "uscita":
             t["uscite"] += imp
         elif tipo == "giroconto":
+            t["entrate"] += imp
             t["giroconti"] += imp
-    t["saldo"] = round(t["entrate"] + t["giroconti"] - t["uscite"], 2)
+    t["saldo"] = round(t["entrate"] - t["uscite"], 2)
     for k in ("entrate", "uscite", "giroconti"):
         t[k] = round(t[k], 2)
     return t

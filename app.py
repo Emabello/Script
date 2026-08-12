@@ -219,23 +219,34 @@ def kpi_spese():
     d_from = today.replace(day=1).isoformat()
     d_to = today.isoformat()
     try:
-        r = (sb.table("spese")
-               .select("importo,tipo")
+        # v_spese e non spese: serve "categoria" per riconoscere il
+        # giroconto dalla P.IVA, che arriva come riga tipo=entrata (non
+        # tipo=giroconto — vedi fatture/giroconto.py) apposta per contare
+        # nel budget. "girati" e' un sotto-totale informativo di
+        # "entrate", non un terzo bucket da sommare al saldo: sommarlo
+        # due volte gonfierebbe il saldo del doppio dell'incasso P.IVA.
+        from spese.dati import CATEGORIA_GIROCONTO
+        r = (sb.table("v_spese")
+               .select("importo,tipo,categoria")
                .gte("data", d_from).lte("data", d_to).execute())
         entrate = uscite = girati = 0.0
         for row in (r.data or []):
             imp = abs(float(row.get("importo") or 0))
             t = row.get("tipo") or ""
-            if t == "entrata": entrate += imp
-            elif t == "uscita": uscite += imp
-            # Un giroconto sul conto personale e' denaro che arriva dalla
-            # P.IVA: ignorarlo faceva sembrare il saldo piu' basso del vero.
-            elif t == "giroconto": girati += imp
+            if t == "entrata":
+                entrate += imp
+                if row.get("categoria") == CATEGORIA_GIROCONTO:
+                    girati += imp
+            elif t == "uscita":
+                uscite += imp
+            elif t == "giroconto":
+                entrate += imp
+                girati += imp
         return jsonify({
             "entrate_mese": round(entrate, 2),
             "uscite_mese":  round(uscite, 2),
             "girati_mese":  round(girati, 2),
-            "saldo_mese":   round(entrate + girati - uscite, 2),
+            "saldo_mese":   round(entrate - uscite, 2),
         })
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 500
