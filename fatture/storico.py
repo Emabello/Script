@@ -360,6 +360,21 @@ def fattura_dettaglio(fid):
     giroconto_card = ""
     scelte_giro_html = ""
     lordo_f = float(f.get("totale") or 0)
+    rivalsa_f = round(float(f.get("cassa_importo") or 0), 2)
+
+    # La rivalsa e' incassata insieme al corrispettivo e resta sul conto
+    # P.IVA: non e' un tuo ricavo, e' il contributo previdenziale che il
+    # cliente ti gira perche' tu lo versi. Dentro l'unico numero
+    # "accantonato" e' invisibile, quindi va detta esplicitamente in
+    # entrambe le facce della ripartizione — quella da decidere e quella
+    # gia' fatta.
+    riga_rivalsa_giro = ""
+    if rivalsa_f > 0:
+        riga_rivalsa_giro = (
+            f'<div class="row"><span class="t">di cui rivalsa INPS'
+            f'<span class="sub">resta sul conto P.IVA: è già dentro la quota '
+            f'accantonata, non va messa da parte una seconda volta</span></span>'
+            f'<span class="v tnum">€ {_fmt_eur(rivalsa_f)}</span></div>')
 
     if giroconto_fatto:
         scen_scelto = f.get("accantonamento_scenario") or ""
@@ -374,6 +389,7 @@ def fattura_dettaglio(fid):
             <div class="row"><span class="t">Rimasto sul conto P.IVA
               <span class="sub">accantonato per tasse, costi e margine</span></span>
               <span class="v tnum">€ {_fmt_eur(f.get("accantonamento_importo"))}</span></div>
+            {riga_rivalsa_giro}
             <div class="row"><span class="t">Spostato sul conto personale
               <span class="sub">giroconto del {_fmt_date(f.get("data_giroconto"))}</span></span>
               <span class="v tnum pos">€ {_fmt_eur(f.get("giroconto_importo"))}</span></div>
@@ -409,6 +425,9 @@ def fattura_dettaglio(fid):
               </span>
             </label>''')
         scelte_giro_html = "".join(righe_scelte)
+        nota_rivalsa_card = (
+            f'<div class="rows detail mt-3">{riga_rivalsa_giro}</div>'
+            if riga_rivalsa_giro else "")
         giroconto_card = f'''
         <div class="card">
           <div class="card-head"><div class="eyebrow">Ripartizione dell'incasso</div></div>
@@ -417,6 +436,7 @@ def fattura_dettaglio(fid):
             lasciare da parte: il resto viene spostato sul conto personale con un
             giroconto registrato su entrambi i conti.
           </p>
+          {nota_rivalsa_card}
           <button type="button" class="btn block mt-4" onclick="openModal('modalGiro')">
             {_icon("wallet")}Ripartisci e sposta sul personale
           </button>
@@ -428,6 +448,10 @@ def fattura_dettaglio(fid):
     # nella fattura elettronica preparata dallo studio.
     corrispettivo = float(f.get("imponibile") or 0)
     rivalsa = float(f.get("cassa_importo") or 0)
+    # Chip in testa, accanto allo stato: la scomposizione sotto si vede
+    # solo scorrendo, e la rivalsa e' la voce che si cerca piu' spesso.
+    rivalsa_chip = (f'<span class="chip accent">Rivalsa INPS € {_fmt_eur(rivalsa)}</span>'
+                    if rivalsa > 0 else "")
     righe_totali = [
         f'<div class="row"><span class="t">Corrispettivo concordato</span>'
         f'<span class="v tnum">€ {_fmt_eur(corrispettivo)}</span></div>'
@@ -526,7 +550,7 @@ def fattura_dettaglio(fid):
           <div class="card-head">
             <div class="eyebrow">Riepilogo</div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">
-              {_stato_chip(stato_corrente)}{registrata_chip}
+              {_stato_chip(stato_corrente)}{registrata_chip}{rivalsa_chip}
             </div>
           </div>
           <div class="stat">
@@ -630,6 +654,8 @@ def fattura_dettaglio(fid):
         <div class="sheet-sub">
           Su € {_fmt_eur(f.get("totale"))} incassati, quanto lasci sul conto P.IVA
           per tasse e costi. Il resto si sposta sul personale.
+          {f"Di questi, € {_fmt_eur(rivalsa_f)} sono rivalsa INPS e restano "
+             f"comunque sul conto P.IVA: ogni scenario la copre." if rivalsa_f > 0 else ""}
         </div>
         <div class="scelte-giro">{scelte_giro_html}</div>
         <div class="field">

@@ -671,6 +671,95 @@ def _kpi(valore: str, etichetta: str, hint: str = "",
     return f'<div class="card">{inner}</div>'
 
 
+def _blocco_saldi(saldi: dict) -> str:
+    """
+    I due conti, in cima alla home.
+
+    Le altre pagine rispondono a domande diverse — quanto e' entrato e
+    uscito questo mese, quanto quest'anno. Questa risponde a "quanto ho
+    adesso", con la scomposizione aperta a richiesta: un saldo di cui non
+    si vede la formazione non e' verificabile.
+    """
+    from .fmt import eur, data_it
+
+    piva = saldi.get("piva") or {}
+    pers = saldi.get("personale") or {}
+    if not (piva.get("disponibile") or pers.get("disponibile")):
+        return ""
+
+    def saldo_txt(v: float) -> str:
+        """Un saldo e' un livello, non una variazione: il "+" davanti non
+        aggiunge nulla e si legge come un aumento. Il meno invece serve."""
+        return ("−" if v < 0 else "") + eur(abs(v), 0)
+
+    def tile(dati: dict, etichetta: str, href: str, hint: str) -> str:
+        if not dati.get("disponibile"):
+            return (f'<div class="card"><div class="stat">'
+                    f'<div class="val tnum muted">—</div>'
+                    f'<div class="lbl">{etichetta}</div>'
+                    f'<div class="hint">saldo non disponibile</div></div></div>')
+        v = float(dati.get("saldo") or 0)
+        cls = "pos" if v >= 0 else "neg"
+        return (f'<a class="card card-link" href="{href}"><div class="stat">'
+                f'<div class="val tnum {cls}">€ {saldo_txt(v)}</div>'
+                f'<div class="lbl">{etichetta}</div>'
+                f'<div class="hint">{hint}</div></div></a>')
+
+    rivalsa = float(piva.get("rivalsa_incassata") or 0)
+    hint_piva = (f'di cui € {eur(rivalsa, 0)} di rivalsa INPS incassata'
+                 if rivalsa > 0 else 'movimenti P.IVA, giroconti già usciti')
+    hint_pers = f'{pers.get("movimenti", 0)} movimenti + saldo di apertura'
+
+    tiles = (tile(piva, "Conto P.IVA", "/fatture/spese-piva", hint_piva)
+             + tile(pers, "Conto personale", "/spese", hint_pers))
+
+    # Il totale ha senso solo se entrambi i saldi sono veri: sommarne uno
+    # solo darebbe un numero che sembra completo e non lo e'.
+    if piva.get("disponibile") and pers.get("disponibile"):
+        tot = round(float(piva["saldo"]) + float(pers["saldo"]), 2)
+        tiles += (f'<div class="card"><div class="stat">'
+                  f'<div class="val tnum">€ {saldo_txt(tot)}</div>'
+                  f'<div class="lbl">Totale sui due conti</div>'
+                  f'<div class="hint">non è tutto tuo: vedi «da accantonare»</div>'
+                  f'</div></div>')
+
+    quando = data_it(piva.get("al") or pers.get("al")) or "oggi"
+
+    righe = ""
+    if piva.get("disponibile"):
+        righe += f'''
+      <div class="row"><span class="t">Conto P.IVA
+        <span class="sub">entrate € {eur(piva["entrate"])} − uscite € {eur(piva["uscite"])}
+        − giroconti al personale € {eur(piva["girati"])}</span></span>
+        <span class="v tnum">€ {eur(piva["saldo"])}</span></div>'''
+        if rivalsa > 0:
+            righe += f'''
+      <div class="row"><span class="t">di cui rivalsa INPS
+        <span class="sub">incassata dai clienti dentro il corrispettivo: resta qui,
+        è già dentro la quota da accantonare</span></span>
+        <span class="v tnum">€ {eur(rivalsa)}</span></div>'''
+    if pers.get("disponibile"):
+        righe += f'''
+      <div class="row"><span class="t">Conto personale
+        <span class="sub">apertura € {eur(pers["saldo_iniziale"])}
+        + entrate € {eur(pers["entrate"])} − uscite € {eur(pers["uscite"])}</span></span>
+        <span class="v tnum">€ {eur(pers["saldo"])}</span></div>'''
+
+    return f'''
+    <div class="grid kpi mb-3">{tiles}</div>
+    <details class="explain card mb-4">
+      <summary>Come si formano questi saldi</summary>
+      <div class="rows detail mt-2">{righe}</div>
+      <p class="small muted mt-3">
+        Saldi al {quando}: contano tutti i movimenti registrati fino a oggi,
+        non solo quelli del mese o dell'anno in corso. I movimenti con data
+        futura restano fuori. Sul conto P.IVA il giroconto è un'uscita —
+        quei soldi sono già sull'altro conto, e contarli due volte
+        gonfierebbe il totale.
+      </p>
+    </details>'''
+
+
 def render_launchpad(greet_name: str | None = None, dati: dict | None = None) -> str:
     """
     Home. Non e' piu' un elenco di tre tile: con la tab bar la navigazione
@@ -678,6 +767,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
 
     `dati` e' opzionale: senza, la pagina mostra comunque azioni e stato,
     solo senza numeri. Chiavi attese (tutte facoltative):
+      saldi {piva, personale} (dict di fiscale.saldo_piva / dati.saldo_conto),
       incassato_mese, saldo_spese_mese, n_fatture_anno, anno,
       accantonamento (dict di fatture.accantonamento.scomponi),
       accantonamento_html, scadenze [(data_iso, descrizione, importo)],
@@ -695,6 +785,10 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
 
     if d.get("errore"):
         blocchi.append(f'<div class="notice warn mb-3">{d["errore"]}</div>')
+
+    # In cima a tutto: quanto c'e' sui due conti, adesso.
+    if d.get("saldi"):
+        blocchi.append(_blocco_saldi(d["saldi"]))
 
     # --- Tessere KPI -------------------------------------------------------
     acc = d.get("accantonamento") or {}

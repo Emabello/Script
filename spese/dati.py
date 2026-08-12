@@ -245,6 +245,86 @@ def totali_periodo(client, anno=None, mese=None, tipo=None, categoria=None,
     return totali(righe)
 
 
+def saldo_iniziale(client) -> float:
+    """
+    Il saldo di partenza del conto personale, da `impostazioni`.
+
+    Si prende la riga con `valido_dal` **piu' vecchia**, non la piu'
+    recente: e' il saldo di apertura, il punto da cui i movimenti
+    iniziano a contare. Le righe successive esistono per far cambiare le
+    percentuali di risparmio nel tempo (e' cosi' che le usa
+    v_risparmi_mese), non per ridefinire l'apertura.
+    """
+    try:
+        r = (client.table("impostazioni").select("saldo_iniziale,valido_dal")
+             .order("valido_dal", desc=False).limit(1).execute())
+        righe = _righe(r)
+    except Exception:
+        return 0.0
+    if not righe:
+        return 0.0
+    try:
+        return round(float(righe[0].get("saldo_iniziale") or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def saldo_conto(client, al: str | None = None) -> dict:
+    """
+    Saldo reale del conto personale a una data (default: oggi).
+
+    Non e' il "saldo del mese" ne' quello dell'anno: e' quanto c'e' sul
+    conto, cioe' il saldo di apertura piu' tutti i movimenti fino a
+    `al`. I movimenti con data futura restano fuori: sono previsti, non
+    ancora accaduti.
+
+    Legge `spese` a blocchi finche' non finiscono. PostgREST tronca ogni
+    richiesta a un tetto (di solito 1000 righe) e la tabella ne ha gia'
+    di piu': una singola select darebbe un saldo sbagliato per difetto
+    senza nessun errore visibile. Se una pagina fallisce si torna
+    `disponibile: False` invece di un numero a meta', che sarebbe peggio
+    di nessun numero.
+    """
+    al = al or date.today().isoformat()
+    vuoto = {"al": al, "disponibile": False, "saldo": 0.0, "entrate": 0.0,
+             "uscite": 0.0, "saldo_iniziale": 0.0, "movimenti": 0}
+
+    entrate = uscite = 0.0
+    n = 0
+    offset, passo = 0, 1000
+    while True:
+        try:
+            pagina = _righe(client.table("spese").select("importo,tipo,data")
+                            .lte("data", al).order("data", desc=False)
+                            .range(offset, offset + passo - 1).execute())
+        except Exception:
+            return vuoto
+        for r in pagina:
+            imp = abs(float(r.get("importo") or 0))
+            # TIPI_SEGNO e non TIPI_CHIAVI: le righe storiche con
+            # tipo=giroconto (migrazione README 8.9) sono entrate.
+            segno = TIPI_SEGNO.get(r.get("tipo"), 0)
+            if segno > 0:
+                entrate += imp
+            elif segno < 0:
+                uscite += imp
+            n += 1
+        if len(pagina) < passo:
+            break
+        offset += passo
+
+    apertura = saldo_iniziale(client)
+    return {
+        "al": al,
+        "disponibile": True,
+        "saldo_iniziale": apertura,
+        "entrate": round(entrate, 2),
+        "uscite": round(uscite, 2),
+        "saldo": round(apertura + entrate - uscite, 2),
+        "movimenti": n,
+    }
+
+
 def movimento(client, mid: int) -> dict | None:
     try:
         r = client.table("v_spese").select("*").eq("id", mid).limit(1).execute()
