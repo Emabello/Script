@@ -37,6 +37,10 @@ PAGINE = [
     ("parametri",  "/fatture/parametri"),
     ("emittente",  "/fatture/emittente"),
     ("spese",      "/spese/"),
+    ("movimenti",  "/spese/movimenti"),
+    ("risparmi",   "/spese/risparmi"),
+    ("revolut",    "/spese/revolut"),
+    ("importa",    "/spese/importa"),
     ("ore",        "/ore"),
 ]
 

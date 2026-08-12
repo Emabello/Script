@@ -32,6 +32,7 @@ from flask import Response, request, jsonify
 
 from . import spese_bp
 from . import dati as D
+from . import revolut
 from shared.theme import render_page
 from shared.design import icon
 from shared.fmt import eur, eur_segno, data_it, mese_anno, pct
@@ -69,18 +70,74 @@ def risparmi_pagina():
     n = _n
 
     # Quote di destinazione del risparmio, dalle impostazioni in vigore.
-    quote = [
-        ("Fondo emergenze", "quota_emergenze", imp.get("perc_fondo_emergenze")),
-        ("Viaggi",          "quota_viaggi",    imp.get("perc_viaggi")),
-        ("Fondo casa",      "quota_casa",      imp.get("perc_fondo_casa")),
-        ("Regali",          "quota_regali",    imp.get("perc_regali")),
-        ("Altro",           "quota_altro",     imp.get("perc_altro")),
-    ]
+    # La corrispondenza fra il secchiello, la sua percentuale e la colonna
+    # della vista sta in `revolut.SALVADANAI`, una volta sola: e' la stessa
+    # che serve per confrontarli con i saldi Revolut, e due elenchi
+    # paralleli prima o poi divergono.
+    quote = [(chiave_rev, nome_app, colonna, imp.get(campo_perc))
+             for chiave_rev, _, nome_app, campo_perc, colonna, _
+             in revolut.SALVADANAI]
     quote_html = "".join(f'''
       <div class="row">
         <span class="t">{nome}<span class="sub">{pct(n(p))} del risparmio</span></span>
-        <span class="v tnum">€ {eur(n(corrente.get(chiave)))}</span>
-      </div>''' for nome, chiave, p in quote if n(p) > 0)
+        <span class="v tnum">€ {eur(n(corrente.get(colonna)))}</span>
+      </div>''' for _, nome, colonna, p in quote if n(p) > 0)
+
+    # --- Quanto dovrebbe esserci in ogni salvadanaio, e quanto c'è ------
+    # La quota per periodo dice poco da sola: quello che serve sapere e'
+    # se il secchiello, sommato da sempre, contiene quello che dovrebbe.
+    # Il "dovrebbe" e' la somma delle quote di tutti i periodi; il "c'e'"
+    # arriva dai saldi Revolut, che sono l'unica misura indipendente.
+    rev = revolut.saldo_revolut(client)
+    reali = rev.get("salvadanai") or {}
+    blocco_salvadanai = ""
+    if reali:
+        righe_sv = ""
+        for chiave_rev, nome, colonna, _p in quote:
+            atteso = round(sum(n(x.get(colonna)) for x in periodi), 2)
+            reale = n(reali.get(chiave_rev))
+            if not atteso and not reale:
+                continue
+            scarto = round(reale - atteso, 2)
+            cls = "pos" if scarto >= -1 else "neg"
+            verso = "in più" if scarto >= 0 else "in meno"
+            righe_sv += f'''
+          <div class="row">
+            <span class="t">{nome}
+              <span class="sub">dovrebbe averne € {eur(atteso)} ·
+                € {eur(abs(scarto))} {verso}</span></span>
+            <span class="v tnum {cls}">€ {eur(reale)}</span>
+          </div>'''
+        if righe_sv:
+            tot_reale = round(sum(n(v) for v in reali.values()), 2)
+            blocco_salvadanai = f'''
+        <div class="card">
+          <div class="card-head">
+            <div class="eyebrow">Nei salvadanai, davvero</div>
+            <span class="chip">€ {eur(tot_reale, 0)}</span>
+          </div>
+          <div class="rows detail">{righe_sv}</div>
+          <p class="small muted mt-3">
+            A destra quanto c'è oggi su Revolut (saldi al
+            {data_it(rev.get("data"))}); sotto la riga, quanto dovrebbe
+            esserci sommando le quote di tutti i periodi registrati. Uno
+            scarto non è di per sé un errore — dai salvadanai si preleva —
+            ma è l'unico posto in cui si vede.
+          </p>
+        </div>'''
+    elif rev.get("disponibile"):
+        blocco_salvadanai = f'''
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Nei salvadanai, davvero</div></div>
+          <p class="small muted">
+            Su Revolut ci sono € {eur(rev.get("risparmi"), 0)} di risparmi, ma
+            non è registrato come sono divisi fra i cinque secchielli:
+            l'estratto ne dà solo il totale. Scrivilo una volta e questa
+            scheda mostrerà, secchiello per secchiello, quanto c'è contro
+            quanto dovrebbe esserci.
+          </p>
+          <a class="btn ghost block mt-4" href="/spese/revolut">Vai a Revolut</a>
+        </div>'''
 
     consigliato = n(corrente.get("risparmio_consigliato"))
     rimanente = n(corrente.get("rimanente"))
@@ -206,6 +263,8 @@ def risparmi_pagina():
           <div class="card-head"><div class="eyebrow">Come si divide</div></div>
           <div class="rows detail">{quote_html}</div>
         </div>""" if quote_html else ""}
+
+        {blocco_salvadanai}
       </div>
     </div>
 

@@ -21,6 +21,7 @@ from shared.fmt import eur, eur_segno, data_breve
 from . import movimenti   # noqa: E402,F401
 from . import risparmi    # noqa: E402,F401
 from . import importa     # noqa: E402,F401
+from . import revolut     # noqa: E402,F401
 
 
 def _esc(v) -> str:
@@ -48,8 +49,12 @@ def index():
     t_anno = D.totali(righe_anno)
 
     # Il saldo del conto e' un'altra cosa dal saldo dell'anno: comprende
-    # l'apertura e gli anni precedenti. E' quello che c'e' in banca.
+    # l'apertura e gli anni precedenti, e toglie il risparmio finito su
+    # Revolut. E' quello che c'e' in banca.
     conto = D.saldo_conto(client, oggi.isoformat())
+    rev = revolut.saldo_revolut(client, oggi.isoformat())
+    revolut_chip = (f'€ {eur(rev["saldo"], 0)}' if rev["disponibile"]
+                    else "da collegare")
 
     ultimi = "".join(f'''
       <div class="row">
@@ -102,11 +107,14 @@ def index():
         # Un saldo e' un livello, non una variazione: il "+" davanti si
         # leggerebbe come un aumento. Il meno invece serve.
         saldo_txt = ("−" if conto["saldo"] < 0 else "") + eur(abs(conto["saldo"]), 0)
+        hint = f'apertura € {eur(conto["saldo_iniziale"], 0)} + {conto["movimenti"]} movimenti'
+        if conto.get("risparmiato"):
+            hint += f' − € {eur(conto["risparmiato"], 0)} risparmiati su Revolut'
         tile_conto = f'''
       <div class="card"><div class="stat">
         <div class="val tnum {"pos" if conto["saldo"] >= 0 else "neg"}">€ {saldo_txt}</div>
         <div class="lbl">Saldo del conto, oggi</div>
-        <div class="hint">apertura € {eur(conto["saldo_iniziale"], 0)} + {conto["movimenti"]} movimenti</div>
+        <div class="hint">{hint}</div>
       </div></div>'''
     else:
         tile_conto = ""
@@ -144,6 +152,12 @@ def index():
             <a class="item" href="/spese/risparmi">
               <span class="ico">{icon("fiscale")}</span>
               <span class="body"><span class="n">Risparmi</span></span>
+              <span class="chev">{icon("chevron")}</span>
+            </a>
+            <a class="item" href="/spese/revolut">
+              <span class="ico">{icon("wallet")}</span>
+              <span class="body"><span class="n">Revolut</span></span>
+              <span class="end"><span class="chip">{revolut_chip}</span></span>
               <span class="chev">{icon("chevron")}</span>
             </a>
             <a class="item" href="/fatture/spese-piva">

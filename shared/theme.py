@@ -684,7 +684,9 @@ def _blocco_saldi(saldi: dict) -> str:
 
     piva = saldi.get("piva") or {}
     pers = saldi.get("personale") or {}
-    if not (piva.get("disponibile") or pers.get("disponibile")):
+    rev = saldi.get("revolut") or {}
+    if not (piva.get("disponibile") or pers.get("disponibile")
+            or rev.get("disponibile")):
         return ""
 
     def saldo_txt(v: float) -> str:
@@ -708,18 +710,32 @@ def _blocco_saldi(saldi: dict) -> str:
     rivalsa = float(piva.get("rivalsa_incassata") or 0)
     hint_piva = (f'di cui € {eur(rivalsa, 0)} di rivalsa INPS incassata'
                  if rivalsa > 0 else 'movimenti P.IVA, giroconti già usciti')
-    hint_pers = f'{pers.get("movimenti", 0)} movimenti + saldo di apertura'
+    hint_pers = f'{pers.get("movimenti", 0)} movimenti, al netto dei risparmi'
 
     tiles = (tile(piva, "Conto P.IVA", "/fatture/spese-piva", hint_piva)
              + tile(pers, "Conto personale", "/spese", hint_pers))
 
-    # Il totale ha senso solo se entrambi i saldi sono veri: sommarne uno
-    # solo darebbe un numero che sembra completo e non lo e'.
-    if piva.get("disponibile") and pers.get("disponibile"):
-        tot = round(float(piva["saldo"]) + float(pers["saldo"]), 2)
+    # Revolut compare solo se e' stato collegato: una tessera a zero
+    # sembrerebbe un conto vuoto invece di un conto mai registrato.
+    if rev.get("disponibile"):
+        pezzi = [f'risparmi € {eur(rev.get("risparmi", 0), 0)}']
+        if rev.get("investimenti"):
+            pezzi.append(f'investimenti € {eur(rev["investimenti"], 0)}')
+        # Uno snapshot vecchio non e' sbagliato, e' vecchio: dirlo evita
+        # di leggerlo come se fosse aggiornato a stamattina.
+        if (rev.get("giorni") or 0) > 45:
+            pezzi.append(f'fermo da {rev["giorni"]} giorni')
+        tiles += tile(rev, "Revolut", "/spese/revolut", " · ".join(pezzi))
+
+    # Il totale ha senso solo se tutti i saldi in gioco sono veri:
+    # sommarne una parte darebbe un numero che sembra completo e non lo e'.
+    presenti = [c for c in (piva, pers, rev) if c.get("disponibile")]
+    if len(presenti) > 1:
+        tot = round(sum(float(c["saldo"]) for c in presenti), 2)
+        quanti = {2: "due", 3: "tre"}.get(len(presenti), str(len(presenti)))
         tiles += (f'<div class="card"><div class="stat">'
                   f'<div class="val tnum">€ {saldo_txt(tot)}</div>'
-                  f'<div class="lbl">Totale sui due conti</div>'
+                  f'<div class="lbl">Totale sui {quanti} conti</div>'
                   f'<div class="hint">non è tutto tuo: vedi «da accantonare»</div>'
                   f'</div></div>')
 
@@ -739,11 +755,29 @@ def _blocco_saldi(saldi: dict) -> str:
         è già dentro la quota da accantonare</span></span>
         <span class="v tnum">€ {eur(rivalsa)}</span></div>'''
     if pers.get("disponibile"):
+        risparmiato = float(pers.get("risparmiato") or 0)
+        meno_risp = (f' − risparmi messi via € {eur(risparmiato)}'
+                     if risparmiato else "")
         righe += f'''
       <div class="row"><span class="t">Conto personale
         <span class="sub">apertura € {eur(pers["saldo_iniziale"])}
-        + entrate € {eur(pers["entrate"])} − uscite € {eur(pers["uscite"])}</span></span>
+        + entrate € {eur(pers["entrate"])} − uscite € {eur(pers["uscite"])}{meno_risp}</span></span>
         <span class="v tnum">€ {eur(pers["saldo"])}</span></div>'''
+    if rev.get("disponibile"):
+        righe += f'''
+      <div class="row"><span class="t">Revolut
+        <span class="sub">liquidità € {eur(rev["conto"])}
+        + risparmi € {eur(rev["risparmi"])}
+        + investimenti € {eur(rev["investimenti"])}
+        · saldi al {data_it(rev.get("data"))}</span></span>
+        <span class="v tnum">€ {eur(rev["saldo"])}</span></div>'''
+
+    nota_risparmi = ""
+    if float(pers.get("risparmiato") or 0):
+        nota_risparmi = (
+            " Il risparmio che registri sulla pagina Risparmi esce dal conto "
+            "personale e finisce nei salvadanai Revolut: per questo viene "
+            "sottratto di qua e compare di là, non è sparito.")
 
     return f'''
     <div class="grid kpi mb-3">{tiles}</div>
@@ -755,7 +789,9 @@ def _blocco_saldi(saldi: dict) -> str:
         non solo quelli del mese o dell'anno in corso. I movimenti con data
         futura restano fuori. Sul conto P.IVA il giroconto è un'uscita —
         quei soldi sono già sull'altro conto, e contarli due volte
-        gonfierebbe il totale.
+        gonfierebbe il totale.{nota_risparmi}
+        {"Revolut è uno snapshot dall'estratto conto, non un saldo dal vivo."
+         if rev.get("disponibile") else ""}
       </p>
     </details>'''
 
