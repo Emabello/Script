@@ -980,15 +980,30 @@ def api_fattura_stato(fid):
     # movimenti sui conti senza piu' un incasso che li giustifichi: il conto
     # P.IVA resterebbe alleggerito e il personale gonfiato, senza che nulla
     # lo segnali. Prima si annulla la ripartizione, poi si cambia stato.
-    if (stato != "incassata" and normalizza_stato(f.get("stato")) == "incassata"
-            and f.get("data_giroconto")):
-        return jsonify({
-            "error": ("Questa fattura è già stata ripartita: i soldi sono stati "
-                      "spostati sul conto personale. Annulla prima la "
-                      "ripartizione, altrimenti resterebbero due movimenti "
-                      "senza un incasso che li giustifichi."),
-            "data_giroconto": f.get("data_giroconto"),
-        }), 409
+    if stato != "incassata" and normalizza_stato(f.get("stato")) == "incassata":
+        if f.get("data_giroconto"):
+            return jsonify({
+                "error": ("Questa fattura è già stata ripartita: i soldi sono stati "
+                          "spostati sul conto personale. Annulla prima la "
+                          "ripartizione, altrimenti resterebbero due movimenti "
+                          "senza un incasso che li giustifichi."),
+                "data_giroconto": f.get("data_giroconto"),
+            }), 409
+        # Anche senza giroconto, l'incasso puo' gia' essere registrato sul
+        # libro P.IVA (bottone "Registra entrata su P.IVA"): tornare indietro
+        # senza sciogliere quel collegamento lascia una riga di entrata su
+        # b2f_spese_piva che il motore fiscale (situazione_data, filtra per
+        # stato='incassata') smette di contare, mentre il libro P.IVA la
+        # conta ancora — i due lati divergono su un incasso vero.
+        if f.get("spesa_piva_id"):
+            return jsonify({
+                "error": ("L'incasso di questa fattura è già registrato sul conto "
+                          "P.IVA. Elimina prima quel movimento da Movimenti P.IVA "
+                          "(o annulla la registrazione), altrimenti resterebbe "
+                          "un incasso sul conto P.IVA senza più una fattura "
+                          "incassata che lo giustifichi."),
+                "spesa_piva_id": f.get("spesa_piva_id"),
+            }), 409
 
     payload = {"stato": stato}
 
