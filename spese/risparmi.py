@@ -5,16 +5,21 @@ COME RAGIONA QUESTA PAGINA
 --------------------------
 Il conto personale non ragiona per mesi solari ma per periodi che vanno
 da un bonifico dello stipendio al successivo: e' v_periodi_stipendio a
-delimitarli, prendendo le entrate di categoria "Stipendio".
+delimitarli, prendendo le entrate di categoria "Stipendio" **o**
+"Giroconto P.IVA" — il giroconto dalla P.IVA e' il tuo stipendio di
+fatto da quando hai aperto la partita IVA, quindi apre un periodo
+esattamente come faceva prima lo stipendio da dipendente. Richiede la
+migrazione README §8.7; prima di applicarla il giroconto restava
+"altre entrate" dentro un periodo che non si chiudeva mai.
 
 Per ogni periodo v_risparmi_mese calcola quanto e' entrato, quanto e'
 uscito, cosa resta e quale sarebbe il risparmio consigliato — la
 percentuale scelta in `impostazioni` applicata a quel che resta. Tu
 registri quanto hai messo via davvero, e la differenza fra consigliato
-ed effettivo e' l'unica cosa che conta davvero guardare.
-
-I giroconti dalla P.IVA entrano qui come "altre entrate": sono soldi
-arrivati sul conto, e alzano la base su cui si calcola il risparmio.
+ed effettivo e' l'unica cosa che conta davvero guardare — per questo
+la mostriamo esplicitamente sia sul periodo corrente sia sullo storico
+(richiede anch'essa la §8.7: prima la vista calcolava l'effettivo ma
+non lo esponeva mai come colonna propria).
 
 Rotte HTML:
   GET /spese/risparmi
@@ -29,7 +34,14 @@ from . import spese_bp
 from . import dati as D
 from shared.theme import render_page
 from shared.design import icon
-from shared.fmt import eur, eur_segno, data_it, pct
+from shared.fmt import eur, eur_segno, data_it, mese_anno, pct
+
+
+def _n(v):
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 @spese_bp.get("/risparmi")
@@ -47,17 +59,14 @@ def risparmi_pagina():
         corpo = f'''<div class="empty">{icon("spese")}
           <div class="t">Nessun periodo</div>
           <div class="s">I periodi nascono dalle entrate di categoria
-            "Stipendio": registrane una e questa pagina si popola.</div></div>'''
+            "Stipendio" o "Giroconto P.IVA": registrane una e questa
+            pagina si popola.</div></div>'''
         return _render(corpo, breadcrumb=breadcrumb)
 
     corrente = periodi[0]
     perc = float(imp.get("percentuale_risparmio") or 0)
 
-    def n(v):
-        try:
-            return float(v or 0)
-        except (TypeError, ValueError):
-            return 0.0
+    n = _n
 
     # Quote di destinazione del risparmio, dalle impostazioni in vigore.
     quote = [
@@ -78,6 +87,13 @@ def risparmi_pagina():
     speso = n(corrente.get("speso"))
     bonifico = n(corrente.get("bonifico"))
     altre = n(corrente.get("altre_entrate"))
+    # La vista espone sempre un numero (mai vuoto: coalesce a 0 quando il
+    # periodo non e' ancora stato registrato). Non potendo distinguere
+    # "registrato a zero" da "mai registrato", trattiamo lo zero come "non
+    # ancora fatto" — nella pratica nessuno registra zero di proposito.
+    effettivo_reg = n(corrente.get("risparmio_effettivo"))
+    gia_registrato = effettivo_reg > 0
+    valore_default = effettivo_reg if gia_registrato else consigliato
 
     voci = [
         ("Stipendio",             bonifico,                              "pos"),
@@ -94,14 +110,43 @@ def risparmi_pagina():
         <span class="v tnum {cls}">{eur_segno(val)}</span>
       </div>''' for nome, val, cls in voci if abs(val) > 0)
 
-    storico = "".join(f'''
+    def _riga_storico(p):
+        # ".v" e' pensato per UN numero, riga singola, mai per contenuto
+        # annidato (vedi shared/design.py: white-space:nowrap): il
+        # confronto consigliato/effettivo va nella riga ".sub", che invece
+        # va a capo normalmente dentro ".rows.detail".
+        cons = n(p.get("risparmio_consigliato"))
+        eff = n(p.get("risparmio_effettivo"))
+        registrato = eff > 0
+        if registrato:
+            cls_v = "pos" if eff >= cons else "neg"
+            valore = eff
+            extra = f' · effettivo € {eur(eff, 0)} ({eur_segno(eff - cons, 0)})'
+        else:
+            cls_v = ""
+            valore = cons
+            extra = " · effettivo non ancora registrato"
+        return f'''
       <div class="row">
         <span class="k">{data_it(p.get("data_bonifico"))}</span>
-        <span class="t">{(p.get("mese") or "—").capitalize()}
-          <span class="sub">entrate € {eur(n(p.get("bonifico")) + n(p.get("altre_entrate")), 0)}
-            · uscite € {eur(n(p.get("speso")), 0)}</span></span>
-        <span class="v tnum">€ {eur(n(p.get("risparmio_consigliato")), 0)}</span>
-      </div>''' for p in periodi[:12])
+        <span class="t">{mese_anno(p.get("data_bonifico")) or (p.get("mese") or "—").capitalize()}
+          <span class="sub">consigliato € {eur(cons, 0)}{extra}</span></span>
+        <span class="v tnum {cls_v}">€ {eur(valore, 0)}</span>
+      </div>'''
+
+    storico = "".join(_riga_storico(p) for p in periodi[:12])
+
+    periodo_label = mese_anno(corrente.get("data_bonifico"))
+    fine_label = (data_it(corrente.get("prossimo_bonifico"))
+                 if corrente.get("prossimo_bonifico") else "oggi, ancora aperto")
+
+    registrazione_hint = (
+        f'Già registrato per questo periodo: <strong>€ {eur(effettivo_reg)}</strong>. '
+        f'Modifica e registra di nuovo per correggerlo.'
+        if gia_registrato else
+        f'Non ancora registrato: il campo qui sotto parte dal consigliato '
+        f'(€ {eur(consigliato)}), cambialo con quanto hai messo via davvero.'
+    )
 
     body = f'''
     <div class="grid kpi lead mb-3">
@@ -126,8 +171,11 @@ def risparmi_pagina():
         <div class="card">
           <div class="card-head">
             <div class="eyebrow">Periodo corrente</div>
-            <span class="chip">{data_it(corrente.get("data_bonifico"))}
-              → {data_it(corrente.get("prossimo_bonifico")) or "oggi"}</span>
+            {'<span class="chip pos">registrato</span>' if gia_registrato else '<span class="chip warn">da registrare</span>'}
+          </div>
+          <div class="h2" style="margin:0 0 2px">{periodo_label or "—"}</div>
+          <div class="small muted mb-4">
+            dal {data_it(corrente.get("data_bonifico"))} al {fine_label}
           </div>
           <div class="rows detail">{dettaglio}</div>
         </div>
@@ -135,21 +183,19 @@ def risparmi_pagina():
         <div class="card">
           <div class="card-head"><div class="eyebrow">Periodi precedenti</div></div>
           <div class="rows detail">{storico}</div>
-          <div class="hint mt-2">L'importo a destra è il risparmio consigliato del periodo.</div>
+          <p class="small muted mt-2">A destra il consigliato (o l'effettivo, se
+            già registrato); sotto la riga, il confronto fra i due.</p>
         </div>
       </div>
 
       <div class="stack">
         <div class="card">
-          <div class="card-head"><div class="eyebrow">Quanto hai messo via</div></div>
-          <p class="small muted">
-            Registra il risparmio effettivo del periodo corrente: è quello che
-            l'app confronta col consigliato per dirti se sei in linea.
-          </p>
+          <div class="card-head"><div class="eyebrow">Quanto hai messo via — {periodo_label or "periodo corrente"}</div></div>
+          <p class="small muted">{registrazione_hint}</p>
           <div class="field mt-4">
             <label>Risparmio effettivo (€)</label>
             <input type="number" step="0.01" min="0" inputmode="decimal" id="f_eff"
-                   placeholder="{eur(consigliato)}">
+                   value="{valore_default:.2f}">
           </div>
           <div class="actions">
             <button type="button" class="btn block" onclick="onSalva()">Registra</button>
