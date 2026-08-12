@@ -84,13 +84,16 @@ def movimenti_lista():
     importo_max = request.args.get("importo_max", type=float)
     cerca = (request.args.get("q") or "").strip()
 
-    righe = D.movimenti(client, anno=anno, mese=mese or None,
-                        tipo=tipo or None, categoria=categoria or None,
-                        sottocategoria=sottocategoria or None,
-                        metodo=metodo or None,
-                        importo_min=importo_min, importo_max=importo_max,
-                        cerca=cerca or None)
-    t = D.totali(righe)
+    filtri = dict(anno=anno, mese=mese or None, tipo=tipo or None,
+                 categoria=categoria or None, sottocategoria=sottocategoria or None,
+                 metodo=metodo or None, importo_min=importo_min,
+                 importo_max=importo_max, cerca=cerca or None)
+    righe = D.movimenti(client, limite=300, **filtri)
+    # I KPI in cima devono contare TUTTO il periodo filtrato, non solo le
+    # righe mostrate in lista: un anno pieno puo' avere piu' di 300
+    # movimenti (qui ne bastano 461 su un anno solo), e sommare le sole
+    # righe visibili farebbe un saldo troncato per difetto.
+    t = D.totali_periodo(client, **filtri)
 
     anni = D.anni_disponibili(client)
     if anno not in anni:

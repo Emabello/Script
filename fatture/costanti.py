@@ -13,7 +13,7 @@ CATEGORIE_SPESE_PIVA = [
     ("bollo_pagato",     "Bollo pagato"),
     ("bancarie",         "Commissioni bancarie"),
     ("formazione",       "Formazione"),
-    ("giroconto_personale", "Giroconto al personale"),
+    ("giroconto_personale", "Giroconto P.IVA"),
     ("altro",            "Altro"),
 ]
 

@@ -362,12 +362,15 @@ sezione ne tiene conto separatamente.
 Da lanciare nell'**SQL Editor di Supabase**, in quest'ordine. Sono tutte
 idempotenti: rilanciarle non fa danni.
 
-**Tutte e quattro sono confermate applicate** — verificato il 2026-08-12
+**8.1–8.4 sono confermate applicate** — verificato il 2026-08-12
 incrociando lo snapshot dello schema ([`docs/schema_supabase.md`](docs/schema_supabase.md))
 e un export completo dei dati: categoria "Giroconto P.IVA" presente e
 collegata (8.1), vista e RLS allineate (8.2), dati emittente popolati (8.3),
 colonna del giroconto manuale presente (8.4). Restano solo come riferimento
-storico. L'unica nuova, discrezionale, è la [8.6](#86--foreign-key-mancante-su-spesa_piva_id).
+storico. **8.7 lanciata e confermata il 2026-08-12.** Da lanciare ancora:
+[8.6](#86--foreign-key-mancante-su-spesa_piva_id) (discrezionale) e
+[8.8](#88--pulizia-di-5-righe-con-dati-inconsistenti) (5 righe da correggere,
+consigliata).
 
 ### 8.1 — Categoria del giroconto sul conto personale ✅ già applicata
 
@@ -756,6 +759,60 @@ Nel codice, `spese/risparmi.py` e `spese/dati.py` già leggono il nuovo
 campo "Risparmio effettivo (€)"; finché la migrazione non è applicata la
 vista continua a non esporlo, l'app lo tratta come sempre-zero (il
 comportamento che aveva prima) senza errori.
+
+### 8.8 — Pulizia di 5 righe con dati inconsistenti
+
+Audit completo su tutte le 1021 righe reali di `spese` (export CSV
+completo, non l'Excel troncato — vedi nota più sotto). Il collegamento
+`categoria_link_id` → `cfg_categoria_sottocategoria` → categoria/
+sottocategoria è risultato **integro al 100%** (zero link orfani, zero
+righe disattivate ancora referenziate, zero FK rotte): non serve nessuna
+migrazione su categorie o sottocategorie, né lato personale né lato
+P.IVA. Il giroconto della fattura 2026/001 (righe collegate `b2f_fatture`
+id 1 → `b2f_spese_piva` id 1/3 → `spese` id 600) è risultato coerente
+punta a punta con gli importi giusti.
+
+Le uniche 5 righe inconsistenti trovate, tutte in `spese`:
+
+| id  | problema                                    | causa                     |
+|-----|----------------------------------------------|---------------------------|
+| 707 | `anno` = 2027, ma `data` = 2026-03-18         | battitura sull'anno       |
+| 708 | `anno` = 2027, ma `data` = 2026-03-18         | battitura sull'anno       |
+| 638 | `mese` = 3, ma `data` = 2026-02-09            | battitura sul mese        |
+| 269 | `importo` = -29.79 su `tipo = 'uscita'`       | segno invertito           |
+| 227 | `importo` = -16.60 su `tipo = 'uscita'`       | segno invertito           |
+
+`mese`/`anno` derivati a mano invece che dalla data, e un'uscita con
+importo negativo, rompono esattamente le due convenzioni documentate nel
+§7 ("mese/anno derivano dalla data", "importo sempre positivo, il segno
+lo dà `tipo`") — e con loro tutte le viste che raggruppano per
+mese/anno o sommano gli importi.
+
+La query è generale e idempotente: ricalcola `mese`/`anno` dalla `data`
+ovunque non coincidano (non solo per questi 5 id) e rende positivo ogni
+importo negativo. Rilanciarla non fa nulla se non trova più righe
+sbagliate.
+
+```sql
+update spese
+   set mese = extract(month from data)::int,
+       anno = extract(year from data)::int
+ where mese <> extract(month from data)::int
+    or anno <> extract(year from data)::int;
+
+update spese
+   set importo = abs(importo)
+ where tipo = 'uscita'
+   and importo < 0;
+```
+
+Nota sull'Excel `gestione_spese/excel`: il foglio "Spese API" lì dentro
+si ferma a 1000 righe con 21 righe mancanti sparse (non solo le ultime),
+segno di un fetch senza `order by` stabile lato strumento esterno che
+lo genera — non è una vista o un endpoint di questo repo, quindi non è
+qualcosa che questa migrazione o il codice dell'Hub possano correggere;
+l'audit sopra è stato fatto sui dati reali via export CSV completo
+(1021 righe), non su quell'Excel.
 
 ---
 
