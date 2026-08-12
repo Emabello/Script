@@ -91,11 +91,14 @@ def movimenti_lista():
                  metodo=metodo or None, importo_min=importo_min,
                  importo_max=importo_max, cerca=cerca or None)
     righe = D.movimenti(client, limite=300, **filtri)
-    # I KPI in cima devono contare TUTTO il periodo filtrato, non solo le
-    # righe mostrate in lista: un anno pieno puo' avere piu' di 300
-    # movimenti (qui ne bastano 461 su un anno solo), e sommare le sole
-    # righe visibili farebbe un saldo troncato per difetto.
-    t = D.totali_periodo(client, **filtri)
+    # KPI e ripartizione devono contare TUTTO il periodo filtrato, non
+    # solo le righe mostrate in lista: un anno pieno puo' avere piu' di
+    # 300 movimenti (qui ne bastano 461 su un anno solo), e sommare le
+    # sole righe visibili darebbe un saldo troncato per difetto. Una sola
+    # query non troncata alimenta sia i totali sia la ripartizione, cosi'
+    # non possono disallinearsi fra loro.
+    righe_complete = D.righe_periodo(client, **filtri)
+    t = D.totali(righe_complete)
 
     anni = D.anni_disponibili(client)
     if anno not in anni:
@@ -152,20 +155,32 @@ def movimenti_lista():
       </div>
     </details>'''
 
+    def _dd(extra: dict) -> str:
+        """onclick di una card/riga: apre il dettaglio con i filtri della
+        pagina piu' quelli specifici di quel numero (es. tipo=uscita).
+        L'attributo HTML e' delimitato da apici singoli: una categoria
+        con un "&" o un apostrofo nel nome (es. "L'Altro") altrimenti
+        romperebbe l'attributo o verrebbe letta come entita' HTML.
+        """
+        js = json.dumps(extra, ensure_ascii=False)
+        js = (js.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace(chr(39), "&#39;"))
+        return f"apriDettaglio({js})"
+
     riepilogo = f'''
     <div class="grid kpi lead mb-3">
-      <div class="card"><div class="stat">
+      <div class="card"><div class="stat clickable" onclick='{_dd({})}'>
         <div class="val tnum {"pos" if t["saldo"] >= 0 else "neg"}">€ {eur_segno(t["saldo"], 0)}</div>
         <div class="lbl">Saldo del periodo</div>
-        <div class="hint">{t["n"]} moviment{"o" if t["n"] == 1 else "i"}</div>
+        <div class="hint">{t["n"]} moviment{"o" if t["n"] == 1 else "i"} · come si calcola ›</div>
       </div></div>
-      <div class="card"><div class="stat sm">
+      <div class="card"><div class="stat sm clickable" onclick='{_dd({"tipo": "entrata"})}'>
         <div class="val tnum pos">€ {eur(t["entrate"], 0)}</div>
         <div class="lbl">Entrate</div></div></div>
-      <div class="card"><div class="stat sm">
+      <div class="card"><div class="stat sm clickable" onclick='{_dd({"tipo": "uscita"})}'>
         <div class="val tnum neg">€ {eur(t["uscite"], 0)}</div>
         <div class="lbl">Uscite</div></div></div>
-      <div class="card"><div class="stat sm">
+      <div class="card"><div class="stat sm clickable" onclick='{_dd({"tipo": "entrata", "categoria": D.CATEGORIA_GIROCONTO})}'>
         <div class="val tnum">€ {eur(t["giroconti"], 0)}</div>
         <div class="lbl">Dalla P.IVA</div></div></div>
     </div>'''
@@ -177,26 +192,51 @@ def movimenti_lista():
     else:
         corpo = f'<div class="list">{"".join(_riga_movimento(m) for m in righe)}</div>'
 
+    # Con una categoria gia' filtrata, ripartire di nuovo per categoria
+    # darebbe sempre "100%, una riga sola": non dice niente. Si scende
+    # di un livello, per sottocategoria — quello si' e' informativo.
+    per_sotto = bool(categoria)
+    campo_gruppo = "sottocategoria" if per_sotto else "categoria"
+    titolo_ripartizione = (f"Sottocategorie di «{categoria}»" if per_sotto
+                           else "Dove vanno le uscite")
+
     ripartizione = ""
-    quote = D.per_categoria(righe, "uscita")[:8]
+    quote = D.per_categoria(righe_complete, "uscita", campo=campo_gruppo)[:8]
     if quote:
+        def _riga_extra(nome: str) -> dict:
+            extra = {"tipo": "uscita"}
+            if per_sotto:
+                extra["sottocategoria"] = None if nome == "Senza sottocategoria" else nome
+            else:
+                extra["categoria"] = None if nome == "Senza categoria" else nome
+            return extra
+
         barre = "".join(f'''
-        <div class="row">
+        <div class="row clickable" onclick='{_dd(_riga_extra(q["categoria"]))}'>
           <span class="t">{_esc(q["categoria"])}
             <span class="sub">{q["quota"] * 100:.1f}% delle uscite</span></span>
           <span class="v tnum">€ {eur(q["importo"])}</span>
         </div>''' for q in quote)
         ripartizione = f'''
         <div class="card">
-          <div class="card-head"><div class="eyebrow">Dove vanno le uscite</div></div>
+          <div class="card-head"><div class="eyebrow">{_esc(titolo_ripartizione)}</div></div>
           <div class="rows detail">{barre}</div>
         </div>'''
+
+    dettaglio = f'''
+    <div class="card" id="dettaglioBox" style="display:none">
+      <div class="card-head">
+        <div class="eyebrow" id="dettaglioTitolo">Come viene calcolato</div>
+        <button class="btn ghost sm" type="button" onclick="chiudiDettaglio()">Chiudi ✕</button>
+      </div>
+      <div id="dettaglioCorpo"><p class="small muted">Carico…</p></div>
+    </div>'''
 
     body = f'''
     {riepilogo}{toolbar}
     <div class="grid split">
       <div class="stack">{corpo}</div>
-      <div class="stack">{ripartizione}</div>
+      <div class="stack">{ripartizione}{dettaglio}</div>
     </div>
     <script>
       function filtra(chiave, valore) {{
@@ -204,6 +244,85 @@ def movimenti_lista():
         if (valore) u.searchParams.set(chiave, valore);
         else u.searchParams.delete(chiave);
         location.href = u;
+      }}
+
+      const FILTRI_PAGINA = {json.dumps(filtri, ensure_ascii=False)};
+
+      function escHtml(v) {{
+        return (v === null || v === undefined ? '' : String(v))
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }}
+      function euroFmt(v) {{
+        return (Math.abs(v)).toLocaleString('it-IT', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+      }}
+      function dataItFmt(iso) {{
+        if (!iso) return '';
+        const [y, m, d] = iso.slice(0, 10).split('-');
+        return `${{d}}/${{m}}/${{y}}`;
+      }}
+
+      async function apriDettaglio(extra) {{
+        const box = document.getElementById('dettaglioBox');
+        const corpo = document.getElementById('dettaglioCorpo');
+        const titolo = document.getElementById('dettaglioTitolo');
+        box.style.display = 'block';
+        box.scrollIntoView({{behavior: 'smooth', block: 'nearest'}});
+        corpo.innerHTML = '<p class="small muted">Carico…</p>';
+
+        const params = new URLSearchParams();
+        const uniti = Object.assign({{}}, FILTRI_PAGINA, extra);
+        for (const [k, v] of Object.entries(uniti)) {{
+          if (v !== null && v !== undefined && v !== '') params.set(k, v);
+        }}
+        const pezzi = [];
+        if (uniti.tipo) pezzi.push(uniti.tipo === 'entrata' ? 'entrate' : 'uscite');
+        if (uniti.categoria) pezzi.push(uniti.categoria);
+        if (uniti.sottocategoria) pezzi.push(uniti.sottocategoria);
+        titolo.textContent = pezzi.length ? 'Come viene calcolato — ' + pezzi.join(' › ')
+                                          : 'Come viene calcolato — tutti i movimenti';
+
+        try {{
+          const r = await fetch('/spese/api/movimenti/dettaglio?' + params.toString());
+          const righe = await r.json();
+          if (!Array.isArray(righe)) {{
+            corpo.innerHTML = '<div class="notice err">' + escHtml(righe.error || 'Errore') + '</div>';
+            return;
+          }}
+          if (!righe.length) {{
+            corpo.innerHTML = '<p class="small muted">Nessun movimento per questi filtri.</p>';
+            return;
+          }}
+          let tot = 0;
+          const trs = righe.map(rg => {{
+            const imp = Number(rg.importo) || 0;
+            tot += rg.tipo === 'uscita' ? -imp : imp;
+            const cat = escHtml(rg.categoria || '—') +
+              (rg.sottocategoria ? ' › ' + escHtml(rg.sottocategoria) : '');
+            return `<tr>
+              <td>${{dataItFmt(rg.data)}}</td>
+              <td>${{escHtml((rg.descrizione || '—').slice(0, 50))}}</td>
+              <td>${{rg.tipo === 'entrata' ? 'Entrata' : 'Uscita'}}</td>
+              <td>${{cat}}</td>
+              <td class="num">€ ${{euroFmt(imp)}}</td>
+            </tr>`;
+          }}).join('');
+          corpo.innerHTML = `
+            <div style="overflow-x:auto">
+            <table class="table">
+              <thead><tr><th>Data</th><th>Descrizione</th><th>Tipo</th><th>Categoria</th><th class="num">Importo</th></tr></thead>
+              <tbody>${{trs}}</tbody>
+              <tfoot><tr><td colspan="4">Totale (${{righe.length}} movimenti) — deve combaciare col numero sopra</td>
+                <td class="num">€ ${{(tot < 0 ? '−' : '')}}${{euroFmt(tot)}}</td></tr></tfoot>
+            </table>
+            </div>`;
+        }} catch (e) {{
+          corpo.innerHTML = '<div class="notice err">Errore rete: ' + escHtml(e.message) + '</div>';
+        }}
+      }}
+
+      function chiudiDettaglio() {{
+        document.getElementById('dettaglioBox').style.display = 'none';
       }}
     </script>'''
 
@@ -420,6 +539,20 @@ def _client_o_503():
     return client, None
 
 
+def _filtri_da_query() -> dict:
+    return dict(
+        anno=request.args.get("anno", type=int),
+        mese=request.args.get("mese", type=int),
+        tipo=request.args.get("tipo") or None,
+        categoria=request.args.get("categoria") or None,
+        sottocategoria=request.args.get("sottocategoria") or None,
+        metodo=request.args.get("metodo") or None,
+        importo_min=request.args.get("importo_min", type=float),
+        importo_max=request.args.get("importo_max", type=float),
+        cerca=request.args.get("q") or None,
+    )
+
+
 @spese_bp.get("/api/movimenti")
 def api_movimenti():
     client, err = _client_o_503()
@@ -433,6 +566,20 @@ def api_movimenti():
         categoria=request.args.get("categoria"),
         cerca=request.args.get("q"),
     ))
+
+
+@spese_bp.get("/api/movimenti/dettaglio")
+def api_movimenti_dettaglio():
+    """
+    Come `/api/movimenti`, ma senza il tetto di 300: serve al drill-down
+    "come viene calcolato" di /spese/movimenti, dove la somma mostrata in
+    tabella deve combaciare esattamente col numero cliccato — un elenco
+    troncato darebbe un totale diverso da quello che lo ha generato.
+    """
+    client, err = _client_o_503()
+    if err:
+        return err
+    return jsonify(D.righe_periodo(client, **_filtri_da_query()))
 
 
 @spese_bp.post("/api/movimenti")

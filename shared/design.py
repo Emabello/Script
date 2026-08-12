@@ -465,6 +465,10 @@ ul,ol{margin:0;padding:0;list-style:none}
 .stat .hint{font-size:12px;color:var(--ink-3);margin-top:2px}
 .stat.sm .val{font-size:22px}
 
+/* --- Elemento che apre un dettaglio al click (drill-down "come si calcola") */
+.clickable{cursor:pointer;transition:opacity .15s}
+.clickable:hover{opacity:.72}
+
 /* --- Righe tabellari ----------------------------------------------------
    Flex e non grid: cosi' la riga funziona sia con due figli (etichetta +
    valore) sia con tre (data + testo + valore) senza varianti.          */

@@ -196,16 +196,21 @@ def movimenti(client, anno=None, mese=None, tipo=None, categoria=None,
         return []
 
 
-def _tutte_le_righe_filtrate(client, anno=None, mese=None, tipo=None,
-                             categoria=None, sottocategoria=None, metodo=None,
-                             importo_min=None, importo_max=None,
-                             cerca=None) -> list[dict]:
+def righe_periodo(client, anno=None, mese=None, tipo=None,
+                  categoria=None, sottocategoria=None, metodo=None,
+                  importo_min=None, importo_max=None,
+                  cerca=None) -> list[dict]:
     """
     Come `movimenti()`, ma senza limite: pagina con `.range()` finche' i
     risultati non finiscono. Serve perche' PostgREST tronca comunque a un
     tetto per richiesta (di solito 1000 righe) — un `.limit()` alto da
     solo non basta a garantire tutte le righe di un anno che ne ha di
     piu'; qui si prendono a blocchi finche' un blocco torna incompleto.
+
+    Pubblica (non `_privata`) perche' oltre a `totali_periodo()` la usa
+    anche il "come viene calcolato" di `spese/movimenti.py`: la stessa
+    lista completa alimenta sia i totali sia il dettaglio riga per riga,
+    cosi' non possono disallinearsi fra loro.
     """
     out: list[dict] = []
     offset = 0
@@ -234,7 +239,7 @@ def totali_periodo(client, anno=None, mese=None, tipo=None, categoria=None,
     di riepilogo, mai `totali(movimenti(...))` — quest'ultimo tronca a
     `limite` e su un anno pieno da' un saldo sbagliato per difetto.
     """
-    righe = _tutte_le_righe_filtrate(client, anno, mese, tipo, categoria,
+    righe = righe_periodo(client, anno, mese, tipo, categoria,
                                      sottocategoria, metodo, importo_min,
                                      importo_max, cerca)
     return totali(righe)
@@ -412,13 +417,21 @@ def totali(righe: list[dict]) -> dict:
     return t
 
 
-def per_categoria(righe: list[dict], tipo: str = "uscita") -> list[dict]:
-    """Ripartizione per categoria, dalla piu' pesante."""
+def per_categoria(righe: list[dict], tipo: str = "uscita",
+                  campo: str = "categoria") -> list[dict]:
+    """
+    Ripartizione per categoria (o sottocategoria, con `campo`), dalla
+    piu' pesante. Con `campo="sottocategoria"` serve per il drill-down:
+    quando la lista e' gia' filtrata su una categoria, ripartirla di
+    nuovo per la stessa categoria darebbe sempre "100%, una riga sola" —
+    un solo numero che non dice niente. La sottocategoria invece si.
+    """
+    vuoto = "Senza categoria" if campo == "categoria" else "Senza sottocategoria"
     agg: dict[str, float] = {}
     for r in righe:
         if r.get("tipo") != tipo:
             continue
-        nome = r.get("categoria") or "Senza categoria"
+        nome = r.get(campo) or vuoto
         agg[nome] = agg.get(nome, 0.0) + abs(float(r.get("importo") or 0))
     tot = sum(agg.values()) or 1.0
     out = [{"categoria": k, "importo": round(v, 2), "quota": v / tot}
