@@ -190,6 +190,7 @@ class _Query:
         self._head = False
         self._op = "select"
         self._payload = None
+        self._range = None
 
     # -- costruzione ---------------------------------------------------
     def select(self, *a, **k):
@@ -230,6 +231,9 @@ class _Query:
 
     def limit(self, n):
         self._limit = n; return self
+
+    def range(self, start, end):
+        self._range = (start, end); return self
 
     def single(self):
         self._single = True; return self
@@ -274,7 +278,10 @@ class _Query:
             sel = sorted(sel, key=lambda r: (r.get(self._order) is None,
                                              r.get(self._order)),
                          reverse=self._desc)
-        if self._limit:
+        if self._range:
+            start, end = self._range
+            sel = sel[start:end + 1]
+        elif self._limit:
             sel = sel[:self._limit]
 
         if self._head:

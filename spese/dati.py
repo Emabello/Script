@@ -136,39 +136,103 @@ def link_categoria(client, categoria: str, sottocategoria: str | None = None):
 # Movimenti
 # ---------------------------------------------------------------------------
 
+def _query_movimenti(client, anno=None, mese=None, tipo=None, categoria=None,
+                     sottocategoria=None, metodo=None, importo_min=None,
+                     importo_max=None, cerca=None):
+    """
+    Query filtrata su `v_spese`, senza `limit`/`range`: li aggiunge chi
+    chiama, a seconda che serva una pagina per la lista o tutte le righe
+    per un totale. Condivisa da `movimenti()` e `totali_periodo()` cosi'
+    i filtri restano uno solo, non due copie da tenere allineate.
+    """
+    q = client.table("v_spese").select("*").order("data", desc=True)
+    if anno:
+        q = q.eq("anno", anno)
+    if mese:
+        q = q.eq("mese", mese)
+    if tipo:
+        q = q.eq("tipo", tipo)
+    if categoria:
+        q = q.eq("categoria", categoria)
+    if sottocategoria:
+        q = q.eq("sottocategoria", sottocategoria)
+    if metodo:
+        q = q.ilike("metodo_pagamento", f"%{metodo}%")
+    if importo_min is not None:
+        q = q.gte("importo", importo_min)
+    if importo_max is not None:
+        q = q.lte("importo", importo_max)
+    if cerca:
+        q = q.ilike("descrizione", f"%{cerca}%")
+    return q
+
+
 def movimenti(client, anno=None, mese=None, tipo=None, categoria=None,
               sottocategoria=None, metodo=None, importo_min=None,
               importo_max=None, cerca=None, limite=300) -> list[dict]:
     """
-    Elenco movimenti, dal piu' recente.
+    Elenco movimenti per la lista, dal piu' recente, fino a `limite`.
 
     Legge da `v_spese` e non da `spese` perche' la vista porta gia' i
     nomi di categoria e sottocategoria: senza, ogni riga costerebbe due
     join a mano.
+
+    **Non usare questa funzione per i totali di un periodo**: un anno
+    pieno puo' avere piu' righe di `limite`, e sommare solo le piu'
+    recenti darebbe un saldo sbagliato. Per quello c'e'
+    `totali_periodo()`, che non tronca mai.
     """
     try:
-        q = client.table("v_spese").select("*").order("data", desc=True)
-        if anno:
-            q = q.eq("anno", anno)
-        if mese:
-            q = q.eq("mese", mese)
-        if tipo:
-            q = q.eq("tipo", tipo)
-        if categoria:
-            q = q.eq("categoria", categoria)
-        if sottocategoria:
-            q = q.eq("sottocategoria", sottocategoria)
-        if metodo:
-            q = q.ilike("metodo_pagamento", f"%{metodo}%")
-        if importo_min is not None:
-            q = q.gte("importo", importo_min)
-        if importo_max is not None:
-            q = q.lte("importo", importo_max)
-        if cerca:
-            q = q.ilike("descrizione", f"%{cerca}%")
+        q = _query_movimenti(client, anno, mese, tipo, categoria,
+                             sottocategoria, metodo, importo_min,
+                             importo_max, cerca)
         return _righe(q.limit(limite).execute())
     except Exception:
         return []
+
+
+def _tutte_le_righe_filtrate(client, anno=None, mese=None, tipo=None,
+                             categoria=None, sottocategoria=None, metodo=None,
+                             importo_min=None, importo_max=None,
+                             cerca=None) -> list[dict]:
+    """
+    Come `movimenti()`, ma senza limite: pagina con `.range()` finche' i
+    risultati non finiscono. Serve perche' PostgREST tronca comunque a un
+    tetto per richiesta (di solito 1000 righe) — un `.limit()` alto da
+    solo non basta a garantire tutte le righe di un anno che ne ha di
+    piu'; qui si prendono a blocchi finche' un blocco torna incompleto.
+    """
+    out: list[dict] = []
+    offset = 0
+    passo = 1000
+    while True:
+        try:
+            q = _query_movimenti(client, anno, mese, tipo, categoria,
+                                 sottocategoria, metodo, importo_min,
+                                 importo_max, cerca)
+            pagina = _righe(q.range(offset, offset + passo - 1).execute())
+        except Exception:
+            break
+        out.extend(pagina)
+        if len(pagina) < passo:
+            break
+        offset += passo
+    return out
+
+
+def totali_periodo(client, anno=None, mese=None, tipo=None, categoria=None,
+                   sottocategoria=None, metodo=None, importo_min=None,
+                   importo_max=None, cerca=None) -> dict:
+    """
+    Entrate/uscite/saldo/quota-P.IVA su **tutte** le righe che rispettano
+    i filtri, non solo le prime mostrate in lista. Usare questa per i KPI
+    di riepilogo, mai `totali(movimenti(...))` — quest'ultimo tronca a
+    `limite` e su un anno pieno da' un saldo sbagliato per difetto.
+    """
+    righe = _tutte_le_righe_filtrate(client, anno, mese, tipo, categoria,
+                                     sottocategoria, metodo, importo_min,
+                                     importo_max, cerca)
+    return totali(righe)
 
 
 def movimento(client, mid: int) -> dict | None:
@@ -306,18 +370,36 @@ def collegato(client, mid: int) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def totali(righe: list[dict]) -> dict:
-    """Entrate, uscite, giroconti e saldo di un insieme di movimenti."""
+    """
+    Entrate, uscite, quota delle entrate arrivata dalla P.IVA, e saldo.
+
+    Il giroconto dalla P.IVA arriva come riga `tipo=entrata`, categoria
+    "Giroconto P.IVA" — apposta, cosi' v_risparmi_mese lo conta nel
+    budget (vedi fatture/giroconto.py). "giroconti" qui NON e' quindi un
+    terzo bucket da sommare al saldo: e' un sotto-totale di "entrate",
+    solo per mostrarlo separato. Il vecchio codice cercava `tipo ==
+    "giroconto"`, un valore che i giroconti automatici P.IVA->personale
+    non usano mai: "Dalla P.IVA" risultava sempre zero anche quando il
+    denaro era arrivato (e gia' contato, correttamente, in "entrate").
+
+    Resta comunque gestito anche `tipo == "giroconto"` (l'opzione libera
+    del form "Nuovo movimento", scelta a mano): per quello si', si somma
+    a parte, perche' non e' mai stato incluso in "entrate".
+    """
     t = {"entrate": 0.0, "uscite": 0.0, "giroconti": 0.0, "n": len(righe)}
     for r in righe:
         imp = abs(float(r.get("importo") or 0))
         tipo = r.get("tipo")
         if tipo == "entrata":
             t["entrate"] += imp
+            if r.get("categoria") == CATEGORIA_GIROCONTO:
+                t["giroconti"] += imp
         elif tipo == "uscita":
             t["uscite"] += imp
         elif tipo == "giroconto":
+            t["entrate"] += imp
             t["giroconti"] += imp
-    t["saldo"] = round(t["entrate"] + t["giroconti"] - t["uscite"], 2)
+    t["saldo"] = round(t["entrate"] - t["uscite"], 2)
     for k in ("entrate", "uscite", "giroconti"):
         t[k] = round(t[k], 2)
     return t
