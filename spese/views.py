@@ -7,6 +7,7 @@ Qui c'e' il conto personale — dove finiscono i soldi una volta tolta la
 quota da accantonare, tramite il giroconto della ripartizione.
 """
 from datetime import date
+from urllib.parse import quote
 
 from flask import Response
 
@@ -37,10 +38,18 @@ def index():
         </div>''')
 
     oggi = date.today()
-    righe_anno = D.movimenti(client, anno=oggi.year)
+    # I totali contano TUTTO l'anno, non le prime righe: D.movimenti()
+    # tronca a `limite` (300) e un anno pieno ne ha di piu' — il saldo
+    # dell'anno e i giroconti risultavano piu' bassi del vero, senza che
+    # nulla lo segnalasse. Vedi l'avvertenza su D.movimenti().
+    righe_anno = D.righe_periodo(client, anno=oggi.year)
     righe_mese = [r for r in righe_anno if int(r.get("mese") or 0) == oggi.month]
     t_mese = D.totali(righe_mese)
     t_anno = D.totali(righe_anno)
+
+    # Il saldo del conto e' un'altra cosa dal saldo dell'anno: comprende
+    # l'apertura e gli anni precedenti. E' quello che c'e' in banca.
+    conto = D.saldo_conto(client, oggi.isoformat())
 
     ultimi = "".join(f'''
       <div class="row">
@@ -66,6 +75,11 @@ def index():
 
     # Quanto e' arrivato dalla P.IVA: e' la domanda che ci si fa dopo aver
     # premuto "ripartisci" su una fattura, e merita un posto suo.
+    #
+    # Il link filtra per CATEGORIA, non per tipo: il giroconto dalla P.IVA
+    # e' una riga tipo=entrata (vedi fatture/giroconto.py), quindi il
+    # vecchio "?tipo=giroconto" apriva sempre una lista vuota — quel tipo
+    # non esiste piu' nemmeno nel form (migrazione README 8.9).
     girati = t_anno["giroconti"]
     blocco_giroconti = f'''
       <div class="card">
@@ -78,13 +92,28 @@ def index():
           Sono i giroconti creati quando ripartisci una fattura incassata: la
           quota da accantonare resta sul conto P.IVA, il resto arriva qui.
         </p>
-        <a class="btn ghost block mt-4" href="/spese/movimenti?tipo=giroconto">
+        <a class="btn ghost block mt-4"
+           href="/spese/movimenti?tipo=entrata&amp;categoria={quote(D.CATEGORIA_GIROCONTO)}">
           {icon("wallet")}Vedi i giroconti
         </a>
       </div>'''
 
+    if conto.get("disponibile"):
+        # Un saldo e' un livello, non una variazione: il "+" davanti si
+        # leggerebbe come un aumento. Il meno invece serve.
+        saldo_txt = ("−" if conto["saldo"] < 0 else "") + eur(abs(conto["saldo"]), 0)
+        tile_conto = f'''
+      <div class="card"><div class="stat">
+        <div class="val tnum {"pos" if conto["saldo"] >= 0 else "neg"}">€ {saldo_txt}</div>
+        <div class="lbl">Saldo del conto, oggi</div>
+        <div class="hint">apertura € {eur(conto["saldo_iniziale"], 0)} + {conto["movimenti"]} movimenti</div>
+      </div></div>'''
+    else:
+        tile_conto = ""
+
     body = f'''
     <div class="grid kpi lead mb-3">
+      {tile_conto}
       <div class="card"><div class="stat">
         <div class="val tnum {"pos" if t_mese["saldo"] >= 0 else "neg"}">€ {eur_segno(t_mese["saldo"], 0)}</div>
         <div class="lbl">Saldo del mese</div>
@@ -97,8 +126,8 @@ def index():
         <div class="val tnum neg">€ {eur(t_mese["uscite"], 0)}</div>
         <div class="lbl">Uscite</div></div></div>
       <div class="card"><div class="stat sm">
-        <div class="val tnum">€ {eur(t_anno["saldo"], 0)}</div>
-        <div class="lbl">Saldo {oggi.year}</div></div></div>
+        <div class="val tnum">€ {eur_segno(t_anno["saldo"], 0)}</div>
+        <div class="lbl">Movimento netto {oggi.year}</div></div></div>
     </div>
 
     <div class="grid split">

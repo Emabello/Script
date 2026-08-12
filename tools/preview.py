@@ -93,20 +93,49 @@ DB = {
     ],
     "spese": [
         {"id": 1, "data": "2026-07-14", "importo": 50.00, "tipo": "uscita",
-         "descrizione": "Bonifico a favore di Emanuele Bellotti"},
+         "descrizione": "Bonifico a favore di Emanuele Bellotti",
+         "categoria": "Personale", "sottocategoria": "Bonifici"},
         {"id": 2, "data": "2026-07-14", "importo": 20.00, "tipo": "uscita",
-         "descrizione": "SDD Satispay Europe S.A."},
+         "descrizione": "SDD Satispay Europe S.A.",
+         "categoria": "Personale", "sottocategoria": None},
         {"id": 3, "data": "2026-07-13", "importo": 3.30, "tipo": "uscita",
-         "descrizione": "pagamento con carta - carta *2058-mcdonald's 35 milano mi ita"},
-        {"id": 4, "data": "2026-07-13", "importo": 1.10, "tipo": "uscita",
-         "descrizione": "pagamento con carta - carta *2058-mcdonald's 35 milano mi ita"},
+         "descrizione": "pagamento con carta - carta *2058-mcdonald's 35 milano mi ita",
+         "categoria": "Personale", "sottocategoria": "Ristoranti"},
+        {"id": 4, "data": "2026-08-03", "importo": 1.10, "tipo": "uscita",
+         "descrizione": "pagamento con carta - carta *2058-mcdonald's 35 milano mi ita",
+         "categoria": "Personale", "sottocategoria": "Ristoranti"},
         {"id": 5, "data": "2026-07-12", "importo": 1200.00, "tipo": "entrata",
-         "descrizione": "BONIFICO ISTANTANEO DA B2FORGE SRL SALDO FATTURA 2026/001 CIG 7A44B21C90"},
-        {"id": 6, "data": "2026-07-11", "importo": 42.90, "tipo": "uscita",
-         "descrizione": "addebito diretto sepa core - vodafone italia s.p.a. rata mensile"},
+         "descrizione": "BONIFICO ISTANTANEO DA B2FORGE SRL SALDO FATTURA 2026/001",
+         "categoria": "Stipendio", "sottocategoria": None},
+        {"id": 6, "data": "2026-08-05", "importo": 42.90, "tipo": "uscita",
+         "descrizione": "addebito diretto sepa core - vodafone italia s.p.a. rata mensile",
+         "categoria": "Fisso", "sottocategoria": "Telefonia"},
+        # Giroconto dalla P.IVA: tipo=entrata con la categoria dedicata,
+        # esattamente come lo scrive fatture/giroconto.py.
+        {"id": 7, "data": "2026-08-06", "importo": 2320.55, "tipo": "entrata",
+         "descrizione": "Giroconto da P.IVA — fattura 2026/003",
+         "categoria": "Giroconto P.IVA", "sottocategoria": None},
     ],
+    # Saldo di apertura del conto personale: e' da qui che parte il saldo
+    # mostrato in home e su /spese.
+    "impostazioni": [{
+        "valido_dal": "2024-01-01", "saldo_iniziale": 4200.00,
+        "percentuale_risparmio": 0.25, "perc_fondo_emergenze": 0.40,
+        "perc_viaggi": 0.20, "perc_fondo_casa": 0.20,
+        "perc_regali": 0.10, "perc_altro": 0.10,
+    }],
+    "risparmi_periodo": [],
     "b2f_webauthn_credentials": [],
 }
+
+# `v_spese` e' la vista che porta i nomi di categoria/sottocategoria e i
+# campi derivati: l'app legge sempre da li', mai da `spese`, quindi il
+# finto database deve averla anche lui o le pagine restano vuote.
+DB["v_spese"] = [
+    {**r, "mese": int(r["data"][5:7]), "anno": int(r["data"][:4]),
+     "metodo_pagamento": None, "categoria_link_id": None}
+    for r in DB["spese"]
+]
 
 
 def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,

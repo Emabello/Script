@@ -281,6 +281,82 @@ def _situazione_data(sb, anno: int) -> dict:
     }
 
 
+def saldo_piva(sb, al: str | None = None) -> dict:
+    """
+    Saldo reale del conto P.IVA a una data (default: oggi).
+
+    Non e' il saldo dell'anno filtrato che mostra /fatture/spese-piva: e'
+    quanto c'e' sul conto, tutti i movimenti dall'apertura fino ad `al`.
+    Dal secondo anno in poi i due numeri divergono, perche' il conto non
+    riparte da zero a gennaio.
+
+    Le tre direzioni sono diverse fra loro:
+      entrata    il cliente ha pagato          -> entra
+      uscita     un costo della P.IVA          -> esce
+      giroconto  la tua quota va sul personale -> esce (ma non e' un costo)
+
+    `rivalsa_incassata` e' la quota di rivalsa INPS gia' entrata su questo
+    conto insieme agli incassi: non e' un ricavo tuo, e' la parte del
+    corrispettivo destinata al contributo previdenziale. Va lasciata qui:
+    serve a farla vedere, perche' dentro il saldo e' invisibile.
+
+    Le righe si leggono a blocchi: PostgREST tronca ogni richiesta a un
+    tetto, e un saldo troncato sarebbe sbagliato senza dare errore.
+    """
+    al = al or date.today().isoformat()
+    vuoto = {"al": al, "disponibile": False, "saldo": 0.0, "entrate": 0.0,
+             "uscite": 0.0, "girati": 0.0, "rivalsa_incassata": 0.0,
+             "movimenti": 0}
+
+    entrate = uscite = girati = 0.0
+    n = 0
+    offset, passo = 0, 1000
+    while True:
+        try:
+            r = (sb.table("b2f_spese_piva").select("importo,tipo,data")
+                   .lte("data", al).order("data", desc=False)
+                   .range(offset, offset + passo - 1).execute())
+            pagina = r.data or []
+        except Exception:
+            return vuoto
+        for m in pagina:
+            imp = abs(float(m.get("importo") or 0))
+            tipo = m.get("tipo")
+            if tipo == "entrata":
+                entrate += imp
+            elif tipo == "uscita":
+                uscite += imp
+            elif tipo == "giroconto":
+                girati += imp
+            n += 1
+        if len(pagina) < passo:
+            break
+        offset += passo
+
+    # Rivalsa gia' incassata: si conta sulle fatture incassate, non sui
+    # movimenti P.IVA, perche' e' la fattura a sapere quanta parte del
+    # totale era rivalsa (`cassa_importo`).
+    rivalsa = 0.0
+    try:
+        r = (sb.table("b2f_fatture").select("cassa_importo,data_incasso")
+               .eq("stato", "incassata").lte("data_incasso", al).execute())
+        rivalsa = sum(float(f.get("cassa_importo") or 0) for f in (r.data or [])
+                      if f.get("data_incasso"))
+    except Exception:
+        rivalsa = 0.0
+
+    return {
+        "al": al,
+        "disponibile": True,
+        "entrate": round(entrate, 2),
+        "uscite": round(uscite, 2),
+        "girati": round(girati, 2),
+        "rivalsa_incassata": round(rivalsa, 2),
+        "saldo": round(entrate - uscite - girati, 2),
+        "movimenti": n,
+    }
+
+
 # Alias pubblici: app.py e i moduli fratelli hanno bisogno di questi due.
 def get_parametri(sb) -> dict:
     """Parametri fiscali correnti, con i default applicati."""
@@ -860,6 +936,50 @@ def api_parametri_update():
 # CRUD spese P.IVA
 # ---------------------------------------------------------------------------
 
+def _card_rivalsa(rivalsa: float, conto: dict) -> str:
+    """
+    Quanta parte del saldo P.IVA e' rivalsa INPS incassata dai clienti.
+
+    Dentro il saldo la rivalsa e' invisibile: e' arrivata insieme al
+    corrispettivo, in un unico bonifico, e da li' in poi e' un numero
+    solo. Ma non e' un ricavo tuo: e' la parte destinata al contributo
+    previdenziale, e deve restare su questo conto finche' non la versi.
+    Qui si dice quanta e', e che e' gia' compresa nell'accantonamento —
+    non e' una quota da mettere da parte in piu'.
+    """
+    saldo = float(conto.get("saldo") or 0)
+    # Niente percentuale sul saldo: accanto a "rivalsa 4 %" un secondo
+    # numero in percentuale si legge come l'aliquota e confonde. Meglio
+    # il confronto in euro, che e' quello che serve davvero.
+    quota = (f' Sul conto ci sono in tutto € {_fmt_eur(saldo)}.'
+             if saldo > 0 else "")
+    return f'''
+    <div class="card mb-3">
+      <div class="card-head">
+        <div class="eyebrow">Rivalsa INPS incassata</div>
+        <span class="chip accent">€ {_fmt_eur(rivalsa)}</span>
+      </div>
+      <p class="small muted">
+        È la quota di rivalsa INPS 4 % già entrata su questo conto insieme
+        agli incassi delle fatture.{quota} Non è un ricavo: è la parte del
+        corrispettivo destinata al contributo previdenziale, e va lasciata
+        qui fino al versamento.
+      </p>
+      <details class="explain mt-3">
+        <summary>Devo accantonarla a parte?</summary>
+        <p class="small muted mt-2">
+          No: è già dentro. Nel forfettario l'imponibile è il corrispettivo
+          intero, rivalsa compresa, quindi l'INPS calcolata
+          sull'accantonamento (circa il 17,5 % del lordo) è più alta della
+          rivalsa stessa (3,85 % del lordo) e la contiene. Metterla da parte
+          una seconda volta significherebbe accantonare due volte lo stesso
+          denaro. La ripartizione dell'incasso non scende mai sotto la
+          rivalsa proprio per questo.
+        </p>
+      </details>
+    </div>'''
+
+
 def _movimento_label(m: dict) -> str:
     tipo = m.get("tipo") or "uscita"
     segno = {"entrata": "+", "uscita": "−", "giroconto": "⇄"}.get(tipo, "")
@@ -927,11 +1047,28 @@ def spese_piva_list():
     # mostrerebbe soldi che sull'altro conto ci sono gia'.
     girati = sum(float(r.get("importo") or 0) for r in rows if r.get("tipo") == "giroconto")
     tot = entrate - uscite - girati
+
+    # Il saldo qui sopra e' quello dell'anno filtrato. Il conto pero' non
+    # riparte da zero a gennaio: dal secondo anno in poi i due numeri
+    # divergono, e il primo non e' quello che c'e' in banca.
+    conto = saldo_piva(sb)
+    rivalsa = float(conto.get("rivalsa_incassata") or 0)
+    riga_conto = ""
+    if conto.get("disponibile"):
+        rivalsa_hint = (f'di cui € {_fmt_eur(rivalsa, 0)} di rivalsa INPS incassata'
+                        if rivalsa > 0 else "tutti i movimenti fino a oggi")
+        riga_conto = f'''
+      <div class="card"><div class="stat">
+        <div class="val tnum {"pos" if conto["saldo"] >= 0 else "neg"}">€ {_fmt_eur(conto["saldo"], 0)}</div>
+        <div class="lbl">Saldo del conto, oggi</div>
+        <div class="hint">{rivalsa_hint}</div></div></div>'''
+
     riepilogo = f'''
     <div class="grid kpi lead mb-3">
+      {riga_conto}
       <div class="card"><div class="stat">
         <div class="val tnum {"pos" if tot >= 0 else "neg"}">€ {_fmt_eur(tot, 0)}</div>
-        <div class="lbl">Saldo {anno}</div>
+        <div class="lbl">Movimento netto {anno}</div>
         <div class="hint">al netto dei giroconti</div></div></div>
       <div class="card"><div class="stat sm">
         <div class="val tnum pos">€ {_fmt_eur(entrate, 0)}</div>
@@ -943,6 +1080,7 @@ def spese_piva_list():
         <div class="val tnum">€ {_fmt_eur(girati, 0)}</div>
         <div class="lbl">Girati al personale</div></div></div>
     </div>
+    {_card_rivalsa(rivalsa, conto) if rivalsa > 0 else ""}
     '''
 
     if not rows:

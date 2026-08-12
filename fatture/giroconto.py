@@ -76,9 +76,20 @@ def calcola(f: dict, param: dict, scenario: str,
     cifra decisa a mano: la quota da accantonare resta comunque limitata
     all'incasso, perche' non si puo' mettere da parte piu' di quanto e'
     arrivato.
+
+    E non scende sotto la **rivalsa INPS** incassata con la fattura.
+    Quella parte del corrispettivo non e' un tuo ricavo: e' il contributo
+    previdenziale che il cliente ti ha girato perche' tu lo versi. I
+    quattro scenari la coprono tutti abbondantemente (l'INPS
+    sull'accantonamento vale circa il 17,5 % del lordo, la rivalsa il
+    3,85 %), ma un importo scritto a mano potrebbe scenderci sotto e
+    spostare sul personale denaro gia' destinato all'INPS.
     """
     lordo = float(f.get("totale") or 0)
-    s = acc.scomponi(lordo, param, fatturato_riferimento=incassato_anno)
+    rivalsa = round(float(f.get("cassa_importo") or 0), 2)
+    s = acc.scomponi(
+        lordo, param, fatturato_riferimento=incassato_anno, rivalsa=rivalsa,
+        bollo_addebitato=(f.get("bollo") or 0) if f.get("bollo_addebitato") else 0)
 
     if importo_personalizzato is not None:
         accantonato = float(importo_personalizzato)
@@ -86,11 +97,19 @@ def calcola(f: dict, param: dict, scenario: str,
         accantonato = float(s["importi"][scenario])
 
     accantonato = round(min(max(accantonato, 0.0), lordo), 2)
+
+    pavimento = round(min(rivalsa, lordo), 2)
+    alzato_alla_rivalsa = accantonato < pavimento
+    if alzato_alla_rivalsa:
+        accantonato = pavimento
+
     return {
         "lordo": round(lordo, 2),
         "scenario": scenario,
         "accantonamento": accantonato,
         "giroconto": round(lordo - accantonato, 2),
+        "rivalsa": rivalsa,
+        "alzato_alla_rivalsa": alzato_alla_rivalsa,
         "scomposizione": s,
     }
 
@@ -165,6 +184,12 @@ def api_giroconto_esegui(fid):
 
     numero = f.get("numero") or f"#{fid}"
     etichetta = acc.ETICHETTE[scenario][0]
+    # Quanto di cio' che resta sul conto P.IVA e' rivalsa INPS: scritto
+    # nella riga, non solo calcolato. Fra sei mesi, guardando il
+    # movimento, e' l'unico posto in cui quel numero e' ancora leggibile.
+    nota_rivalsa = (f" Di cui rivalsa INPS € {calc['rivalsa']:.2f}, "
+                    f"già inclusa nell'accantonamento."
+                    if calc["rivalsa"] else "")
 
     # --- 0) Il lordo, sul conto P.IVA, se non c'e' gia' -------------------
     # La ripartizione sposta la tua quota fuori dal conto P.IVA: se il
@@ -203,7 +228,8 @@ def api_giroconto_esegui(fid):
         "categoria":   CATEGORIA_GIROCONTO,
         "fattura_id":  fid,
         "note":        (f"Scenario {etichetta}: accantonati "
-                        f"€ {calc['accantonamento']:.2f} di € {calc['lordo']:.2f}."),
+                        f"€ {calc['accantonamento']:.2f} di € {calc['lordo']:.2f}."
+                        + nota_rivalsa),
     }
     try:
         ins = sb.table("b2f_spese_piva").insert(riga_piva).execute()
@@ -272,6 +298,8 @@ def api_giroconto_esegui(fid):
         "scenario": scenario,
         "accantonamento": calc["accantonamento"],
         "giroconto": calc["giroconto"],
+        "rivalsa": calc["rivalsa"],
+        "alzato_alla_rivalsa": calc["alzato_alla_rivalsa"],
         "data": quando,
         "movimento_piva_id": id_piva,
         "movimento_personale_id": id_pers,

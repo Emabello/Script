@@ -82,15 +82,28 @@ def _dashboard_data() -> dict:
         return {"errore": "Supabase non configurato. Aggiungi <code>SUPABASE_URL</code> "
                           "e <code>SUPABASE_KEY</code> alle env vars."}
 
-    from fatture.fiscale import situazione_data
+    from fatture.fiscale import situazione_data, saldo_piva
     from fatture import accantonamento as acc
     from fatture.storico import cliente_label
     from fatture.costanti import MESI_NOMI
+    from spese import dati as personale
 
     sb = get_client()
     today = date.today()
     anno = today.year
     out: dict = {"anno": anno}
+
+    # I due conti, ad oggi. Sono la prima cosa che si guarda aprendo
+    # l'app, e sono l'unico numero che nessun'altra pagina dava: /spese
+    # mostra il saldo del mese e /fatture/spese-piva quello dell'anno
+    # filtrato, non quanto c'e' davvero sui conti.
+    try:
+        out["saldi"] = {
+            "piva": saldo_piva(sb, today.isoformat()),
+            "personale": personale.saldo_conto(sb, today.isoformat()),
+        }
+    except Exception:
+        pass
 
     # Situazione fiscale: da qui arrivano incassato del mese, scadenze e
     # la base per il calcolo dell'accantonamento.
@@ -140,18 +153,13 @@ def _dashboard_data() -> dict:
     except Exception:
         pass
 
+    # Saldo del mese dallo stesso livello dati di /spese, non da una
+    # query fatta qui: erano due conteggi diversi sulla stessa domanda —
+    # questo ignorava le righe storiche con tipo=giroconto, che /spese
+    # invece contava come entrate, e i due numeri non tornavano fra loro.
     try:
-        d_from = today.replace(day=1).isoformat()
-        r = (sb.table("spese").select("importo,tipo")
-               .gte("data", d_from).lte("data", today.isoformat()).execute())
-        entrate = uscite = 0.0
-        for row in (r.data or []):
-            imp = float(row.get("importo") or 0)
-            if row.get("tipo") == "entrata":
-                entrate += imp
-            elif row.get("tipo") == "uscita":
-                uscite += imp
-        out["saldo_spese_mese"] = round(entrate - uscite, 2)
+        righe_mese = personale.righe_periodo(sb, anno=anno, mese=today.month)
+        out["saldo_spese_mese"] = personale.totali(righe_mese)["saldo"]
     except Exception:
         pass
 

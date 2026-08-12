@@ -66,9 +66,40 @@ static/                font e jsPDF ospitati dall'app
 Le pagine sono HTML generato da Python: niente framework frontend, niente
 build. Il JavaScript è quello che serve nella pagina, scritto inline.
 
+**Per sapere cosa c'è dentro un singolo file** — rotte, funzioni pubbliche,
+trappole — c'è [`docs/MAPPA.md`](docs/MAPPA.md): una scheda per file, con
+un indice "ti serve X → guarda Y". Questo README spiega il *perché* del
+dominio, la mappa spiega il *dove*.
+
 ---
 
 ## 2. Le tre aree
+
+### Home — `/`
+
+In cima ci sono **i due conti, ad oggi**: quanto c'è sul conto P.IVA e
+quanto sul personale, più il totale. È un numero che nessun'altra pagina
+dava — `/spese` mostrava il saldo del mese e `/fatture/spese-piva` quello
+dell'anno filtrato, e nessuno dei due è "quanto ho in banca".
+
+| Conto | Come si calcola | Chi lo calcola |
+|---|---|---|
+| P.IVA | entrate − uscite − giroconti al personale, su tutti i movimenti fino a oggi | `fatture/fiscale.py::saldo_piva` |
+| Personale | saldo di apertura (`impostazioni`, riga con `valido_dal` più vecchia) + entrate − uscite | `spese/dati.py::saldo_conto` |
+
+Il giroconto è un'uscita dal conto P.IVA e un'entrata sul personale, quindi
+il totale non cambia quando si ripartisce un incasso: i soldi si spostano,
+non si creano. Sotto ai due numeri, un "come si formano questi saldi" apre
+la scomposizione — un saldo di cui non si vede la formazione non è
+verificabile.
+
+Le due letture sono **paginate**: PostgREST tronca ogni richiesta a un
+tetto (~1000 righe) e `spese` ne ha già di più. Una select secca darebbe un
+saldo più basso del vero senza nessun errore visibile.
+
+Il resto della home: incassato del mese, quanto accantonare, saldo del mese
+del conto personale, fatture dell'anno, prossime scadenze, ultime fatture e
+ultimi movimenti.
 
 ### Ore — `/ore`
 
@@ -87,7 +118,7 @@ l'intestazione.
 | `/fatture/storico` | elenco per anno e stato |
 | `/fatture/clienti` | anagrafica |
 | `/fatture/situazione` | situazione fiscale dell'anno |
-| `/fatture/spese-piva` | movimenti del conto P.IVA |
+| `/fatture/spese-piva` | movimenti del conto P.IVA: saldo del conto oggi, movimento netto dell'anno, rivalsa incassata |
 | `/fatture/parametri` | aliquote, coefficiente, accantonamento |
 | `/fatture/emittente` | dati dell'intestazione |
 
@@ -99,7 +130,7 @@ PDF si intitola FACSIMILE e lo dichiara in calce.
 
 | Rotta | Cosa fa |
 |---|---|
-| `/spese` | dashboard: saldo del mese, ultimi movimenti, quanto è arrivato dalla P.IVA |
+| `/spese` | dashboard: saldo del conto oggi, saldo del mese, ultimi movimenti, quanto è arrivato dalla P.IVA |
 | `/spese/movimenti` | elenco con filtri per anno, mese, tipo, categoria, testo |
 | `/spese/movimenti/nuovo` | nuovo movimento |
 | `/spese/movimenti/<id>` | modifica |
@@ -208,11 +239,28 @@ sottratta prima di calcolare percentuali o scaglioni — dove succede oggi
 Fonti: [Fiscozen](https://www.fiscozen.it/guide/rivalsa-inps-regime-forfettario-reddito/),
 [Fiscomania](https://fiscomania.com/rivalsa-inps/).
 
-Resta comunque **mostrata a parte** ovunque compaia (pagina di dettaglio
-fattura, card di accantonamento — sezione "Come esce questo numero" —
-colonna "di cui Rivalsa INPS" nell'Excel della situazione): non cambia il
-calcolo, ma senza quella riga la sua quota resta invisibile dentro un
-unico numero.
+Resta comunque **mostrata a parte** ovunque compaia: non cambia il calcolo,
+ma senza quella riga la sua quota resta invisibile dentro un unico numero.
+
+| Dove | Cosa si vede |
+|---|---|
+| Dettaglio fattura, riepilogo | chip `Rivalsa INPS € …` accanto allo stato, e le righe "di cui compenso" / "di cui rivalsa INPS 4 %" |
+| Dettaglio fattura, accantonamento | riga "di cui rivalsa INPS" in "Come esce questo numero" |
+| Dettaglio fattura, ripartizione | "di cui rivalsa INPS — resta sul conto P.IVA", sia prima di ripartire sia dopo |
+| Movimenti P.IVA | card *Rivalsa INPS incassata*: quanta parte del saldo è rivalsa, e perché non va accantonata due volte |
+| Home | riga "di cui rivalsa INPS" nella scomposizione del saldo P.IVA |
+| Movimento del giroconto | l'importo è scritto nelle note della riga |
+| Excel della situazione | colonna "di cui Rivalsa INPS" |
+
+**E resta sul conto P.IVA.** Non è un tuo ricavo: è il contributo
+previdenziale che il cliente ti gira perché tu lo versi. I quattro scenari
+di accantonamento la coprono tutti abbondantemente — l'INPS
+sull'accantonamento vale il 17,47 % del lordo, la rivalsa il 3,85 % — ma la
+ripartizione ha comunque un **pavimento esplicito alla rivalsa**
+(`fatture/giroconto.py::calcola`): un importo scritto a mano che ci
+scendesse sotto viene alzato, altrimenti si sposterebbe sul conto personale
+denaro già destinato all'INPS. Accantonarla una seconda volta, invece,
+sarebbe accantonare due volte lo stesso denaro.
 
 ### Bollo
 
@@ -280,6 +328,8 @@ id dei due movimenti.
 
 **Le garanzie:**
 
+- la quota accantonata non scende mai sotto la **rivalsa INPS** della
+  fattura (vedi [§ 4](#rivalsa-inps));
 - si può fare solo a incasso avvenuto, e una volta sola;
 - se il secondo inserimento fallisce il primo viene tolto (niente spostamenti
   monchi);
@@ -387,6 +437,23 @@ terzi, non collegati alla P.IVA) restavano invisibili a
 offre più questa scelta: `tipo` è solo `entrata`/`uscita`, e "che tipo di
 entrata è" (P.IVA, stipendio, bonifico da qualcuno) lo dice sempre e solo
 la categoria — come per ogni altro movimento.
+
+### Una query che torna 1000 righe non ha finito
+
+PostgREST tronca ogni risposta a un tetto (di solito 1000 righe) e non lo
+segnala: la richiesta ha successo, i dati sono meno. `spese` ne ha già di
+più. Un totale calcolato su una select secca esce **più basso del vero**,
+senza errore, senza nulla che lo faccia notare — è il tipo di bug che si
+scopre solo confrontando due numeri che dovrebbero combaciare.
+
+Per questo tutto ciò che somma un periodo lungo pagina con `.range()`
+finché un blocco non torna incompleto: `spese/dati.py::righe_periodo`,
+`spese/dati.py::saldo_conto`, `fatture/fiscale.py::saldo_piva`.
+
+Lo stesso vale per il tetto applicativo: `spese/dati.py::movimenti()`
+tronca a 300 apposta, perché serve una lista da mostrare. **Non usarla per
+i totali** — la sua docstring lo dice, ed è stato comunque fatto: il saldo
+dell'anno su `/spese` contava solo i 300 movimenti più recenti.
 
 ### Il giroconto ha segno opposto sui due conti
 
