@@ -137,7 +137,8 @@ def link_categoria(client, categoria: str, sottocategoria: str | None = None):
 # ---------------------------------------------------------------------------
 
 def movimenti(client, anno=None, mese=None, tipo=None, categoria=None,
-              cerca=None, limite=300) -> list[dict]:
+              sottocategoria=None, metodo=None, importo_min=None,
+              importo_max=None, cerca=None, limite=300) -> list[dict]:
     """
     Elenco movimenti, dal piu' recente.
 
@@ -155,6 +156,14 @@ def movimenti(client, anno=None, mese=None, tipo=None, categoria=None,
             q = q.eq("tipo", tipo)
         if categoria:
             q = q.eq("categoria", categoria)
+        if sottocategoria:
+            q = q.eq("sottocategoria", sottocategoria)
+        if metodo:
+            q = q.ilike("metodo_pagamento", f"%{metodo}%")
+        if importo_min is not None:
+            q = q.gte("importo", importo_min)
+        if importo_max is not None:
+            q = q.lte("importo", importo_max)
         if cerca:
             q = q.ilike("descrizione", f"%{cerca}%")
         return _righe(q.limit(limite).execute())
@@ -361,6 +370,7 @@ def periodi_risparmio(client, limite=24) -> list[dict]:
         "Totale Altre Entrate":       "altre_entrate",
         "Totale Rimanente":           "rimanente",
         "Risparmio consigliato (€)":  "risparmio_consigliato",
+        "Risparmio effettivo (€)":    "risparmio_effettivo",
         "Totale Rimanente (finale)":  "rimanente_finale",
         "Quota Fondo Emergenze":      "quota_emergenze",
         "Quota Viaggi":               "quota_viaggi",

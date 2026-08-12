@@ -78,17 +78,26 @@ def movimenti_lista():
     mese = request.args.get("mese", type=int) or 0
     tipo = request.args.get("tipo") or ""
     categoria = request.args.get("categoria") or ""
+    sottocategoria = request.args.get("sottocategoria") or ""
+    metodo = (request.args.get("metodo") or "").strip()
+    importo_min = request.args.get("importo_min", type=float)
+    importo_max = request.args.get("importo_max", type=float)
     cerca = (request.args.get("q") or "").strip()
 
     righe = D.movimenti(client, anno=anno, mese=mese or None,
                         tipo=tipo or None, categoria=categoria or None,
+                        sottocategoria=sottocategoria or None,
+                        metodo=metodo or None,
+                        importo_min=importo_min, importo_max=importo_max,
                         cerca=cerca or None)
     t = D.totali(righe)
 
     anni = D.anni_disponibili(client)
     if anno not in anni:
         anni = sorted(set(anni + [anno]), reverse=True)
-    categorie = sorted({v["categoria"] for v in D.voci_categoria(client)})
+    voci_cat = D.voci_categoria(client)
+    categorie = sorted({v["categoria"] for v in voci_cat})
+    sottocategorie = sorted({v["sottocategoria"] for v in voci_cat if v["sottocategoria"]})
 
     def opzioni(valori, corrente, etichetta_vuota):
         out = [f'<option value="">{etichetta_vuota}</option>']
@@ -113,7 +122,30 @@ def movimenti_lista():
       </select>
       <input class="select-pill" style="min-width:150px" placeholder="Cerca…"
              value="{_esc(cerca)}" onchange="filtra('q', this.value)">
-    </div>'''
+      <a class="btn ghost" href="/spese/importa">{icon("download")}Importa da banca</a>
+    </div>
+    <details class="explain mb-3">
+      <summary>Filtri avanzati</summary>
+      <div class="field-group mt-2">
+        <div class="field"><label>Sottocategoria</label>
+          <select class="input" onchange="filtra('sottocategoria', this.value)">
+            {opzioni([(s, s) for s in sottocategorie], sottocategoria, "Tutte")}
+          </select></div>
+        <div class="field"><label>Metodo di pagamento</label>
+          <input class="input" placeholder="es. Webank, Contanti…" value="{_esc(metodo)}"
+                 onchange="filtra('metodo', this.value)"></div>
+      </div>
+      <div class="field-group">
+        <div class="field"><label>Importo minimo (€)</label>
+          <input class="input" type="number" step="0.01" min="0"
+                 value="{importo_min if importo_min is not None else ''}"
+                 onchange="filtra('importo_min', this.value)"></div>
+        <div class="field"><label>Importo massimo (€)</label>
+          <input class="input" type="number" step="0.01" min="0"
+                 value="{importo_max if importo_max is not None else ''}"
+                 onchange="filtra('importo_max', this.value)"></div>
+      </div>
+    </details>'''
 
     riepilogo = f'''
     <div class="grid kpi lead mb-3">

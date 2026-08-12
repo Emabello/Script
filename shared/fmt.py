@@ -58,3 +58,17 @@ def data_breve(iso: str | None) -> str:
         return f"{int(d)} {mesi[int(m) - 1]}"
     except (ValueError, IndexError):
         return iso[:10]
+
+
+def mese_anno(iso: str | None) -> str:
+    """'2026-07-08' -> 'Luglio 2026'. Calcolato dalla data stessa, non da
+    un campo derivato altrove: funziona anche se quel campo manca."""
+    if not iso:
+        return ""
+    mesi = ("Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+            "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre")
+    try:
+        y, m, d = iso[:10].split("-")
+        return f"{mesi[int(m) - 1]} {y}"
+    except (ValueError, IndexError):
+        return iso[:10]

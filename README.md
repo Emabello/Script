@@ -588,6 +588,175 @@ Senza, l'app se ne occupa comunque da sola via codice (`_stacca_da_fattura`
 in `fatture/fiscale.py`), ma senza la FK il database non lo garantisce: è
 un rinforzo, non un blocco a qualcosa che oggi si rompe.
 
+### 8.7 — Il giroconto apre un periodo di risparmio, come lo stipendio
+
+Da quando c'è la P.IVA il giroconto dal conto P.IVA è lo stipendio di
+fatto: `v_periodi_stipendio` delimitava i periodi solo sulle entrate
+categoria "Stipendio", quindi un giroconto restava "altre entrate" dentro
+un periodo che non si chiudeva mai. Verificato sui dati reali (simulazione
+Python sulle 966 righe di `spese`): oggi il periodo corrente parte dal
+01/07/2026 e non si chiude; con la migrazione si spezza correttamente il
+07/07/2026, e il giroconto dell'08/07 apre il nuovo periodo.
+
+La migrazione tocca due viste: `v_periodi_stipendio` (il confine include
+anche "Giroconto P.IVA") e `v_risparmi_mese` (esclude entrambe le
+categorie da "Totale Altre Entrate", altrimenti un giroconto verrebbe
+contato due volte; il "Mese" si calcola dalla data di inizio periodo,
+non dal prossimo bonifico che per il periodo aperto non esiste ancora;
+ed espone finalmente "Risparmio effettivo (€)", calcolato ma mai
+selezionato nella vista precedente).
+
+```sql
+create or replace view v_periodi_stipendio as
+with stipendi as (
+  select vs.data as data_bonifico,
+         vs.importo as importo_bonifico
+    from v_spese vs
+   where vs.tipo = 'entrata'
+     and vs.categoria in ('Stipendio', 'Giroconto P.IVA')
+), ord as (
+  select stipendi.data_bonifico,
+         stipendi.importo_bonifico,
+         lead(stipendi.data_bonifico) over (order by stipendi.data_bonifico) as prossimo_bonifico
+    from stipendi
+)
+select data_bonifico,
+       importo_bonifico,
+       prossimo_bonifico,
+       coalesce((prossimo_bonifico - interval '1 day')::timestamp with time zone,
+                current_date::timestamp with time zone) as fine_periodo
+  from ord
+ order by data_bonifico;
+
+
+create or replace view v_risparmi_mese as
+with per as (
+  select ps.data_bonifico,
+         ps.importo_bonifico,
+         ps.prossimo_bonifico,
+         ps.fine_periodo
+    from v_periodi_stipendio ps
+), agg as (
+  select per.data_bonifico,
+         per.prossimo_bonifico,
+         per.fine_periodo,
+         per.importo_bonifico,
+         round(coalesce(sum(case when vs.tipo = 'uscita' and vs.categoria = 'Fisso'
+                                  then vs.importo else 0 end), 0), 2) as totale_fisso,
+         round(coalesce(sum(case when vs.tipo = 'uscita' and vs.categoria = 'Personale'
+                                  then vs.importo else 0 end), 0), 2) as totale_personale,
+         round(coalesce(sum(case when vs.tipo = 'uscita' and vs.categoria = 'Benzina'
+                                  then vs.importo else 0 end), 0), 2) as totale_benzina,
+         round(coalesce(sum(case when vs.tipo = 'uscita' and vs.categoria = 'Viaggi'
+                                  then vs.importo else 0 end), 0), 2) as totale_viaggi,
+         round(coalesce(sum(case when vs.tipo = 'uscita'
+                                  then vs.importo else 0 end), 0), 2) as totale_speso,
+         -- Esclude sia Stipendio sia Giroconto P.IVA: entrambi aprono il
+         -- periodo (vedi v_periodi_stipendio), quindi sono gia' contati
+         -- come "importo_bonifico" — contarli anche qui li duplicherebbe.
+         round(coalesce(sum(case when vs.tipo = 'entrata'
+                                  and vs.categoria not in ('Stipendio', 'Giroconto P.IVA')
+                                  then vs.importo else 0 end), 0), 2) as totale_altre_entrate
+    from per
+    left join v_spese vs on vs.data >= per.data_bonifico and vs.data <= per.fine_periodo
+   group by per.data_bonifico, per.prossimo_bonifico, per.fine_periodo, per.importo_bonifico
+), eff as (
+  select rp.data_bonifico,
+         round(coalesce(rp.effettivo_risparmio, 0)::numeric, 2) as effettivo_risparmio
+    from risparmi_periodo rp
+), calc as (
+  select a.data_bonifico, a.prossimo_bonifico, a.fine_periodo, a.importo_bonifico,
+         a.totale_fisso, a.totale_personale, a.totale_benzina, a.totale_viaggi,
+         a.totale_speso, a.totale_altre_entrate,
+         p.saldo_iniziale, p.percentuale_risparmio, p.perc_fondo_emergenze,
+         p.perc_viaggi, p.perc_fondo_casa, p.perc_regali, p.perc_altro,
+         coalesce(e.effettivo_risparmio, 0) as effettivo_risparmio,
+         a.importo_bonifico + a.totale_altre_entrate - a.totale_speso
+           - coalesce(e.effettivo_risparmio, 0) as delta,
+         sum(a.importo_bonifico + a.totale_altre_entrate - a.totale_speso
+             - coalesce(e.effettivo_risparmio, 0))
+           over (order by a.data_bonifico rows unbounded preceding) as running_delta
+    from agg a
+    cross join lateral (
+      select i.saldo_iniziale, i.percentuale_risparmio, i.perc_fondo_emergenze,
+             i.perc_viaggi, i.perc_fondo_casa, i.perc_regali, i.perc_altro
+        from impostazioni i
+       where i.valido_dal <= a.data_bonifico
+       order by i.valido_dal desc
+       limit 1
+    ) p
+    left join eff e using (data_bonifico)
+), bal as (
+  select c.data_bonifico, c.prossimo_bonifico, c.fine_periodo, c.importo_bonifico,
+         c.totale_fisso, c.totale_personale, c.totale_benzina, c.totale_viaggi,
+         c.totale_speso, c.totale_altre_entrate,
+         c.saldo_iniziale, c.percentuale_risparmio, c.perc_fondo_emergenze,
+         c.perc_viaggi, c.perc_fondo_casa, c.perc_regali, c.perc_altro,
+         c.effettivo_risparmio, c.delta, c.running_delta,
+         coalesce(lag(c.running_delta) over (order by c.data_bonifico), 0) as running_delta_prev
+    from calc c
+), outt as (
+  select round((bal.saldo_iniziale + bal.running_delta_prev)::numeric, 2) as importo_prima_del_bonifico,
+         bal.data_bonifico, bal.prossimo_bonifico, bal.fine_periodo,
+         round(bal.importo_bonifico::numeric, 2) as importo_bonifico,
+         bal.totale_fisso, bal.totale_personale, bal.totale_benzina, bal.totale_viaggi,
+         bal.totale_speso, bal.totale_altre_entrate,
+         round(bal.importo_bonifico + bal.totale_altre_entrate - bal.totale_speso, 2) as totale_rimanente_bonifico,
+         bal.saldo_iniziale + bal.running_delta_prev + bal.importo_bonifico
+           + bal.totale_altre_entrate - bal.totale_speso as base_calcolo,
+         bal.effettivo_risparmio, bal.percentuale_risparmio, bal.perc_fondo_emergenze,
+         bal.perc_viaggi, bal.perc_fondo_casa, bal.perc_regali, bal.perc_altro
+    from bal
+), final as (
+  select outt.importo_prima_del_bonifico, outt.data_bonifico, outt.prossimo_bonifico,
+         outt.fine_periodo, outt.importo_bonifico, outt.totale_fisso, outt.totale_personale,
+         outt.totale_benzina, outt.totale_viaggi, outt.totale_speso, outt.totale_altre_entrate,
+         outt.totale_rimanente_bonifico, outt.base_calcolo, outt.effettivo_risparmio,
+         outt.percentuale_risparmio, outt.perc_fondo_emergenze, outt.perc_viaggi,
+         outt.perc_fondo_casa, outt.perc_regali, outt.perc_altro,
+         round(case when (outt.base_calcolo * outt.percentuale_risparmio) < 0 then 0
+                    else outt.base_calcolo * outt.percentuale_risparmio end::numeric, 2) as risparmio_consigliato
+    from outt
+)
+select importo_prima_del_bonifico as "Importo Prima Del Bonifico",
+       importo_prima_del_bonifico as "Importo Prima Del Bonifico (dup)",
+       data_bonifico as "Data bonifico",
+       prossimo_bonifico as "Data prossimo bonifico",
+       case extract(month from data_bonifico)::int
+         when 1 then 'gennaio' when 2 then 'febbraio' when 3 then 'marzo'
+         when 4 then 'aprile' when 5 then 'maggio' when 6 then 'giugno'
+         when 7 then 'luglio' when 8 then 'agosto' when 9 then 'settembre'
+         when 10 then 'ottobre' when 11 then 'novembre' when 12 then 'dicembre'
+         else null end as "Mese",
+       importo_bonifico as "Importo Bonifico",
+       totale_fisso as "Totale Fisso",
+       totale_personale as "Totale Personale",
+       totale_benzina as "Totale Benzina",
+       totale_viaggi as "Totale Viaggi",
+       totale_speso as "Totale Speso",
+       totale_altre_entrate as "Totale Altre Entrate",
+       round(totale_rimanente_bonifico, 2) as "Totale Rimanente",
+       risparmio_consigliato as "Risparmio consigliato (€)",
+       round((base_calcolo - effettivo_risparmio)::numeric, 2) as "Totale Rimanente (finale)",
+       round((effettivo_risparmio * perc_fondo_emergenze)::numeric, 2) as "Quota Fondo Emergenze",
+       round((effettivo_risparmio * perc_viaggi)::numeric, 2) as "Quota Viaggi",
+       round((effettivo_risparmio * perc_fondo_casa)::numeric, 2) as "Quota Fondo Casa",
+       round((effettivo_risparmio * perc_regali)::numeric, 2) as "Quota Regali",
+       round((effettivo_risparmio * perc_altro)::numeric, 2) as "Quota Altro",
+       fine_periodo as "_Fine periodo (debug)",
+       -- In fondo e non in mezzo apposta: CREATE OR REPLACE VIEW su Postgres
+       -- rifiuta di "rinominare" una colonna esistente spostandone la
+       -- posizione — accetta solo colonne aggiunte in coda.
+       effettivo_risparmio as "Risparmio effettivo (€)"
+  from final
+ order by data_bonifico;
+```
+
+Nel codice, `spese/risparmi.py` e `spese/dati.py` già leggono il nuovo
+campo "Risparmio effettivo (€)"; finché la migrazione non è applicata la
+vista continua a non esporlo, l'app lo tratta come sempre-zero (il
+comportamento che aveva prima) senza errori.
+
 ---
 
 ## 9. Sicurezza

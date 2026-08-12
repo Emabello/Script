@@ -19,6 +19,7 @@ from shared.fmt import eur, eur_segno, data_breve
 # I sotto-moduli registrano le loro rotte sul blueprint quando importati.
 from . import movimenti   # noqa: E402,F401
 from . import risparmi    # noqa: E402,F401
+from . import importa     # noqa: E402,F401
 
 
 def _esc(v) -> str:
