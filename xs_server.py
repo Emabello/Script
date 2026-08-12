@@ -51,8 +51,13 @@ def ensure_login():
     if u and p:
         client.login(u, p)
 
-ALLOW_NO_PIN = {'index', 'manifest', 'icon192', 'icon512', 'appleicon',
-                'sw', 'api_status', 'api_unlock', 'oauth_start', 'oauth_callback', 'launchpad', 'kpi_fatture', 'kpi_spese', 'health'}
+# Solo cio' che serve a MOSTRARE il gate (o a superarlo) resta raggiungibile
+# senza sessione: risorse statiche della PWA e i tre modi di sblocco (PIN,
+# stato, impronta — quest'ultima aggiunta da app.py). Tutto il resto, pagine
+# HTML comprese, prima non era protetto: bastava l'URL per leggere fatture,
+# IBAN e movimenti senza mai inserire il PIN. Vedi _gate().
+ALLOW_NO_PIN = {'manifest', 'icon192', 'icon512', 'appleicon',
+                'sw', 'api_status', 'api_unlock', 'health'}
 
 @app.before_request
 def _gate():
@@ -60,13 +65,21 @@ def _gate():
         return
     if request.endpoint in ALLOW_NO_PIN or request.endpoint is None:
         return
-    # Proteggi /api/*, /fatture/api/*, /spese/api/*
+    if session.get('ok'):
+        return
+    # Proteggi /api/*, /fatture/api/*, /spese/api/* con un 401 JSON: e' li'
+    # che il gate del client intercetta la risposta e si riapre.
     p = request.path
     is_api = (p.startswith('/api/')
               or p.startswith('/fatture/api/')
               or p.startswith('/spese/api/'))
-    if is_api and not session.get('ok'):
+    if is_api:
         return jsonify({'locked': True}), 401
+    # Ogni altra rotta e' una pagina HTML: invece di renderla (dati veri
+    # nel markup, PIN o no), rispondi con la shell vuota + gate. Sbloccare
+    # ricarica la stessa URL, che stavolta arriva con la sessione valida.
+    from shared.theme import locked_shell
+    return Response(locked_shell(), mimetype='text/html')
 
 
 def parse_date(s):
@@ -846,7 +859,7 @@ function isoLocal(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(
 const todayISO=()=>isoLocal(new Date());
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),2200);}
 
-async function loadCatalog(){catalog=await(await fetch("/api/catalog")).json();}
+async function loadCatalog(){try{const r=await fetch("/api/catalog");if(!r.ok)throw 0;catalog=await r.json();}catch(e){catalog=[];toast("Catalogo commesse non disponibile");}}
 async function loadMe(){const me=await(await fetch("/api/me")).json();document.getElementById("set-username").value=me.username||"";}
 
 function weekMonday(d){const x=new Date(d);const wd=(x.getDay()+6)%7;x.setDate(x.getDate()-wd);x.setHours(0,0,0,0);return x;}
@@ -857,8 +870,11 @@ function monthSpan(year,monthIdx){const first=new Date(year,monthIdx,1);const la
 async function ensureMonth(iso){
   const key=monthKey(iso); if(loaded.has(key))return;
   const [y,m]=key.split("-").map(Number); const [s,e]=monthSpan(y,m-1);
-  const data=await(await fetch("/api/range?start="+s+"&end="+e)).json();
-  Object.assign(cache,data); loaded.add(key);
+  try{
+    const r=await fetch("/api/range?start="+s+"&end="+e); if(!r.ok)throw 0;
+    const data=await r.json();
+    Object.assign(cache,data); loaded.add(key);
+  }catch(e){ toast("Portale ore non raggiungibile"); }
 }
 // Il caricamento è sempre per mese: una settimana può stare a cavallo di due mesi,
 // quindi ci assicuriamo che entrambi i mesi toccati dalla settimana siano scaricati.

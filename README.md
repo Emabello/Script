@@ -269,6 +269,22 @@ Il giroconto **non è una spesa deducibile né un ricavo**: è denaro che cambia
 conto. Per questo sul lato P.IVA usa `tipo=giroconto`, che i calcoli fiscali
 ignorano, e viene sottratto dal saldo dei movimenti P.IVA.
 
+### Il giroconto manuale
+
+Non tutti gli spostamenti nascono da una fattura incassata: da
+`/fatture/spese-piva/nuova` si può registrare un giroconto anche a mano,
+scegliendo `tipo=giroconto`. Succede la stessa cosa della ripartizione, solo
+innescata da qui invece che dall'incasso: l'app scrive anche la riga gemella
+su `spese` (`tipo=entrata`, categoria *Giroconto P.IVA*), collegata tramite
+`b2f_spese_piva.giroconto_personale_id` — vedi [§ 8.4](#84--collegamento-dei-giroconti-manuali).
+
+Le stesse garanzie della ripartizione automatica valgono qui: se il secondo
+inserimento fallisce il primo viene tolto; il movimento su `spese` non si
+cancella da `/spese`, va eliminato il movimento P.IVA che lo ha generato,
+così spariscono entrambe le righe; da `/fatture/spese-piva` tipo e importo di
+un giroconto (manuale o da fattura) non si possono più cambiare una volta
+registrato, per non disallineare i due conti — va eliminato e rifatto.
+
 ---
 
 ## 6. Il ciclo di vita della fattura
@@ -347,7 +363,7 @@ Da lanciare nell'**SQL Editor di Supabase**, in quest'ordine. Sono tutte
 idempotenti: rilanciarle non fa danni.
 
 Lo schema fino al ciclo di vita e alla ripartizione è già applicato. Restano
-queste tre.
+queste quattro.
 
 ### 8.1 — Categoria del giroconto sul conto personale
 
@@ -485,7 +501,20 @@ where id = 1;
 
 I dati si cambiano anche da `/fatture/emittente`.
 
-### 8.4 — Ispezionare lo schema
+### 8.4 — Collegamento dei giroconti manuali
+
+Da `/fatture/spese-piva/nuova` si può registrare un giroconto anche senza
+passare da una fattura (un trasferimento libero al conto personale). Senza
+questa colonna l'app non ha dove scrivere quale riga di `spese` è nata da
+quale movimento P.IVA, e non riuscirebbe a tenerle in sincrono quando una
+delle due si elimina.
+
+```sql
+alter table b2f_spese_piva
+  add column if not exists giroconto_personale_id integer;
+```
+
+### 8.5 — Ispezionare lo schema
 
 Quando serve verificare com'è fatto davvero il database (è così che sono
 emersi i disallineamenti qui sopra):

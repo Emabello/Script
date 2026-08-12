@@ -259,20 +259,37 @@ def elimina(client, mid: int) -> dict:
         return {"error": str(e)[:200]}
 
 
-def collegato_a_fattura(client, mid: int):
+def collegato(client, mid: int) -> dict | None:
     """
-    Numero della fattura il cui giroconto ha prodotto questo movimento.
+    Origine del giroconto che ha prodotto questo movimento, se ce n'e'
+    una: la ripartizione automatica di una fattura, o un giroconto
+    registrato a mano dalla sezione Spese P.IVA.
 
-    Serve a impedire che si cancelli a mano meta' di uno spostamento:
-    l'altra riga resterebbe sul conto P.IVA senza contropartita.
+    Serve a impedire che si cancelli o alteri a meta' uno spostamento fra
+    conti: l'altra riga resterebbe senza contropartita.
     """
+    # Nota: le righe di ritorno hanno gia' un campo `tipo` proprio
+    # (entrata/uscita/giroconto): il discriminante qui si chiama `origine`
+    # apposta, per non finire sovrascritto dallo spread della riga.
     try:
         r = (client.table("b2f_fatture").select("id, numero")
              .eq("giroconto_personale_id", mid).limit(1).execute())
         righe = _righe(r)
-        return righe[0] if righe else None
+        if righe:
+            return {"origine": "fattura", "id": righe[0].get("id"),
+                    "numero": righe[0].get("numero")}
     except Exception:
-        return None
+        pass
+    try:
+        r = (client.table("b2f_spese_piva").select("id, descrizione")
+             .eq("giroconto_personale_id", mid).limit(1).execute())
+        righe = _righe(r)
+        if righe:
+            return {"origine": "piva", "id": righe[0].get("id"),
+                    "descrizione": righe[0].get("descrizione")}
+    except Exception:
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------

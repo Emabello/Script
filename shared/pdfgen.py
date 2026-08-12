@@ -70,7 +70,10 @@ def emittente_to_json(em: dict) -> str:
         "studio_nome":  em.get("studio_nome") or "",
         "studio_email": em.get("studio_email") or "",
     }
-    return json.dumps(d, ensure_ascii=False)
+    # niente "<" nel blob: iniettato in un <script> letterale (vedi
+    # pdf_script sotto), un campo con "</script>" dentro chiuderebbe il
+    # tag prima e inietterebbe markup.
+    return json.dumps(d, ensure_ascii=False).replace("<", "\\u003c")
 
 
 def pdf_script(emittente: dict) -> str:

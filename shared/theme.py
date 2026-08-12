@@ -233,6 +233,11 @@ html[data-theme="light"] [data-swatch="graphite"]{{background:#2b2f38}}
 # Pezzi della shell
 # ---------------------------------------------------------------------------
 
+def _esc(v) -> str:
+    return (str(v) if v is not None else "").replace("&", "&amp;").replace(
+        "<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 _CURRENT = ' aria-current="page"'
 
 
@@ -564,6 +569,20 @@ def _inject_pin_gate(html: str) -> str:
     return html + _PIN_GATE
 
 
+def locked_shell() -> str:
+    """
+    Pagina servita al posto di una rotta protetta, quando manca una
+    sessione sbloccata: stessa occhiata (tema, font) della pagina vera ma
+    a corpo vuoto — solo il gate del PIN, nessun dato.
+
+    Chi sblocca (PIN o impronta) ricarica la stessa URL: arriva stavolta
+    con la sessione valida e il server rende il contenuto vero. Niente
+    redirect ne' pagina dedicata da tenere allineata: e' la stessa shell
+    di sempre, semplicemente senza `content`.
+    """
+    return page_head("B2F Hub") + f"<body>{_PIN_GATE}</body></html>"
+
+
 # ---------------------------------------------------------------------------
 # Timesheet: la pagina /ore genera markup proprio. inject_app_header la
 # avvolge nella shell condivisa senza toccarne la logica.
@@ -711,7 +730,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
         righe = "".join(
             f'<a class="row" href="/fatture/{fid}">'
             f'<span class="k">{data_breve(data)}</span>'
-            f'<span class="t">{numero} · {cliente}</span>'
+            f'<span class="t">{_esc(numero)} · {_esc(cliente)}</span>'
             f'<span class="v tnum">€ {eur(totale)}</span></a>'
             for fid, numero, cliente, data, totale in fatture
         )
@@ -727,7 +746,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
     if movimenti:
         righe = "".join(
             f'<div class="row"><span class="k">{data_breve(data)}</span>'
-            f'<span class="t">{desc}</span>'
+            f'<span class="t">{_esc(desc)}</span>'
             f'<span class="v tnum {"pos" if tipo == "entrata" else "neg" if tipo == "uscita" else ""}">'
             f'{eur_segno(imp if tipo == "entrata" else -imp)}</span></div>'
             for desc, data, imp, tipo in movimenti

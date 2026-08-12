@@ -166,6 +166,34 @@ def api_giroconto_esegui(fid):
     numero = f.get("numero") or f"#{fid}"
     etichetta = acc.ETICHETTE[scenario][0]
 
+    # --- 0) Il lordo, sul conto P.IVA, se non c'e' gia' -------------------
+    # La ripartizione sposta la tua quota fuori dal conto P.IVA: se il
+    # lordo incassato non ci e' mai arrivato (perche' non si e' passati
+    # da "Registra entrata su P.IVA"), il saldo di quel conto finirebbe
+    # sotto della cifra spostata, come se il cliente non avesse pagato.
+    # Qui la ripartizione si basta da sola, e se l'incasso era gia' stato
+    # registrato a mano non lo duplica.
+    id_entrata = f.get("spesa_piva_id")
+    id_entrata_nuova = None   # solo se creata ora: e' quella da disfare in caso di rollback
+    if not id_entrata:
+        from .storico import cliente_label
+        riga_entrata = {
+            "data":        quando,
+            "tipo":        "entrata",
+            "importo":     calc["lordo"],
+            "descrizione": f"Fattura {numero} — {cliente_label(f)}",
+            "categoria":   "fatturato",
+            "fattura_id":  fid,
+        }
+        try:
+            ins_e = sb.table("b2f_spese_piva").insert(riga_entrata).execute()
+            id_entrata = id_entrata_nuova = (ins_e.data or [{}])[0].get("id")
+            if not id_entrata:
+                return jsonify({"error": "insert incasso P.IVA senza id di ritorno"}), 500
+        except Exception as e:
+            return jsonify({"error": f"errore nel registrare l'incasso sul conto "
+                                     f"P.IVA: {str(e)[:200]}"}), 500
+
     # --- 1) Uscita dal conto P.IVA ---------------------------------------
     riga_piva = {
         "data":        quando,
@@ -204,11 +232,15 @@ def api_giroconto_esegui(fid):
     })
     if esito.get("error") or not esito.get("id"):
         # Rollback: senza la riga sul personale il giroconto sarebbe monco,
-        # e il conto P.IVA risulterebbe svuotato verso il nulla.
-        try:
-            sb.table("b2f_spese_piva").delete().eq("id", id_piva).execute()
-        except Exception:
-            pass
+        # e il conto P.IVA risulterebbe svuotato verso il nulla. Se il
+        # lordo era stato registrato qui sopra (non gia' prima), via anche
+        # quello: altrimenti resterebbe un incasso senza ripartizione.
+        for tabella, rid in (("b2f_spese_piva", id_piva), ("b2f_spese_piva", id_entrata_nuova)):
+            try:
+                if rid:
+                    sb.table(tabella).delete().eq("id", rid).execute()
+            except Exception:
+                pass
         return jsonify({"error": "errore sul conto personale: "
                                  f'{esito.get("error") or "nessun id di ritorno"}'}), 500
     id_pers = esito["id"]
@@ -221,11 +253,13 @@ def api_giroconto_esegui(fid):
         "data_giroconto":          quando,
         "giroconto_piva_id":       id_piva,
         "giroconto_personale_id":  id_pers,
+        "spesa_piva_id":           id_entrata,
     }
     try:
         sb.table("b2f_fatture").update(upd).eq("id", fid).execute()
     except Exception as e:
-        for tabella, rid in (("b2f_spese_piva", id_piva), ("spese", id_pers)):
+        for tabella, rid in (("b2f_spese_piva", id_piva), ("spese", id_pers),
+                             ("b2f_spese_piva", id_entrata_nuova)):
             try:
                 if rid:
                     sb.table(tabella).delete().eq("id", rid).execute()

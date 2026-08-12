@@ -21,6 +21,11 @@ from . import movimenti   # noqa: E402,F401
 from . import risparmi    # noqa: E402,F401
 
 
+def _esc(v) -> str:
+    return (str(v) if v is not None else "").replace("&", "&amp;").replace(
+        "<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 @spese_bp.get("/")
 def index():
     client = D.sb()
@@ -39,8 +44,8 @@ def index():
     ultimi = "".join(f'''
       <div class="row">
         <span class="k">{data_breve(r.get("data"))}</span>
-        <span class="t">{(r.get("descrizione") or "—")[:44]}
-          <span class="sub">{r.get("categoria") or "senza categoria"}</span></span>
+        <span class="t">{_esc((r.get("descrizione") or "—")[:44])}
+          <span class="sub">{_esc(r.get("categoria") or "senza categoria")}</span></span>
         <span class="v tnum {"pos" if D.TIPI_SEGNO.get(r.get("tipo"), 0) > 0 else "neg"}">
           {eur_segno(abs(float(r.get("importo") or 0)) * (D.TIPI_SEGNO.get(r.get("tipo"), 1)))}</span>
       </div>''' for r in righe_anno[:8])

@@ -241,6 +241,15 @@ def card_html(s: dict, titolo: str = "Da accantonare",
     def q(v):
         return (v / lordo * 100) if lordo else 0.0
 
+    # Ultimo segmento della barra ("Costi e margine"): il resto di
+    # importi[pref] oltre INPS e imposta. Non e' sempre costi_fissi+margine
+    # in senso stretto — per "prudente"/"sicuro" include anche la quota
+    # acconti — ma e' esattamente cosi' che lo ricalcola pick() lato client
+    # quando si cambia scenario: se qui si usasse sempre costi_fissi+margine
+    # (validi solo per "consigliato"), il rendering iniziale di uno
+    # scenario diverso da quello di default non tornerebbe con il totale.
+    extra_pref = max(s["importi"][pref] - s["inps"] - s["imposta"], 0.0)
+
     ctx = f'<div class="stat-hint muted small">{contesto}</div>' if contesto else ""
 
     import json
@@ -279,13 +288,13 @@ def card_html(s: dict, titolo: str = "Da accantonare",
     <span data-acc-bar-netto="{uid}" style="background:var(--pos);width:{q(s['netti'][pref]):.2f}%"></span>
     <span style="background:var(--accent);width:{q(s['inps']):.2f}%"></span>
     <span style="background:var(--warn);width:{q(s['imposta']):.2f}%"></span>
-    <span data-acc-bar-extra="{uid}" style="background:var(--ink-4);width:{q(s['costi_fissi'] + s['margine']):.2f}%"></span>
+    <span data-acc-bar-extra="{uid}" style="background:var(--ink-4);width:{q(extra_pref):.2f}%"></span>
   </div>
   <div class="legend">
     <div><i class="dot" style="background:var(--pos)"></i>Tuoi</div>
     <div><i class="dot" style="background:var(--accent)"></i>INPS € {eur(s["inps"])}</div>
     <div><i class="dot" style="background:var(--warn)"></i>Imposta € {eur(s["imposta"])}</div>
-    <div data-acc-extra-legend="{uid}"><i class="dot" style="background:var(--ink-4)"></i>Costi e margine € {eur(s["costi_fissi"] + s["margine"])}</div>
+    <div data-acc-extra-legend="{uid}"><i class="dot" style="background:var(--ink-4)"></i>Costi e margine € {eur(extra_pref)}</div>
   </div>
   {ctx}
 

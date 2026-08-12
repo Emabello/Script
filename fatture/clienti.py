@@ -35,7 +35,15 @@ CAMPI = [
 ]
 
 
+def _esc(v) -> str:
+    return (str(v) if v is not None else "").replace("&", "&amp;").replace(
+        "<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 def _label(c: dict) -> str:
+    """Nome leggibile del cliente. Testo grezzo: chi lo stampa in HTML
+    deve passarlo da _esc(), perche' nome/cognome/denominazione sono
+    testo libero digitato dall'utente."""
     tipo = (c.get("tipo") or "azienda")
     if tipo == "privato":
         return f'{c.get("nome") or ""} {c.get("cognome") or ""}'.strip() or "—"
@@ -44,9 +52,9 @@ def _label(c: dict) -> str:
 
 def _sub(c: dict) -> str:
     parts = []
-    if c.get("piva"): parts.append(f"P.IVA {c['piva']}")
-    if c.get("cf") and not c.get("piva"): parts.append(f"CF {c['cf']}")
-    if c.get("comune"): parts.append(c["comune"])
+    if c.get("piva"): parts.append(f"P.IVA {_esc(c['piva'])}")
+    if c.get("cf") and not c.get("piva"): parts.append(f"CF {_esc(c['cf'])}")
+    if c.get("comune"): parts.append(_esc(c["comune"]))
     return " · ".join(parts) or "—"
 
 
@@ -107,7 +115,7 @@ def clienti_list():
         toolbar = f'''
         <div class="toolbar">
           <input class="select-pill" id="q_search" type="search" aria-label="Cerca cliente"
-                 placeholder="Cerca…" value="{q}" style="flex:1;min-width:150px"
+                 placeholder="Cerca…" value="{_esc(q)}" style="flex:1;min-width:150px"
                  oninput="clearTimeout(window.__st);window.__st=setTimeout(()=>{{
                    const u=new URL(location.href);
                    if(this.value){{u.searchParams.set('q',this.value);}}else{{u.searchParams.delete('q');}}
@@ -141,7 +149,7 @@ def clienti_list():
                 <a class="item" href="/fatture/clienti/{c["id"]}">
                   <span class="ico neutral">{_icon("clienti")}</span>
                   <span class="body">
-                    <span class="n">{_label(c)}</span>
+                    <span class="n">{_esc(_label(c))}</span>
                     <span class="m">{_sub(c)}</span>
                   </span>
                   <span class="end">
@@ -165,7 +173,7 @@ def clienti_list():
 
 def _form_html(c: dict | None = None) -> str:
     c = c or {}
-    v = lambda k: (c.get(k) or "").replace('"', '&quot;')
+    v = lambda k: _esc(c.get(k) or "")
     tipo_current = c.get("tipo") or "azienda"
     tipo_options = "".join(
         f'<option value="{k}"{" selected" if k==tipo_current else ""}>{lbl}</option>'
@@ -245,7 +253,7 @@ def _form_html(c: dict | None = None) -> str:
       </div>
 
       <div class="field"><label>Note</label>
-        <textarea id="f_note">{c.get('note') or ''}</textarea></div>
+        <textarea id="f_note">{_esc(c.get('note') or '')}</textarea></div>
 
       <div class="actions">
         <button type="button" class="btn" onclick="onSubmit({cid or 'null'})">{submit_lbl}</button>
@@ -351,9 +359,9 @@ def cliente_edit(cid):
     return _render(
         _form_html(c),
         eyebrow="Cliente",
-        title_html=f'<em>{_label(c)[:24]}</em>',
+        title_html=f'<em>{_esc(_label(c)[:24])}</em>',
         breadcrumb=[("Fatture", "/fatture"), ("Clienti", "/fatture/clienti"),
-                    (_label(c)[:20], "")],
+                    (_esc(_label(c)[:20]), "")],
     )
 
 

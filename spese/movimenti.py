@@ -194,16 +194,27 @@ def _form(client, m: dict | None = None) -> str:
 
     # Il movimento che nasce da un giroconto ha una contropartita sul
     # conto P.IVA: si dice, e si impedisce di cancellarlo da qui.
-    collegato = D.collegato_a_fattura(client, mid) if modifica else None
+    collegato = D.collegato(client, mid) if modifica else None
     avviso = ""
     if collegato:
+        if collegato["origine"] == "fattura":
+            origine = f'del giroconto della fattura <strong>{_esc(collegato.get("numero") or "")}</strong>'
+            istruzione = '"Annulla la ripartizione" sulla fattura'
+        else:
+            origine = 'di un giroconto registrato in Spese P.IVA'
+            istruzione = "l'eliminazione dalla sezione Spese P.IVA"
         avviso = f'''<div class="notice info mb-4">
-          Questo movimento è la contropartita del giroconto della fattura
-          <strong>{_esc(collegato.get("numero") or "")}</strong>. Per annullarlo usa
-          "Annulla la ripartizione" sulla fattura: così spariscono entrambe le
-          righe, qui e sul conto P.IVA.
+          Questo movimento è la contropartita {origine}. Per annullarlo usa
+          {istruzione}: così spariscono entrambe le righe, qui e sul conto P.IVA.
         </div>'''
 
+    # Un movimento collegato non si salva da qui in nessun caso: il form
+    # spedisce sempre tipo e importo insieme al resto, e l'endpoint li
+    # rifiuta. Meglio non mostrare un bottone che fallirebbe sempre.
+    ro = " disabled" if collegato else ""
+    salva_btn = ("" if collegato else
+                 f'<button type="button" class="btn" onclick="onSalva()">'
+                 f'{"Aggiorna" if modifica else "Registra movimento"}</button>')
     elimina_btn = ""
     if modifica and not collegato:
         elimina_btn = ('<button type="button" class="btn danger" '
@@ -215,30 +226,30 @@ def _form(client, m: dict | None = None) -> str:
     <div class="card">
       <div class="field-group">
         <div class="field"><label>Data</label>
-          <input type="date" id="f_data"
+          <input type="date" id="f_data"{ro}
                  value="{_esc(m.get("data") or date.today().isoformat())}"></div>
         <div class="field"><label>Importo (€)</label>
-          <input type="number" step="0.01" min="0" inputmode="decimal" id="f_importo"
+          <input type="number" step="0.01" min="0" inputmode="decimal" id="f_importo"{ro}
                  value="{abs(float(m.get("importo") or 0)) or ""}"></div>
       </div>
       <div class="field"><label>Tipo</label>
-        <select id="f_tipo">
+        <select id="f_tipo"{ro}>
           {"".join(f'<option value="{k}"{" selected" if k == tipo_corrente else ""}>{lbl}</option>' for k, lbl in D.TIPI)}
         </select>
         <div class="hint">L'importo è sempre positivo: la direzione la dà il tipo.</div>
       </div>
       <div class="field"><label>Descrizione</label>
-        <input id="f_descrizione" value="{_esc(m.get("descrizione"))}"></div>
+        <input id="f_descrizione"{ro} value="{_esc(m.get("descrizione"))}"></div>
       <div class="field-group">
         <div class="field"><label>Categoria</label>
-          <select id="f_categoria" onchange="aggiornaSub()">
+          <select id="f_categoria"{ro} onchange="aggiornaSub()">
             <option value="">—</option>{cat_opts}
           </select></div>
         <div class="field"><label>Sottocategoria</label>
-          <select id="f_sottocategoria"><option value="">—</option></select></div>
+          <select id="f_sottocategoria"{ro}><option value="">—</option></select></div>
       </div>
       <div class="field"><label>Metodo di pagamento</label>
-        <input id="f_metodo" list="metodi" value="{_esc(m.get("metodo_pagamento"))}">
+        <input id="f_metodo"{ro} list="metodi" value="{_esc(m.get("metodo_pagamento"))}">
         <datalist id="metodi">
           <option value="Bancomat"><option value="Carta di credito">
           <option value="Contanti"><option value="Bonifico">
@@ -246,8 +257,7 @@ def _form(client, m: dict | None = None) -> str:
         </datalist>
       </div>
       <div class="actions">
-        <button type="button" class="btn" onclick="onSalva()">
-          {"Aggiorna" if modifica else "Registra movimento"}</button>
+        {salva_btn}
         {elimina_btn}
         <a class="btn ghost" href="/spese/movimenti">Annulla</a>
       </div>
@@ -397,11 +407,27 @@ def api_movimento_crea():
     return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
 
 
+def _messaggio_collegato(collegato: dict, verbo: str) -> str:
+    if collegato["origine"] == "fattura":
+        return (f'Questo movimento è la contropartita del giroconto della fattura '
+                f'{collegato.get("numero") or ""}. {verbo} dalla fattura, così '
+                f'spariscono entrambe le righe.')
+    return (f'Questo movimento è la contropartita di un giroconto registrato in '
+            f'Spese P.IVA. {verbo} da lì, così spariscono entrambe le righe.')
+
+
 @spese_bp.patch("/api/movimenti/<int:mid>")
 def api_movimento_aggiorna(mid):
     client, err = _client_o_503()
     if err:
         return err
+    # Le guardie stanno qui e non solo nel form: un giroconto alterato a
+    # meta' disallineerebbe i due conti senza che nulla lo segnali.
+    collegato = D.collegato(client, mid)
+    if collegato:
+        return jsonify({"error": _messaggio_collegato(
+            collegato, "Annulla la ripartizione" if collegato["origine"] == "fattura"
+                       else "Eliminalo")}), 409
     esito = D.aggiorna(client, mid, request.get_json(silent=True) or {})
     return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
 
@@ -413,12 +439,11 @@ def api_movimento_elimina(mid):
         return err
     # Meta' giroconto non si cancella da qui: l'altra riga resterebbe sul
     # conto P.IVA senza contropartita, e i due conti non tornerebbero piu'.
-    collegato = D.collegato_a_fattura(client, mid)
+    collegato = D.collegato(client, mid)
     if collegato:
-        return jsonify({"error": (
-            f'Questo movimento è la contropartita del giroconto della fattura '
-            f'{collegato.get("numero") or ""}. Annulla la ripartizione dalla '
-            f'fattura, così spariscono entrambe le righe.')}), 409
+        return jsonify({"error": _messaggio_collegato(
+            collegato, "Annulla la ripartizione" if collegato["origine"] == "fattura"
+                       else "Eliminalo")}), 409
     esito = D.elimina(client, mid)
     return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
 

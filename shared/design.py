@@ -461,8 +461,6 @@ ul,ol{margin:0;padding:0;list-style:none}
   font-size:clamp(26px,5.5vw,34px);line-height:1.05;letter-spacing:-.015em;
   font-variant-numeric:tabular-nums;
 }
-.stat .val/* Utility per testo: usa la variante leggibile, non quella grafica. */
-.accent{color:var(--accent-text)}
 .stat .lbl{font-size:12px;color:var(--ink-3)}
 .stat .hint{font-size:12px;color:var(--ink-3);margin-top:2px}
 .stat.sm .val{font-size:22px}
@@ -633,7 +631,7 @@ html[data-theme="light"] .input{background:var(--surface-3)}
   outline:none;border-color:var(--accent);
   box-shadow:0 0 0 3px var(--accent-soft);
 }
-.field input[disabled],.field select[disabled]{opacity:.55;cursor:not-allowed}
+.field input[disabled],.field select[disabled],.field textarea[disabled]{opacity:.55;cursor:not-allowed}
 .field textarea{min-height:84px;resize:vertical;line-height:1.5}
 .field.inline{flex-direction:row;align-items:center;gap:var(--sp-3)}
 .field.inline label{font-size:14px;font-weight:400;color:var(--ink);margin:0}

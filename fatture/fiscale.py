@@ -71,6 +71,11 @@ def _supabase_or_error():
     return get_client(), None
 
 
+def _esc(v) -> str:
+    return (str(v) if v is not None else "").replace("&", "&amp;").replace(
+        "<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 # ---------------------------------------------------------------------------
 # Calcolo situazione fiscale
 # ---------------------------------------------------------------------------
@@ -934,12 +939,12 @@ def spese_piva_list():
         items = []
         for m in rows:
             segno, cls = _movimento_label(m)
-            cat = cat_lbl.get(m.get("categoria"), m.get("categoria") or "—")
+            cat = _esc(cat_lbl.get(m.get("categoria"), m.get("categoria") or "—"))
             items.append(f'''
             <a class="item" href="/fatture/spese-piva/{m["id"]}">
               <span class="ico {cls or "neutral"}">{_icon("wallet")}</span>
               <span class="body">
-                <span class="n">{(m.get("descrizione") or "—")}</span>
+                <span class="n">{_esc(m.get("descrizione") or "—")}</span>
                 <span class="m">{_fmt_date(m.get("data"))} · {cat}</span>
               </span>
               <span class="end">
@@ -952,7 +957,7 @@ def spese_piva_list():
                    breadcrumb=breadcrumb, fab=("Nuovo movimento", "/fatture/spese-piva/nuova"))
 
 
-def _movimento_form_html(m: dict | None = None) -> str:
+def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None) -> str:
     m = m or {}
     v = lambda k, d="": (m.get(k) if m.get(k) is not None else d)
     tipo_current = m.get("tipo") or "uscita"
@@ -964,41 +969,61 @@ def _movimento_form_html(m: dict | None = None) -> str:
     mid = m.get("id") or ""
     is_edit = bool(mid)
     submit_lbl = "Aggiorna" if is_edit else "Registra movimento"
+
+    # Un movimento che fa parte di un giroconto non si tocca da qui: si
+    # può solo, quando questa e' l'origine dello spostamento, eliminarlo
+    # (cosa che porta via anche la contropartita). Le guardie vere stanno
+    # nell'endpoint; qui e' solo per non lasciare che l'utente provi un
+    # salvataggio che verrebbe comunque rifiutato.
+    bloccato = bool(collegamento)
+    delete_ok = (not bloccato) or bool(collegamento.get("delete_ok"))
+    ro = " readonly disabled" if bloccato else ""
+
+    avviso = (f'<div class="notice info mb-4">{collegamento["msg"]}</div>'
+              if collegamento else "")
+    submit_btn = ("" if bloccato else
+                  f'<button type="button" class="btn" onclick="onSubmit({mid or "null"})">{submit_lbl}</button>')
     delete_btn = (f'<button type="button" class="btn danger" onclick="onElimina({mid})">Elimina</button>'
-                  if is_edit else "")
+                  if is_edit and delete_ok else "")
+    torna_btn = ('<a class="btn ghost" href="/fatture/spese-piva">Torna ai movimenti</a>'
+                 if bloccato and not delete_ok else "")
 
     return f'''
+    <div class="narrow">
+    {avviso}
     <div class="card">
       <div class="field-group">
         <div class="field"><label>Data</label>
-          <input type="date" id="f_data" value="{v('data', date.today().isoformat())}"></div>
+          <input type="date" id="f_data" value="{v('data', date.today().isoformat())}"{ro}></div>
         <div class="field"><label>Importo (€)</label>
-          <input type="number" step="0.01" inputmode="decimal" id="f_importo" value="{v('importo', 0)}"></div>
+          <input type="number" step="0.01" inputmode="decimal" id="f_importo" value="{v('importo', 0)}"{ro}></div>
       </div>
       <div class="field"><label>Tipo</label>
-        <select id="f_tipo">
+        <select id="f_tipo"{ro}>
           <option value="entrata"{" selected" if tipo_current=="entrata" else ""}>Entrata</option>
           <option value="uscita"{" selected" if tipo_current=="uscita" else ""}>Uscita</option>
           <option value="giroconto"{" selected" if tipo_current=="giroconto" else ""}>Giroconto</option>
         </select></div>
       <div class="field"><label>Descrizione</label>
-        <input id="f_descrizione" value="{(v('descrizione') or '').replace(chr(34), '&quot;')}"></div>
+        <input id="f_descrizione" value="{_esc(v('descrizione'))}"{ro}></div>
       <div class="field-group">
         <div class="field"><label>Categoria</label>
-          <select id="f_categoria"><option value="">—</option>{cat_opts}</select></div>
+          <select id="f_categoria"{ro}><option value="">—</option>{cat_opts}</select></div>
         <div class="field"><label>Sottocategoria</label>
-          <input id="f_sottocategoria" value="{v('sottocategoria') or ''}"></div>
+          <input id="f_sottocategoria" value="{_esc(v('sottocategoria'))}"{ro}></div>
       </div>
       <div class="field inline">
-        <input type="checkbox" id="f_ricorrente" {"checked" if m.get("ricorrente") else ""}>
+        <input type="checkbox" id="f_ricorrente" {"checked" if m.get("ricorrente") else ""}{ro}>
         <label for="f_ricorrente">Movimento ricorrente</label>
       </div>
       <div class="field"><label>Note</label>
-        <textarea id="f_note">{m.get('note') or ''}</textarea></div>
+        <textarea id="f_note"{ro}>{_esc(m.get('note'))}</textarea></div>
       <div class="actions">
-        <button type="button" class="btn" onclick="onSubmit({mid or 'null'})">{submit_lbl}</button>
+        {submit_btn}
         {delete_btn}
+        {torna_btn}
       </div>
+    </div>
     </div>
     <div id="toast" class="toast"></div>
     <script>
@@ -1068,8 +1093,27 @@ def spesa_piva_edit(mid):
     except Exception as e:
         return _render(f'<div class="notice err">{str(e)[:200]}</div>', breadcrumb=breadcrumb)
 
-    return _render(_movimento_form_html(m), eyebrow="Movimento",
-                   title_html=f'<em>{(m.get("descrizione") or "Movimento")[:20]}</em>',
+    origine = _origine_ripartizione(sb, mid)
+    if origine:
+        collegamento = {
+            "msg": (f'Questo movimento fa parte della ripartizione della fattura '
+                    f'{origine.get("numero") or origine.get("id")}. Per toccarlo '
+                    f'annulla la ripartizione dalla fattura: così spariscono '
+                    f'entrambe le righe.'),
+            "delete_ok": False,
+        }
+    elif m.get("giroconto_personale_id"):
+        collegamento = {
+            "msg": ("Questo movimento ha generato un'entrata sul conto "
+                    "personale. Tipo e importo non si possono cambiare da "
+                    "qui: eliminalo per annullare entrambe le righe."),
+            "delete_ok": True,
+        }
+    else:
+        collegamento = None
+
+    return _render(_movimento_form_html(m, collegamento), eyebrow="Movimento",
+                   title_html=f'<em>{_esc((m.get("descrizione") or "Movimento")[:20])}</em>',
                    breadcrumb=breadcrumb)
 
 
@@ -1105,6 +1149,37 @@ def _movimento_payload(data: dict) -> dict:
     return out
 
 
+def _origine_ripartizione(sb, mid: int) -> dict | None:
+    """
+    Se questo movimento e' la meta' P.IVA della ripartizione automatica
+    di un incasso (fatture/giroconto.py), la fattura a cui appartiene.
+
+    Non copre il legame piu' debole di `spesa_piva_id` (la semplice
+    registrazione dell'incasso): quello si scioglie apposta eliminando
+    il movimento da qui — vedi `_stacca_da_fattura`.
+    """
+    try:
+        r = (sb.table("b2f_fatture").select("id, numero")
+               .eq("giroconto_piva_id", mid).limit(1).execute())
+        righe = r.data or []
+        return righe[0] if righe else None
+    except Exception:
+        return None
+
+
+def _stacca_da_fattura(sb, mid: int) -> None:
+    """
+    Se il movimento appena eliminato era la registrazione dell'incasso di
+    una fattura, scioglie il collegamento: altrimenti la fattura resta a
+    puntare a una riga sparita, "già registrata" per sempre.
+    """
+    try:
+        sb.table("b2f_fatture").update({"spesa_piva_id": None}) \
+          .eq("spesa_piva_id", mid).execute()
+    except Exception:
+        pass
+
+
 @fatture_bp.post("/api/spese-piva")
 def api_spesa_piva_create():
     sb, err = _supabase_or_error()
@@ -1118,16 +1193,90 @@ def api_spesa_piva_create():
     payload = _movimento_payload(data)
     try:
         r = sb.table("b2f_spese_piva").insert(payload).execute()
-        return jsonify(r.data[0] if r.data else {})
+        riga = r.data[0] if r.data else {}
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 500
+
+    id_piva = riga.get("id")
+    if payload.get("tipo") != "giroconto" or not id_piva:
+        return jsonify(riga)
+
+    # Un giroconto sposta soldi anche sul conto personale: senza questa
+    # riga il denaro sparirebbe dal conto P.IVA senza arrivare da nessuna
+    # parte. Stessa garanzia della ripartizione automatica di una fattura
+    # (fatture/giroconto.py), solo innescata a mano invece che dall'incasso.
+    from spese import dati as personale
+    esito = personale.crea(sb, {
+        "data":              payload.get("data"),
+        "tipo":              "entrata",
+        "importo":           payload.get("importo"),
+        "descrizione":       f'Giroconto da P.IVA — {payload.get("descrizione")}',
+        "metodo_pagamento":  "Giroconto",
+        "categoria_link_id": personale.link_categoria(
+            sb, personale.CATEGORIA_GIROCONTO),
+    })
+    if esito.get("error") or not esito.get("id"):
+        try:
+            sb.table("b2f_spese_piva").delete().eq("id", id_piva).execute()
+        except Exception:
+            pass
+        msg = esito.get("error") or "nessun id di ritorno"
+        return jsonify({"error": f"errore sul conto personale: {msg}"}), 500
+
+    try:
+        upd = (sb.table("b2f_spese_piva")
+                 .update({"giroconto_personale_id": esito["id"]})
+                 .eq("id", id_piva).execute())
+        riga = upd.data[0] if upd.data else riga
+    except Exception as e:
+        # Senza il collegamento le due righe si perdono di vista: meglio
+        # annullare tutto che lasciarle scollegate.
+        try:
+            sb.table("b2f_spese_piva").delete().eq("id", id_piva).execute()
+        except Exception:
+            pass
+        try:
+            personale.elimina(sb, esito["id"])
+        except Exception:
+            pass
+        msg = str(e)
+        if "column" in msg.lower() and "giroconto_personale_id" in msg:
+            return jsonify({"error": (
+                "Manca la colonna giroconto_personale_id su b2f_spese_piva: "
+                "esegui la migrazione documentata nel README.")}), 409
+        return jsonify({"error": f"collegamento fallito: {msg[:200]}"}), 500
+
+    return jsonify(riga)
 
 
 @fatture_bp.patch("/api/spese-piva/<int:mid>")
 def api_spesa_piva_update(mid):
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
+
+    origine = _origine_ripartizione(sb, mid)
+    if origine:
+        return jsonify({"error": (
+            f'Questo movimento fa parte della ripartizione della fattura '
+            f'{origine.get("numero") or origine.get("id")}: per cambiarlo '
+            f'annulla la ripartizione dalla fattura, così spariscono entrambe '
+            f'le righe.')}), 409
+
+    try:
+        r = sb.table("b2f_spese_piva").select("giroconto_personale_id") \
+              .eq("id", mid).single().execute()
+        collegato_manuale = (r.data or {}).get("giroconto_personale_id")
+    except Exception:
+        collegato_manuale = None
+
     data = request.get_json(silent=True) or {}
+    if collegato_manuale and ("tipo" in data or "importo" in data):
+        return jsonify({"error": (
+            "Questo movimento ha generato un'entrata sul conto personale: "
+            "tipo e importo non si possono cambiare da qui, per non "
+            "disallineare i due conti. Eliminalo e registrane uno nuovo se "
+            "serve un altro importo.")}), 409
+
     payload = _movimento_payload(data)
     try:
         r = sb.table("b2f_spese_piva").update(payload).eq("id", mid).execute()
@@ -1140,11 +1289,40 @@ def api_spesa_piva_update(mid):
 def api_spesa_piva_delete(mid):
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
+
+    origine = _origine_ripartizione(sb, mid)
+    if origine:
+        return jsonify({"error": (
+            f'Questo movimento fa parte della ripartizione della fattura '
+            f'{origine.get("numero") or origine.get("id")}: annulla la '
+            f'ripartizione dalla fattura, così spariscono entrambe le righe.'
+        )}), 409
+
+    try:
+        r = sb.table("b2f_spese_piva").select("giroconto_personale_id") \
+              .eq("id", mid).single().execute()
+        id_personale = (r.data or {}).get("giroconto_personale_id")
+    except Exception:
+        id_personale = None
+
+    if id_personale:
+        # Il giroconto e' nato da qui: eliminarlo toglie anche la
+        # contropartita sul personale, altrimenti resterebbe un'entrata
+        # senza piu' nessuna uscita dal conto P.IVA a spiegarla.
+        from spese import dati as personale
+        esito = personale.elimina(sb, id_personale)
+        if esito.get("error"):
+            return jsonify({"error": (
+                "Non sono riuscito a togliere l'entrata collegata sul conto "
+                f"personale: {esito['error']}")}), 500
+
     try:
         sb.table("b2f_spese_piva").delete().eq("id", mid).execute()
-        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 500
+
+    _stacca_da_fattura(sb, mid)
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------

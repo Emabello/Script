@@ -47,11 +47,19 @@ def _contesto_comune(sb):
 
 def _render_editor(em, acc_rate, init: dict, titolo: str, eyebrow: str,
                    breadcrumb) -> Response:
+    # __INIT__ si sostituisce per ultimo: il suo valore porta dentro testo
+    # libero (numero, righe di una fattura esistente). Se un'altra
+    # sostituzione girasse dopo, un valore che contenesse per caso il
+    # testo letterale di un altro segnaposto (es. "__PDF_SCRIPT__" dentro
+    # una descrizione) verrebbe espanso una seconda volta.
     content = (_EDITOR_HTML
                .replace("__ACC_RATE__", f"{acc_rate:.6f}")
                .replace("__RIVALSA_PERC__", f"{RIVALSA_PERC:g}")
-               .replace("__INIT__", json.dumps(init, ensure_ascii=False))
-               .replace("__PDF_SCRIPT__", pdf_script(em)))
+               .replace("__PDF_SCRIPT__", pdf_script(em))
+               # niente "<" nel blob: un cliente o una riga con "</script>"
+               # dentro chiuderebbe il tag prima e inietterebbe markup.
+               .replace("__INIT__", json.dumps(init, ensure_ascii=False)
+                        .replace("<", "\\u003c")))
     html = render_page(section="fatture", eyebrow=eyebrow, title_html=titolo,
                        content=content, breadcrumb=breadcrumb)
     return Response(html, mimetype="text/html")

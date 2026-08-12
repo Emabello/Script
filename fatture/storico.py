@@ -30,7 +30,11 @@ from shared.fmt import eur as _fmt_eur, data_it as _fmt_date, pct
 
 
 def cliente_label(f: dict) -> str:
-    """Nome leggibile del cliente a partire dallo snapshot della fattura."""
+    """Nome leggibile del cliente a partire dallo snapshot della fattura.
+
+    Testo grezzo, non escapato: nome/cognome/denominazione sono testo
+    libero copiato dall'anagrafica al momento dell'emissione, quindi chi
+    lo stampa in HTML deve passarlo da _esc()."""
     snap = f.get("cliente_snapshot") or {}
     tipo = snap.get("tipo") or "azienda"
     if tipo == "privato":
@@ -40,6 +44,11 @@ def cliente_label(f: dict) -> str:
 
 # Alias interno storico
 _cliente_label = cliente_label
+
+
+def _esc(v) -> str:
+    return (str(v) if v is not None else "").replace("&", "&amp;").replace(
+        "<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
 def _stato_chip(stato: str) -> str:
@@ -195,7 +204,7 @@ def storico_list():
             items.append(f'''
             <a class="item" href="/fatture/{f["id"]}">
               <span class="body">
-                <span class="n">{f.get("numero", "—")} · {cliente_label(f)}</span>
+                <span class="n">{_esc(f.get("numero", "—"))} · {_esc(cliente_label(f))}</span>
                 <span class="m">{_fmt_date(f.get("data"))}{incasso}</span>
               </span>
               <span class="end">
@@ -240,8 +249,8 @@ def fattura_dettaglio(fid):
     righe = f.get("righe") or []
     righe_html = "".join(
         f'''<div class="row">
-          <span class="k">{r.get("qta", 1)}{" " + r.get("um") if r.get("um") else ""}</span>
-          <span class="t">{(r.get("descrizione") or "").strip() or "—"}
+          <span class="k">{r.get("qta", 1)}{" " + _esc(r.get("um")) if r.get("um") else ""}</span>
+          <span class="t">{_esc((r.get("descrizione") or "").strip()) or "—"}
             <span class="sub">€ {_fmt_eur(r.get("prezzo"))} cad.</span></span>
           <span class="v tnum">€ {_fmt_eur((r.get("qta") or 0) * (r.get("prezzo") or 0))}</span>
         </div>''' for r in righe
@@ -277,7 +286,9 @@ def fattura_dettaglio(fid):
         "totale":         float(f.get("totale") or 0),
         "pagamento_mod":  f.get("pagamento_mod") or "Bonifico bancario",
         "scadenza":       f.get("scadenza"),
-    }, ensure_ascii=False)
+    }, ensure_ascii=False).replace("<", "\\u003c")  # niente </script> dentro il blob:
+                                                       # un cliente o una riga con quel
+                                                       # testo chiuderebbe il tag prima
 
     # Chip per lo stato "registrata su spese P.IVA"
     spesa_id_val = f.get("spesa_piva_id")
@@ -292,8 +303,9 @@ def fattura_dettaglio(fid):
     data_incasso_default = (f.get("data_incasso") or f.get("data")
                             or date.today().isoformat())
 
-    # Descrizione precompilata per la riga spese
-    desc_precompilata = f"Fattura {f.get('numero','')} — {_cliente_label(f)}"
+    # Descrizione precompilata per la riga spese (va in un value="..."
+    # attribute: va escapata come tutto il resto del testo libero).
+    desc_precompilata = _esc(f"Fattura {f.get('numero','')} — {_cliente_label(f)}")
 
     stato_corrente = normalizza_stato(f.get("stato"))
 
@@ -436,7 +448,8 @@ def fattura_dettaglio(fid):
     totali_html = "".join(righe_totali)
 
     pagamento = " · ".join(x for x in [
-        f.get("pagamento_mod"), f.get("pagamento_cond"),
+        _esc(f.get("pagamento_mod")) if f.get("pagamento_mod") else None,
+        _esc(f.get("pagamento_cond")) if f.get("pagamento_cond") else None,
         f'scadenza {_fmt_date(f.get("scadenza"))}' if f.get("scadenza") else None,
     ] if x)
 
@@ -538,10 +551,10 @@ def fattura_dettaglio(fid):
 
         <div class="card">
           <div class="card-head"><div class="eyebrow">Cliente</div></div>
-          <div class="h3">{cliente_label(f)}</div>
+          <div class="h3">{_esc(cliente_label(f))}</div>
           <div class="small muted mt-2">
-            {(snap.get("piva") or snap.get("cf") or "—")}
-            {" · " + snap.get("comune", "") if snap.get("comune") else ""}
+            {_esc(snap.get("piva") or snap.get("cf") or "—")}
+            {" · " + _esc(snap.get("comune", "")) if snap.get("comune") else ""}
           </div>
           {f'<div class="small muted mt-2">{pagamento}</div>' if pagamento else ""}
         </div>
@@ -1025,12 +1038,25 @@ def api_fattura_update(fid):
     if not payload:
         return jsonify({"error": "nessun campo da aggiornare"}), 400
 
-    # L'anno segue la data del documento: il progressivo resta quello.
+    # L'anno segue la data del documento, ma il numero (es. "2026/007") lo
+    # incorpora e il progressivo si assegna per anno: cambiare anno senza
+    # rifare numero e progressivo lascerebbe un numero che mente sull'anno,
+    # con rischio di doppioni contro un'altra fattura gia' numerata cosi'
+    # nell'anno nuovo. Piu' semplice e sicuro rifiutare: e' una bozza,
+    # costa poco eliminarla e farne una nuova nell'anno giusto.
     if "data" in payload and payload["data"]:
         try:
-            payload["anno"] = int(str(payload["data"])[:4])
+            anno_nuovo = int(str(payload["data"])[:4])
         except (TypeError, ValueError):
-            pass
+            anno_nuovo = None
+        if anno_nuovo is not None and anno_nuovo != f.get("anno"):
+            return jsonify({
+                "error": (f'La data proposta è del {anno_nuovo}, ma questa bozza è '
+                          f'numerata {f.get("numero") or ""} nell\'anno {f.get("anno")}: '
+                          f'cambiare anno qui lascerebbe il numero sbagliato. Elimina '
+                          f'la bozza e creane una nuova con la data giusta.'),
+            }), 409
+        payload["anno"] = anno_nuovo
 
     try:
         r = sb.table("b2f_fatture").update(payload).eq("id", fid).execute()
