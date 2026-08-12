@@ -5,7 +5,7 @@ aprire tutto: il README racconta il dominio (fisco, accantonamento,
 migrazioni), qui c'è la corrispondenza file → responsabilità, con le
 trappole che quel file nasconde.
 
-Ultimo aggiornamento: 2026-08-12 · 32 file di codice e configurazione.
+Ultimo aggiornamento: 2026-08-12 · 33 file di codice e configurazione.
 
 **Regola d'oro**: se una modifica tocca un numero, il file che lo calcola
 è uno solo. Prima di scrivere un calcolo, cercalo qui.
@@ -21,7 +21,8 @@ Ultimo aggiornamento: 2026-08-12 · 32 file di codice e configurazione.
 | Cambiare quanto accantonare | `fatture/accantonamento.py` |
 | Spostare soldi fra i due conti | `fatture/giroconto.py` |
 | Scrivere sul conto personale | `spese/dati.py` — **unico posto** |
-| Saldo reale dei conti | `fatture/fiscale.py::saldo_piva` · `spese/dati.py::saldo_conto` |
+| Saldo reale dei conti | `fatture/fiscale.py::saldo_piva` · `spese/dati.py::saldo_conto` · `spese/revolut.py::saldo_revolut` |
+| Risparmi, salvadanai, Revolut | `spese/revolut.py` |
 | Stati della fattura, rivalsa | `fatture/costanti.py` |
 | Colori, spaziature, icone | `shared/design.py` |
 | Struttura di pagina, home | `shared/theme.py` |
@@ -33,7 +34,7 @@ Ultimo aggiornamento: 2026-08-12 · 32 file di codice e configurazione.
 
 ## Radice
 
-### `app.py` — 295 righe · entry point
+### `app.py` — 297 righe · entry point
 
 Monta i blueprint sulla app Flask che nasce in `xs_server.py`, e definisce
 la **home**.
@@ -91,7 +92,7 @@ Dipendenze e deploy. Avvio `gunicorn -w 1 app:app`: **un solo worker è
 voluto**, la sessione sta in memoria del processo (come le challenge
 WebAuthn). Con due worker lo sblocco funzionerebbe a intermittenza.
 
-### `README.md` — 967 righe · il dominio
+### `README.md` — 1.139 righe · il dominio
 
 Come funziona il forfettario, l'accantonamento, il ciclo della fattura, le
 trappole del database, le migrazioni SQL da lanciare, la sicurezza, il
@@ -279,7 +280,7 @@ PDF: senza, l'intestazione esce col solo nome.
 
 Crea `spese_bp`; `views` importa gli altri.
 
-### `spese/dati.py` — 601 righe · **l'unico posto che scrive su `spese`**
+### `spese/dati.py` — 649 righe · **l'unico posto che scrive su `spese`**
 
 Livello dati del conto personale. Il resto dell'area (e `fatture/giroconto.py`)
 passa da qui.
@@ -289,8 +290,9 @@ passa da qui.
   `righe_periodo()` (paginata, mai troncata), `totali_periodo()`,
   `movimento()`, `crea()`, `aggiorna()`, `elimina()`, `collegato()`.
 - Saldi: `saldo_iniziale()` (dalla riga `impostazioni` con `valido_dal`
-  più vecchia: è l'apertura, non l'ultima versione delle percentuali) e
-  `saldo_conto()` — apertura + tutti i movimenti fino a oggi, paginato.
+  più vecchia: è l'apertura, non l'ultima versione delle percentuali),
+  `risparmio_totale()` (somma di `risparmi_periodo.effettivo_risparmio`) e
+  `saldo_conto()` — apertura + movimenti − risparmio, paginato.
 - Totali: `totali()`, `per_categoria()`.
 - Risparmi: `periodi_risparmio()` (traduce i nomi con spazi e maiuscole
   della vista in chiavi normali), `risparmio_effettivo()`, `impostazioni()`.
@@ -309,8 +311,14 @@ passa da qui.
 >
 > `TIPI` non contiene più `giroconto` (migrazione README §8.9); `TIPI_SEGNO`
 > sì, ma solo in **lettura**, per le righe storiche non ancora migrate.
+>
+> **Il risparmio non è una riga di `spese`.** Quello che registri sulla
+> pagina Risparmi finisce su `risparmi_periodo` ed *esce* dal conto: è
+> così che lo tratta `v_risparmi_mese` (`delta = … − effettivo_risparmio`),
+> e così deve trattarlo chiunque calcoli il saldo. Chi somma solo entrate
+> e uscite conta due volte tutto ciò che è stato risparmiato.
 
-### `spese/views.py` — 164 righe · dashboard `/spese`
+### `spese/views.py` — 181 righe · dashboard `/spese`
 
 Saldo del conto oggi, saldo del mese, entrate/uscite, movimento netto
 dell'anno, ultimi movimenti, quanto è arrivato dalla P.IVA.
@@ -336,7 +344,7 @@ dell'anno, ultimi movimenti, quanto è arrivato dalla P.IVA.
 - La metà di un giroconto non si modifica né si cancella da qui: la guardia
   è nell'endpoint, non solo nel form.
 
-### `spese/risparmi.py` — 264 righe · periodi e risparmio
+### `spese/risparmi.py` — 326 righe · periodi e risparmio
 
 `GET /risparmi`, `GET /api/risparmi`, `PATCH /api/risparmi`.
 
@@ -345,8 +353,49 @@ I periodi vanno da un bonifico al successivo — categoria *Stipendio* **o**
 di fatto (migrazione README §8.7). Mostra consigliato, effettivo e la
 differenza fra i due, che è l'unica cosa che conta guardare.
 
+Mostra anche **quanto c'è davvero in ogni salvadanaio**: la somma delle
+quote di tutti i periodi (il "dovrebbe") accanto ai saldi Revolut (il
+"c'è"). Uno scarto non è di per sé un errore — dai salvadanai si preleva —
+ma questo è l'unico posto in cui si vede.
+
 > `risparmio_effettivo` a 0 è trattato come “non ancora registrato”: la
 > vista fa `coalesce` a zero e non c'è modo di distinguere i due casi.
+
+### `spese/revolut.py` — 769 righe · il terzo conto
+
+Liquidità, risparmi e investimenti su Revolut. Esiste perché **è lì che
+finisce il risparmio**: senza, quel denaro usciva dal conto personale
+(`v_risparmi_mese` lo sottrae) e non entrava da nessuna parte.
+
+- HTML: `/revolut` — saldi, import dell'estratto, editor dei salvadanai,
+  storico degli snapshot.
+- JSON: `GET|POST /api/revolut`, `POST /api/revolut/leggi` (multipart:
+  legge il file e basta, non scrive).
+- `parse_estratto(bytes, nome_file)`: legge l'estratto consolidato di
+  Revolut. `saldo_revolut(client, al)`: l'ultimo snapshot a quella data.
+  `coerenza(client, rev)`: il confronto fra risparmio dichiarato e saldo
+  reale dei salvadanai.
+- `SALVADANAI` tiene insieme i cinque secchielli e la quota di
+  `impostazioni` che li alimenta. Gli alias servono perché lo stesso
+  salvadanaio ha due nomi (“Fondo casa” da conto separato, “Casa” dentro
+  il deposito).
+
+> **L'estratto non è un xlsx**: è un CSV infilato in un foglio, tutto in
+> colonna A, con virgole e virgolette dentro le celle — e il testo passato
+> due volte per la codifica sbagliata (`€` → `â‚¬`). Si ricompone il testo
+> e lo si rilegge come CSV; `_demojibake()` disfa la codifica provando
+> cp1252 prima di latin-1, perché è lì che sta l'euro.
+>
+> **Due cose l'estratto non le contiene**, e l'app lo dice invece di
+> inventarle: il valore del portafoglio investimenti (ci sono solo i
+> redditi del periodo) e la ripartizione dei salvadanai (dal 15 aprile
+> 2026 stanno in un unico deposito, di cui si sa solo il totale).
+>
+> È uno **snapshot con una data**, non un saldo dal vivo. Ogni risposta
+> porta `data` e `giorni`: un saldo di tre mesi fa non è sbagliato, è
+> vecchio, e chi lo guarda deve poterlo distinguere.
+
+Richiede la tabella `b2f_revolut` — migrazione README §8.10.
 
 ### `spese/importa.py` — 435 righe · import da estratto conto
 
@@ -377,7 +426,7 @@ client desktop.
 > `.rows .v` è pensato per un numero su riga singola (`white-space:nowrap`):
 > il testo che va a capo sta in `.sub`.
 
-### `shared/theme.py` — 979 righe · scheletro di pagina e home
+### `shared/theme.py` — 1.019 righe · scheletro di pagina e home
 
 - `page_head(title, prefetch)`: `<head>` completo. Il bootstrap del tema
   gira **prima del primo paint**, altrimenti si vede il lampo bianco.
@@ -431,7 +480,7 @@ perché l'app è a utente singolo con **un solo worker**.
 
 ## `tools/` — utilità di sviluppo, non servono in produzione
 
-### `tools/preview.py` — 367 righe
+### `tools/preview.py` — 414 righe
 
 Monta l'app con un **finto client Supabase** (`_FakeClient`, che riproduce
 solo la parte di API usata dall'app) e dati realistici di agosto 2026:

@@ -124,7 +124,19 @@ DB = {
         "perc_viaggi": 0.20, "perc_fondo_casa": 0.20,
         "perc_regali": 0.10, "perc_altro": 0.10,
     }],
-    "risparmi_periodo": [],
+    # Il risparmio dichiarato periodo per periodo. Non e' una riga di
+    # `spese`: e' denaro che esce dal conto e va nei salvadanai Revolut —
+    # v_risparmi_mese lo sottrae dal saldo, e cosi' fa saldo_conto().
+    "risparmi_periodo": [
+        {"data_bonifico": "2026-07-12", "effettivo_risparmio": 300.00},
+    ],
+    # Snapshot Revolut, dall'estratto conto consolidato.
+    "b2f_revolut": [{
+        "data": "2026-08-12", "conto": 604.55, "risparmi": 8525.39,
+        "investimenti": 1240.00, "fonte": "estratto", "note": None,
+        "salvadanai": {"emergenze": 4100.00, "casa": 2500.00,
+                       "vacanze": 1400.00, "regali": 400.00, "altro": 125.39},
+    }],
     "b2f_webauthn_credentials": [],
 }
 
@@ -135,6 +147,20 @@ DB["v_spese"] = [
     {**r, "mese": int(r["data"][5:7]), "anno": int(r["data"][:4]),
      "metodo_pagamento": None, "categoria_link_id": None}
     for r in DB["spese"]
+]
+
+# v_risparmi_mese: i nomi delle colonne hanno spazi e maiuscole come nella
+# vista vera (spese/dati.py::periodi_risparmio li traduce).
+DB["v_risparmi_mese"] = [
+    {"Data bonifico": "2026-07-12", "Data prossimo bonifico": "2026-08-06",
+     "Mese": "luglio", "Importo Bonifico": 1200.00,
+     "Importo Prima Del Bonifico": 4200.00, "Totale Fisso": 42.90,
+     "Totale Personale": 74.40, "Totale Benzina": 0, "Totale Viaggi": 0,
+     "Totale Speso": 117.30, "Totale Altre Entrate": 0,
+     "Totale Rimanente": 1082.70, "Risparmio consigliato (€)": 325.00,
+     "Risparmio effettivo (€)": 300.00, "Totale Rimanente (finale)": 4982.70,
+     "Quota Fondo Emergenze": 120.00, "Quota Viaggi": 60.00,
+     "Quota Fondo Casa": 60.00, "Quota Regali": 30.00, "Quota Altro": 30.00},
 ]
 
 
@@ -236,6 +262,11 @@ class _Query:
         self._op, self._payload = "update", payload
         return self
 
+    def upsert(self, payload, on_conflict=None):
+        self._op, self._payload = "upsert", payload
+        self._conflict = on_conflict or "id"
+        return self
+
     def delete(self):
         self._op = "delete"
         return self
@@ -280,6 +311,22 @@ class _Query:
 
     def execute(self):
         rows = DB.setdefault(self.table, [])
+
+        if self._op == "upsert":
+            items = self._payload if isinstance(self._payload, list) else [self._payload]
+            out = []
+            for it in items:
+                chiave = getattr(self, "_conflict", "id")
+                esistente = next((r for r in rows if r.get(chiave) == it.get(chiave)), None)
+                if esistente:
+                    esistente.update(deepcopy(it))
+                    out.append(esistente)
+                else:
+                    new = deepcopy(it)
+                    new.setdefault("id", max([r.get("id", 0) for r in rows], default=0) + 1)
+                    rows.append(new)
+                    out.append(new)
+            return _Res([deepcopy(r) for r in out])
 
         if self._op == "insert":
             items = self._payload if isinstance(self._payload, list) else [self._payload]

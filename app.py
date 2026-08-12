@@ -98,9 +98,11 @@ def _dashboard_data() -> dict:
     # mostra il saldo del mese e /fatture/spese-piva quello dell'anno
     # filtrato, non quanto c'e' davvero sui conti.
     try:
+        from spese.revolut import saldo_revolut
         out["saldi"] = {
             "piva": saldo_piva(sb, today.isoformat()),
             "personale": personale.saldo_conto(sb, today.isoformat()),
+            "revolut": saldo_revolut(sb, today.isoformat()),
         }
     except Exception:
         pass

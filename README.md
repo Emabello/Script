@@ -6,8 +6,10 @@ personali. Gira su Flask, tiene i dati su Supabase, sta online su Render.
 
 Il filo che tiene insieme tutto è il denaro: le ore diventano una fattura, la
 fattura incassata finisce sul conto P.IVA, una parte va accantonata per il
-fisco e il resto si sposta sul conto personale. L'app segue questo percorso
-per intero.
+fisco, il resto si sposta sul conto personale e quello che avanza a fine mese
+finisce nei salvadanai su Revolut. L'app segue questo percorso per intero, e
+in ogni passaggio il denaro esce da un conto ed entra in un altro — mai
+sparisce, mai si duplica.
 
 ---
 
@@ -50,6 +52,8 @@ spese/                 area conto personale
   dati.py                accesso ai dati (l'unico posto che scrive su `spese`)
   movimenti.py           elenco, form, API dei movimenti
   risparmi.py            periodi di stipendio e risparmio
+  revolut.py             il terzo conto: liquidita', risparmi, investimenti
+  importa.py             import dei movimenti da estratto conto bancario
 
 shared/                pezzi comuni
   design.py              design system: token, CSS, icone
@@ -77,25 +81,30 @@ dominio, la mappa spiega il *dove*.
 
 ### Home — `/`
 
-In cima ci sono **i due conti, ad oggi**: quanto c'è sul conto P.IVA e
-quanto sul personale, più il totale. È un numero che nessun'altra pagina
-dava — `/spese` mostrava il saldo del mese e `/fatture/spese-piva` quello
-dell'anno filtrato, e nessuno dei due è "quanto ho in banca".
+In cima ci sono **i tre conti, ad oggi**, più il totale. È un numero che
+nessun'altra pagina dava — `/spese` mostrava il saldo del mese e
+`/fatture/spese-piva` quello dell'anno filtrato, e nessuno dei due è
+"quanto ho in banca".
 
 | Conto | Come si calcola | Chi lo calcola |
 |---|---|---|
 | P.IVA | entrate − uscite − giroconti al personale, su tutti i movimenti fino a oggi | `fatture/fiscale.py::saldo_piva` |
-| Personale | saldo di apertura (`impostazioni`, riga con `valido_dal` più vecchia) + entrate − uscite | `spese/dati.py::saldo_conto` |
+| Personale | apertura (`impostazioni`, riga con `valido_dal` più vecchia) + entrate − uscite − **risparmio messo via** | `spese/dati.py::saldo_conto` |
+| Revolut | l'ultimo snapshot registrato: liquidità + risparmi + investimenti | `spese/revolut.py::saldo_revolut` |
 
-Il giroconto è un'uscita dal conto P.IVA e un'entrata sul personale, quindi
-il totale non cambia quando si ripartisce un incasso: i soldi si spostano,
-non si creano. Sotto ai due numeri, un "come si formano questi saldi" apre
-la scomposizione — un saldo di cui non si vede la formazione non è
-verificabile.
+**Il denaro non si crea né sparisce fra un conto e l'altro**, e i saldi lo
+rispettano: il giroconto è un'uscita dal conto P.IVA e un'entrata sul
+personale; il risparmio è un'uscita dal personale e un'entrata su Revolut.
+In entrambi i casi il totale non cambia.
 
-Le due letture sono **paginate**: PostgREST tronca ogni richiesta a un
-tetto (~1000 righe) e `spese` ne ha già di più. Una select secca darebbe un
-saldo più basso del vero senza nessun errore visibile.
+Sotto ai numeri, un "come si formano questi saldi" apre la scomposizione —
+un saldo di cui non si vede la formazione non è verificabile.
+
+P.IVA e personale si calcolano dai movimenti, con letture **paginate**:
+PostgREST tronca ogni richiesta a un tetto (~1000 righe) e `spese` ne ha
+già di più, e una select secca darebbe un saldo più basso del vero senza
+nessun errore visibile. Revolut invece è uno snapshot dall'estratto conto,
+con la sua data.
 
 Il resto della home: incassato del mese, quanto accantonare, saldo del mese
 del conto personale, fatture dell'anno, prossime scadenze, ultime fatture e
@@ -134,10 +143,65 @@ PDF si intitola FACSIMILE e lo dichiara in calce.
 | `/spese/movimenti` | elenco con filtri per anno, mese, tipo, categoria, testo |
 | `/spese/movimenti/nuovo` | nuovo movimento |
 | `/spese/movimenti/<id>` | modifica |
-| `/spese/risparmi` | periodi di stipendio, risparmio consigliato ed effettivo |
+| `/spese/risparmi` | periodi di stipendio, risparmio consigliato ed effettivo, e quanto c'è davvero in ogni salvadanaio |
+| `/spese/revolut` | saldi Revolut: liquidità, risparmi, investimenti |
+| `/spese/importa` | import dei movimenti da estratto conto bancario |
 
 API JSON: `/spese/api/movimenti` (GET, POST, PATCH, DELETE),
 `/spese/api/categorie`, `/spese/api/risparmi` (GET, PATCH).
+
+### Revolut — `/spese/revolut`
+
+Il terzo conto: liquidità, risparmi e investimenti. Non è una sezione a
+parte per capriccio — **è dove finisce il risparmio**, e senza di lei
+quel denaro usciva da un conto senza entrare in nessuno.
+
+I numeri arrivano dall'**estratto conto consolidato** che Revolut esporta
+in .xlsx (Menu → Estratti conto → Consolidato). Si carica, l'app legge i
+saldi di chiusura e li mostra, e si salva — niente viene scritto prima
+della conferma. Due cose l'estratto non le contiene e vanno scritte a mano:
+
+- **il valore del portafoglio investimenti.** L'estratto dà dividendi,
+  vendite e PnL del periodo, nessuna valorizzazione delle posizioni.
+- **la ripartizione dei salvadanai.** Dal 15 aprile 2026 vivono dentro un
+  unico "Deposito senza vincoli" e l'estratto ne dà solo il totale.
+
+È uno **snapshot con una data**, non un saldo dal vivo: l'app mostra
+sempre a quando risale, e da 45 giorni in su lo segnala.
+
+API JSON: `/spese/api/revolut` (GET, POST), `/spese/api/revolut/leggi`
+(POST multipart, legge e basta).
+
+#### Il risparmio esce dal conto personale
+
+`v_risparmi_mese` calcola il saldo corrente così:
+
+```
+delta = bonifico + altre_entrate − speso − effettivo_risparmio
+```
+
+Quel `− effettivo_risparmio` dice una cosa precisa: **il risparmio che
+registri non è una riga di `spese`, è denaro che lascia il conto** e va
+nei salvadanai. `spese/dati.py::saldo_conto` lo sottrae allo stesso modo;
+chi calcolasse il saldo come `apertura + entrate − uscite` conterebbe due
+volte tutto ciò che hai risparmiato dall'inizio.
+
+#### I salvadanai sono già le categorie dell'app
+
+| Salvadanaio Revolut | Quota in `impostazioni` |
+|---|---|
+| Emergenze | `perc_fondo_emergenze` |
+| Fondo casa (dentro il deposito: "Casa") | `perc_fondo_casa` |
+| Vacanze | `perc_viaggi` |
+| Regali | `perc_regali` |
+| Altro | `perc_altro` |
+
+Da qui il confronto che prima non esisteva: la pagina Risparmi calcola
+quanto *dovrebbe* esserci in ogni secchiello (somma delle quote di tutti i
+periodi), Revolut sa quanto c'è. E sul totale, `/spese/revolut` confronta
+il risparmio dichiarato con il saldo reale dei salvadanai: sono due misure
+indipendenti della stessa cosa, e se divergono uno dei due numeri è
+sbagliato — non c'è nessun altro punto in cui la cosa verrebbe fuori.
 
 ---
 
@@ -152,6 +216,7 @@ API JSON: `/spese/api/movimenti` (GET, POST, PATCH, DELETE),
 | `b2f_fatture` | i documenti, con stato, date dei passaggi e ripartizione |
 | `b2f_spese_piva` | movimenti del conto P.IVA |
 | `b2f_parametri_fiscali` | riga unica: aliquote e parametri di accantonamento |
+| `b2f_revolut` | saldi Revolut, uno snapshot per data — [§ 8.10](#810--tabella-dei-saldi-revolut) |
 | `b2f_webauthn_credentials` | credenziali dello sblocco biometrico |
 
 ### Tabelle del conto personale (preesistenti all'app)
@@ -477,7 +542,9 @@ storico. **8.7 lanciata e confermata il 2026-08-12.** Da lanciare ancora:
 [8.8](#88--pulizia-di-5-righe-con-dati-inconsistenti) (5 righe da correggere,
 consigliata) e
 [8.9](#89--spesetipo-non-ha-più-giroconto) (4 righe con `tipo=giroconto`
-diventate invisibili ai risparmi, consigliata).
+diventate invisibili ai risparmi, consigliata) e
+[8.10](#810--tabella-dei-saldi-revolut) (nuova tabella, **necessaria**
+perché `/spese/revolut` possa salvare).
 
 ### 8.1 — Categoria del giroconto sul conto personale ✅ già applicata
 
@@ -946,6 +1013,43 @@ Bonifici"), il problema era solo `tipo`. Il codice non offre più
 migrazione non è lanciata, quindi l'ordine non è critico — ma senza
 la migrazione quelle 4 righe restano fuori da `v_risparmi_mese`.
 
+### 8.10 — Tabella dei saldi Revolut
+
+Serve per il terzo conto (vedi [§ 2](#revolut--speserevolut)). Una riga
+per snapshot, con la data come chiave: reimportare lo stesso estratto
+aggiorna la riga invece di aggiungerne una gemella.
+
+Finché non è applicata, la pagina `/spese/revolut` si apre e legge
+l'estratto ma il salvataggio risponde con un errore che rimanda qui;
+tutto il resto dell'app funziona come prima.
+
+```sql
+create table if not exists b2f_revolut (
+  data          date primary key,
+  conto         numeric not null default 0,   -- liquidità (conti correnti)
+  risparmi      numeric not null default 0,   -- deposito / salvadanai, totale
+  investimenti  numeric not null default 0,   -- portafoglio, scritto a mano
+  salvadanai    jsonb   not null default '{}'::jsonb,
+  fonte         text    not null default 'estratto',
+  note          text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+alter table b2f_revolut enable row level security;
+
+drop trigger if exists trg_b2f_revolut_updated on b2f_revolut;
+create trigger trg_b2f_revolut_updated before update on b2f_revolut
+  for each row execute function b2f_touch_updated_at();
+```
+
+RLS attiva senza policy, come le altre `b2f_*`: entra solo l'app, che
+usa `service_role` (vedi [Sicurezza](#9-sicurezza)).
+
+`salvadanai` è un oggetto con le cinque chiavi `emergenze`, `casa`,
+`vacanze`, `regali`, `altro` — le stesse cinque quote di `impostazioni`.
+È facoltativo: senza, resta il totale.
+
 ---
 
 ## 9. Sicurezza
@@ -967,6 +1071,7 @@ tranne l'app. Aggiungere policy permissive riaprirebbe l'accesso.
 |---|---|
 | `b2f_fatture`, `b2f_clienti`, `b2f_emittente` | RLS attiva, nessuna policy |
 | `b2f_spese_piva`, `b2f_parametri_fiscali`, `b2f_webauthn_credentials` | da attivare — [§ 8.2](#82--vista-fiscale-riallineata-e-row-level-security) |
+| `b2f_revolut` | RLS attivata dalla migrazione stessa — [§ 8.10](#810--tabella-dei-saldi-revolut) |
 | `spese`, `risparmi_periodo` | lasciate fuori: vedi l'avvertenza in § 8.2 |
 
 Dietro il proxy di Render serve `ProxyFix`, altrimenti l'origin calcolato per

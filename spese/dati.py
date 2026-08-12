@@ -269,14 +269,59 @@ def saldo_iniziale(client) -> float:
         return 0.0
 
 
+def risparmio_totale(client, al: str | None = None) -> float:
+    """
+    Quanto hai messo da parte in tutto, fino a `al`.
+
+    E' la somma di `risparmi_periodo.effettivo_risparmio`, cioe' di
+    quello che periodo per periodo hai dichiarato di aver risparmiato.
+
+    **Quel denaro esce dal conto personale**, e non lascia una riga in
+    `spese`: se ne va su Revolut, dove stanno i salvadanai. Non e' una
+    lettura dedotta — e' esattamente cosi' che ragiona `v_risparmi_mese`,
+    che nel calcolo del saldo corrente scrive
+
+        delta = bonifico + altre_entrate - speso - effettivo_risparmio
+
+    e riporta il running total nella colonna "Importo Prima Del
+    Bonifico". Chi calcola il saldo del conto deve sottrarlo allo stesso
+    modo, o conta due volte soldi che sul conto non ci sono piu'.
+
+    Le righe sono una per periodo (poche decine): niente paginazione.
+    """
+    al = al or date.today().isoformat()
+    try:
+        r = (client.table("risparmi_periodo").select("effettivo_risparmio,data_bonifico")
+             .lte("data_bonifico", al).execute())
+    except Exception:
+        return 0.0
+    tot = 0.0
+    for riga in _righe(r):
+        try:
+            tot += float(riga.get("effettivo_risparmio") or 0)
+        except (TypeError, ValueError):
+            continue
+    return round(tot, 2)
+
+
 def saldo_conto(client, al: str | None = None) -> dict:
     """
     Saldo reale del conto personale a una data (default: oggi).
 
     Non e' il "saldo del mese" ne' quello dell'anno: e' quanto c'e' sul
-    conto, cioe' il saldo di apertura piu' tutti i movimenti fino a
-    `al`. I movimenti con data futura restano fuori: sono previsti, non
-    ancora accaduti.
+    conto, cioe'
+
+        saldo di apertura + entrate - uscite - risparmio messo da parte
+
+    I movimenti con data futura restano fuori: sono previsti, non ancora
+    accaduti.
+
+    L'ultimo termine e' quello che si dimentica facilmente. Il risparmio
+    dichiarato su `risparmi_periodo` non e' una riga di `spese`: e'
+    denaro uscito dal conto verso i salvadanai Revolut. Senza sottrarlo
+    il saldo risulta piu' alto del vero di tutto quello che hai
+    risparmiato dall'inizio, e non torna con `v_risparmi_mese`, che
+    invece lo sottrae (vedi `risparmio_totale`).
 
     Legge `spese` a blocchi finche' non finiscono. PostgREST tronca ogni
     richiesta a un tetto (di solito 1000 righe) e la tabella ne ha gia'
@@ -287,7 +332,8 @@ def saldo_conto(client, al: str | None = None) -> dict:
     """
     al = al or date.today().isoformat()
     vuoto = {"al": al, "disponibile": False, "saldo": 0.0, "entrate": 0.0,
-             "uscite": 0.0, "saldo_iniziale": 0.0, "movimenti": 0}
+             "uscite": 0.0, "saldo_iniziale": 0.0, "risparmiato": 0.0,
+             "movimenti": 0}
 
     entrate = uscite = 0.0
     n = 0
@@ -314,13 +360,15 @@ def saldo_conto(client, al: str | None = None) -> dict:
         offset += passo
 
     apertura = saldo_iniziale(client)
+    risparmiato = risparmio_totale(client, al)
     return {
         "al": al,
         "disponibile": True,
         "saldo_iniziale": apertura,
         "entrate": round(entrate, 2),
         "uscite": round(uscite, 2),
-        "saldo": round(apertura + entrate - uscite, 2),
+        "risparmiato": risparmiato,
+        "saldo": round(apertura + entrate - uscite - risparmiato, 2),
         "movimenti": n,
     }
 
