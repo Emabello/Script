@@ -362,8 +362,11 @@ sezione ne tiene conto separatamente.
 Da lanciare nell'**SQL Editor di Supabase**, in quest'ordine. Sono tutte
 idempotenti: rilanciarle non fa danni.
 
-Lo schema fino al ciclo di vita e alla ripartizione è già applicato. Restano
-queste quattro.
+Lo schema fino al ciclo di vita e alla ripartizione è già applicato. Verificato
+sullo snapshot del 2026-08-12 ([`docs/schema_supabase.md`](docs/schema_supabase.md)):
+**8.2 e 8.4 sono già a posto** (vista e RLS coerenti con qui sotto, colonna
+presente). 8.1 e 8.3 toccano dati, non schema: da confermare quando arriva un
+export delle righe.
 
 ### 8.1 — Categoria del giroconto sul conto personale
 
@@ -501,7 +504,7 @@ where id = 1;
 
 I dati si cambiano anche da `/fatture/emittente`.
 
-### 8.4 — Collegamento dei giroconti manuali
+### 8.4 — Collegamento dei giroconti manuali ✅ già applicata
 
 Da `/fatture/spese-piva/nuova` si può registrare un giroconto anche senza
 passare da una fattura (un trasferimento libero al conto personale). Senza
@@ -514,6 +517,10 @@ alter table b2f_spese_piva
   add column if not exists giroconto_personale_id integer;
 ```
 
+Verificato presente su Supabase il 2026-08-12 (vedi
+[`docs/schema_supabase.md`](docs/schema_supabase.md)) — non serve rilanciarla,
+resta qui solo come riferimento.
+
 ### 8.5 — Ispezionare lo schema
 
 Quando serve verificare com'è fatto davvero il database (è così che sono
@@ -522,14 +529,14 @@ emersi i disallineamenti qui sopra):
 ```sql
 select riga from (
   select 1 as s, table_name || lpad(ordinal_position::text, 4, '0') as k,
-         'COL   ' || rpad(table_name || '.' || column_name, 46) ||
-         rpad(data_type, 26) || ' null=' || is_nullable ||
+         'COL   ' || rpad(table_name || '.' || column_name, 60) ||
+         rpad(data_type, 32) || ' null=' || is_nullable ||
          ' ident=' || is_identity || ' def=' || coalesce(column_default, '-') as riga
   from information_schema.columns where table_schema = 'public'
   union all
   select 2, conrelid::regclass::text || conname,
-         'VINC  ' || rpad(conrelid::regclass::text, 30) ||
-         rpad(conname, 44) || pg_get_constraintdef(oid)
+         'VINC  ' || rpad(conrelid::regclass::text, 34) ||
+         rpad(conname, 60) || pg_get_constraintdef(oid)
   from pg_constraint where connamespace = 'public'::regnamespace
   union all
   select 3, tablename || indexname, 'IDX   ' || indexdef
