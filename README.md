@@ -1137,3 +1137,12 @@ virgolette (PEP 701), che su 3.11 non compilano.
 | `verifica_layout.py` | cerca overflow orizzontali, che sui browser mobili mandano in shrink-to-fit l'intera pagina |
 | `verifica_contrasti.py` | controlla i contrasti WCAG su tutte le combinazioni di tema |
 | `verifica_facsimile.py` | controlli sul PDF generato |
+
+### Analisi funzionale continua
+
+[CLAUDE.md](CLAUDE.md) e [docs/miglioramenti.md](docs/miglioramenti.md):
+mentre si lavora su qualunque parte del progetto, i punti dove un
+invariante potrebbe rompersi (non idee stilistiche: casi concreti — "se
+succede X, questo campo mente") si annotano nel secondo file invece di
+perdersi in una conversazione. Le voci risolte si spostano in "Fatti",
+quelle rifiutate in "Scartati", così non si ridiscutono da zero.
