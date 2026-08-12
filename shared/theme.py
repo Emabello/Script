@@ -29,6 +29,7 @@ NAV = (
     ("ore",     "Ore",     "/ore",     "ore"),
     ("fatture", "Fatture", "/fatture", "fatture"),
     ("spese",   "Spese",   "/spese",   "spese"),
+    ("saldi",   "Saldi",   "/saldi",   "wallet"),
 )
 
 
@@ -943,6 +944,27 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
         content="\n".join(blocchi),
         prefetch=["/ore", "/fatture", "/spese"],
         extra_body=_BIO_SCRIPT,
+    )
+
+
+def render_saldi_page(saldi: dict | None) -> str:
+    """
+    Pagina dedicata "Saldi": la stessa card che compare in cima alla
+    home, ma raggiungibile dal menu senza passare da li' — utile mentre
+    si e' gia' dentro Fatture o Spese e si vuole solo controllare quanto
+    c'e' sui conti, senza perdere il punto in cui si era.
+
+    `saldi` ha la stessa forma usata da render_launchpad: dict opzionale
+    con chiavi piva/personale/revolut (ciascuna dal rispettivo saldo_*()).
+    """
+    corpo = (_blocco_saldi(saldi) if saldi else
+             '<div class="empty">Saldi non disponibili.</div>')
+    return render_page(
+        section="saldi",
+        eyebrow="I tuoi conti",
+        title_html='<em>Saldi</em>',
+        content=corpo,
+        breadcrumb=[("Saldi", "")],
     )
 
 
