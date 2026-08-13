@@ -713,8 +713,8 @@ def _blocco_saldi(saldi: dict) -> str:
                  if rivalsa > 0 else 'movimenti P.IVA, giroconti già usciti')
     hint_pers = f'{pers.get("movimenti", 0)} movimenti, al netto dei risparmi'
 
-    tiles = (tile(piva, "Conto P.IVA", "/fatture/spese-piva", hint_piva)
-             + tile(pers, "Conto personale", "/spese", hint_pers))
+    tiles = (tile(piva, "WeBank P.IVA", "/fatture/spese-piva", hint_piva)
+             + tile(pers, "WeBank Personale", "/spese", hint_pers))
 
     # Revolut compare solo se e' stato collegato: una tessera a zero
     # sembrerebbe un conto vuoto invece di un conto mai registrato.
@@ -745,7 +745,7 @@ def _blocco_saldi(saldi: dict) -> str:
     righe = ""
     if piva.get("disponibile"):
         righe += f'''
-      <div class="row"><span class="t">Conto P.IVA
+      <div class="row"><span class="t">WeBank P.IVA
         <span class="sub">entrate € {eur(piva["entrate"])} − uscite € {eur(piva["uscite"])}
         − giroconti al personale € {eur(piva["girati"])}</span></span>
         <span class="v tnum">€ {eur(piva["saldo"])}</span></div>'''
@@ -760,7 +760,7 @@ def _blocco_saldi(saldi: dict) -> str:
         meno_risp = (f' − risparmi messi via € {eur(risparmiato)}'
                      if risparmiato else "")
         righe += f'''
-      <div class="row"><span class="t">Conto personale
+      <div class="row"><span class="t">WeBank Personale
         <span class="sub">apertura € {eur(pers["saldo_iniziale"])}
         + entrate € {eur(pers["entrate"])} − uscite € {eur(pers["uscite"])}{meno_risp}</span></span>
         <span class="v tnum">€ {eur(pers["saldo"])}</span></div>'''
@@ -960,9 +960,19 @@ def _kpi_conto(saldo: dict, tipo: str) -> str:
     if not saldo.get("disponibile"):
         return ""
 
+    # Il saldo va sempre per primo ed e' sempre la prima tessera: e' la
+    # risposta a "quanto ho", non un dato statistico come i flussi che
+    # seguono. Un livello, non una variazione: niente "+" davanti, solo
+    # il "-" se negativo.
+    v_saldo = float(saldo.get("saldo") or 0)
+    saldo_txt = ("−" if v_saldo < 0 else "") + eur(abs(v_saldo))
+    tile_saldo = _kpi(f'€ {saldo_txt}', "Saldo",
+                      classe="pos" if v_saldo >= 0 else "neg")
+
     tiles = []
     if tipo == "piva":
         tiles = [
+            tile_saldo,
             _kpi(f'€ {eur(saldo["entrate"])}', "Entrate", classe="pos"),
             _kpi(f'€ {eur(saldo["uscite"])}', "Uscite", classe="neg"),
             _kpi(f'€ {eur(saldo["girati"])}', "Girate al personale"),
@@ -974,6 +984,7 @@ def _kpi_conto(saldo: dict, tipo: str) -> str:
                               hint="già dentro il saldo, non un extra"))
     elif tipo == "personale":
         tiles = [
+            tile_saldo,
             _kpi(f'€ {eur(saldo["entrate"])}', "Entrate", classe="pos"),
             _kpi(f'€ {eur(saldo["uscite"])}', "Uscite", classe="neg"),
             _kpi(f'€ {eur(saldo.get("risparmiato", 0))}', "Risparmiato",
@@ -986,6 +997,7 @@ def _kpi_conto(saldo: dict, tipo: str) -> str:
         hint_data = (f'fermo da {giorni} giorni' if (giorni or 0) > 45
                     else f'aggiornato al {quando}')
         tiles = [
+            tile_saldo,
             _kpi(f'€ {eur(saldo["conto"])}', "Liquidità"),
             _kpi(f'€ {eur(saldo["risparmi"])}', "Risparmi"),
             _kpi(f'€ {eur(saldo["investimenti"])}', "Investimenti"),
@@ -1020,10 +1032,10 @@ def render_saldi_page(saldi: dict | None, coerenza_html: str = "") -> str:
         rev = saldi.get("revolut") or {}
 
         if piva.get("disponibile"):
-            blocchi.append('<div class="eyebrow mt-4 mb-2">Conto P.IVA</div>')
+            blocchi.append('<div class="eyebrow mt-4 mb-2">WeBank P.IVA</div>')
             blocchi.append(_kpi_conto(piva, "piva"))
         if pers.get("disponibile"):
-            blocchi.append('<div class="eyebrow mt-4 mb-2">Conto personale</div>')
+            blocchi.append('<div class="eyebrow mt-4 mb-2">WeBank Personale</div>')
             blocchi.append(_kpi_conto(pers, "personale"))
         if rev.get("disponibile"):
             blocchi.append('<div class="eyebrow mt-4 mb-2">Revolut</div>')
