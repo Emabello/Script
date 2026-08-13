@@ -947,18 +947,92 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
     )
 
 
-def render_saldi_page(saldi: dict | None) -> str:
+def _kpi_conto(saldo: dict, tipo: str) -> str:
+    """
+    Riga di KPI di dettaglio per un conto — entrate/uscite/movimenti e
+    quel che e' specifico del tipo. La card in cima (_blocco_saldi) da'
+    il saldo e una scomposizione compatta; qui, sulla pagina dedicata,
+    c'e' spazio per vedere ogni pezzo come tessera a se', non solo come
+    riga di un elenco.
+    """
+    from .fmt import eur, data_it
+
+    if not saldo.get("disponibile"):
+        return ""
+
+    tiles = []
+    if tipo == "piva":
+        tiles = [
+            _kpi(f'€ {eur(saldo["entrate"], 0)}', "Entrate", classe="pos"),
+            _kpi(f'€ {eur(saldo["uscite"], 0)}', "Uscite", classe="neg"),
+            _kpi(f'€ {eur(saldo["girati"], 0)}', "Girate al personale"),
+            _kpi(str(saldo.get("movimenti", 0)), "Movimenti"),
+        ]
+        if saldo.get("rivalsa_incassata"):
+            tiles.append(_kpi(f'€ {eur(saldo["rivalsa_incassata"], 0)}',
+                              "Rivalsa INPS incassata",
+                              hint="già dentro il saldo, non un extra"))
+    elif tipo == "personale":
+        tiles = [
+            _kpi(f'€ {eur(saldo["entrate"], 0)}', "Entrate", classe="pos"),
+            _kpi(f'€ {eur(saldo["uscite"], 0)}', "Uscite", classe="neg"),
+            _kpi(f'€ {eur(saldo.get("risparmiato", 0), 0)}', "Risparmiato",
+                hint="uscito verso i salvadanai"),
+            _kpi(str(saldo.get("movimenti", 0)), "Movimenti"),
+        ]
+    elif tipo == "revolut":
+        quando = data_it(saldo.get("data")) or "—"
+        giorni = saldo.get("giorni")
+        hint_data = (f'fermo da {giorni} giorni' if (giorni or 0) > 45
+                    else f'aggiornato al {quando}')
+        tiles = [
+            _kpi(f'€ {eur(saldo["conto"], 0)}', "Liquidità"),
+            _kpi(f'€ {eur(saldo["risparmi"], 0)}', "Risparmi"),
+            _kpi(f'€ {eur(saldo["investimenti"], 0)}', "Investimenti"),
+            _kpi(quando, "Ultimo estratto", hint=hint_data),
+        ]
+    if not tiles:
+        return ""
+    return f'<div class="grid kpi mb-4">{"".join(tiles)}</div>'
+
+
+def render_saldi_page(saldi: dict | None, coerenza_html: str = "") -> str:
     """
     Pagina dedicata "Saldi": la stessa card che compare in cima alla
     home, ma raggiungibile dal menu senza passare da li' — utile mentre
     si e' gia' dentro Fatture o Spese e si vuole solo controllare quanto
-    c'e' sui conti, senza perdere il punto in cui si era.
+    c'e' sui conti, senza perdere il punto in cui si era. In piu' — dove
+    la card di home resta compatta — una riga di KPI di dettaglio per
+    ciascun conto: qui c'e' spazio per vederli come tessere, non solo
+    come righe di un elenco.
 
     `saldi` ha la stessa forma usata da render_launchpad: dict opzionale
     con chiavi piva/personale/revolut (ciascuna dal rispettivo saldo_*()).
+    `coerenza_html` e' gia' pronto (spese.revolut._riquadro_coerenza):
+    il confronto fra risparmio dichiarato e reale, se Revolut e' collegato.
     """
-    corpo = (_blocco_saldi(saldi) if saldi else
-             '<div class="empty">Saldi non disponibili.</div>')
+    if not saldi:
+        corpo = '<div class="empty">Saldi non disponibili.</div>'
+    else:
+        blocchi = [_blocco_saldi(saldi)]
+        piva = saldi.get("piva") or {}
+        pers = saldi.get("personale") or {}
+        rev = saldi.get("revolut") or {}
+
+        if piva.get("disponibile"):
+            blocchi.append('<div class="eyebrow mt-4 mb-2">Conto P.IVA</div>')
+            blocchi.append(_kpi_conto(piva, "piva"))
+        if pers.get("disponibile"):
+            blocchi.append('<div class="eyebrow mt-4 mb-2">Conto personale</div>')
+            blocchi.append(_kpi_conto(pers, "personale"))
+        if rev.get("disponibile"):
+            blocchi.append('<div class="eyebrow mt-4 mb-2">Revolut</div>')
+            blocchi.append(_kpi_conto(rev, "revolut"))
+            if coerenza_html:
+                blocchi.append(coerenza_html)
+
+        corpo = "\n".join(blocchi)
+
     return render_page(
         section="saldi",
         eyebrow="I tuoi conti",

@@ -199,12 +199,23 @@ def launchpad():
 @app.get("/saldi")
 def saldi_page():
     saldi = None
+    coerenza_html = ""
     if is_configured():
+        sb = get_client()
         try:
-            saldi = _saldi_conti(get_client(), date.today().isoformat())
+            saldi = _saldi_conti(sb, date.today().isoformat())
         except Exception:
             saldi = None
-    html = render_saldi_page(saldi)
+        # Il confronto risparmio dichiarato/reale vive gia' su /spese/revolut:
+        # qui compare solo se Revolut e' collegato, stessa logica, nessuna
+        # query in piu' se non serve.
+        if saldi and (saldi.get("revolut") or {}).get("disponibile"):
+            try:
+                from spese.revolut import coerenza, _riquadro_coerenza
+                coerenza_html = _riquadro_coerenza(coerenza(sb, saldi["revolut"]))
+            except Exception:
+                coerenza_html = ""
+    html = render_saldi_page(saldi, coerenza_html)
     return Response(html, mimetype="text/html")
 
 
