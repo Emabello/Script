@@ -436,21 +436,34 @@ def salva(client, s: dict) -> dict:
 def coerenza(client, rev: dict) -> dict | None:
     """
     Il confronto che chiude il cerchio: quanto hai dichiarato di aver
-    risparmiato, contro quanto c'è davvero nei salvadanai.
+    risparmiato, contro quanto c'è davvero fra salvadanai e investimenti.
 
     Sono due misure indipendenti della stessa cosa — la prima la scrivi
     tu periodo per periodo su `risparmi_periodo`, la seconda arriva
-    dall'estratto della banca. Se divergono, uno dei due è sbagliato, e
-    non c'è nessun altro punto dell'app in cui la cosa verrebbe fuori.
+    dall'estratto della banca (più il valore di mercato degli
+    investimenti, scritto a mano). Il "reale" include gli investimenti e
+    non solo i salvadanai: una parte del risparmio dichiarato può finire
+    investita invece di restare liquida nel deposito, e quei soldi sono
+    comunque usciti dal conto personale — escluderli genererebbe uno
+    scarto negativo strutturale che non è un errore di registrazione, e
+    che finirebbe per far ignorare l'avviso proprio quando servirebbe
+    davvero. Il rovescio della medaglia, spiegato nel messaggio: una
+    volta dentro, il valore degli investimenti si muove col mercato, e
+    uno scarto può quindi comparire anche per una plus/minusvalenza, non
+    solo per un periodo dimenticato.
     """
     if not rev.get("disponibile"):
         return None
     dichiarato = D.risparmio_totale(client, rev.get("data"))
-    reale = float(rev.get("risparmi") or 0)
+    risparmi = float(rev.get("risparmi") or 0)
+    investimenti = float(rev.get("investimenti") or 0)
+    reale = round(risparmi + investimenti, 2)
     scarto = round(reale - dichiarato, 2)
     return {
         "dichiarato": dichiarato,
         "reale": reale,
+        "risparmi": risparmi,
+        "investimenti": investimenti,
         "scarto": scarto,
         # Sotto i 50 € non vale la pena allarmare: interessi maturati e
         # arrotondamenti bastano a spiegarli.
@@ -463,30 +476,35 @@ def coerenza(client, rev: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def _riquadro_coerenza(c: dict | None) -> str:
-    """Il confronto fra risparmio dichiarato e saldo reale dei salvadanai."""
+    """Il confronto fra risparmio dichiarato e reale (salvadanai + investimenti)."""
     if not c:
         return ""
+    di_cui_inv = (f' (di cui € {eur(c["investimenti"])} investiti)'
+                  if c.get("investimenti") else "")
     if c["allineato"]:
         cls, titolo = "ok", "I conti tornano"
         corpo = (f'Hai dichiarato di aver messo da parte € {eur(c["dichiarato"])} '
-                 f'e nei salvadanai ce ne sono € {eur(c["reale"])}. '
-                 f'Differenza € {eur(abs(c["scarto"]))}: interessi e arrotondamenti.')
+                 f'e fra salvadanai e investimenti ce ne sono € {eur(c["reale"])}'
+                 f'{di_cui_inv}. Differenza € {eur(abs(c["scarto"]))}: interessi, '
+                 f'arrotondamenti e oscillazioni di mercato.')
     else:
         cls = "warn"
         if c["scarto"] > 0:
             titolo = "Su Revolut c'è più di quanto risulti risparmiato"
-            corpo = (f'Nei salvadanai ci sono € {eur(c["reale"])}, ma la pagina '
-                     f'Risparmi ne ha registrati solo € {eur(c["dichiarato"])}: '
-                     f'mancano € {eur(c["scarto"])}. Probabilmente qualche periodo '
-                     f'non è stato registrato — finché non lo è, il saldo del conto '
-                     f'personale risulta più alto del vero della stessa cifra.')
+            corpo = (f'Fra salvadanai e investimenti ci sono € {eur(c["reale"])}'
+                     f'{di_cui_inv}, ma la pagina Risparmi ne ha registrati solo '
+                     f'€ {eur(c["dichiarato"])}: mancano € {eur(c["scarto"])}. Può '
+                     f'essere un periodo non registrato, oppure una plusvalenza '
+                     f'sugli investimenti — quella non passa mai dal conto '
+                     f'personale, quindi non risulta "dichiarata".')
         else:
             titolo = "Risulta risparmiato più di quanto ci sia"
-            corpo = (f'Hai registrato € {eur(c["dichiarato"])} di risparmio ma nei '
-                     f'salvadanai ce ne sono € {eur(c["reale"])}: '
-                     f'€ {eur(abs(c["scarto"]))} in meno. Se hai ripreso dei soldi '
-                     f'dai salvadanai è normale; altrimenti c\'è un periodo '
-                     f'registrato con un importo più alto del reale.')
+            corpo = (f'Hai registrato € {eur(c["dichiarato"])} di risparmio ma fra '
+                     f'salvadanai e investimenti ce ne sono € {eur(c["reale"])}'
+                     f'{di_cui_inv}: € {eur(abs(c["scarto"]))} in meno. Può essere '
+                     f'per aver ripreso soldi dai salvadanai, un periodo registrato '
+                     f'con un importo più alto del reale, o una minusvalenza sugli '
+                     f'investimenti.')
     return f'''
     <div class="notice {cls} mb-3">
       <strong>{titolo}.</strong><br>{corpo}
