@@ -59,6 +59,47 @@ PARAMETRI_CAMPI = (
     "limite_fatturato_anno", "data_apertura_piva", "anno_fine_regime_agevolato",
 ) + acc.PARAMETRI_CAMPI
 
+# Paracadute contro l'errore di battitura, non un vincolo di legge:
+# coeff_ateco/aliquote sono percentuali 0-1 (non 0-100), margine_sicurezza
+# ha un tetto largo (200%) solo per intercettare un "50" digitato per
+# sbaglio al posto di "0.50". Senza questo controllo un valore fuori scala
+# produce un accantonamento assurdo (negativo, oltre il lordo) visibile
+# ovunque nell'app — l'unico punto che clampa un movimento di denaro reale
+# e' giroconto.calcola(), ma solo li'.
+PARAMETRI_LIMITI = {
+    "coeff_ateco":                (0.0, 1.0),
+    "aliquota_imposta":           (0.0, 1.0),
+    "aliquota_inps":              (0.0, 1.0),
+    "aliquota_acconto":           (0.0, 1.0),
+    "bollo_soglia":               (0.0, None),
+    "bollo_importo":              (0.0, None),
+    "limite_fatturato_anno":      (0.0, None),
+    "anno_fine_regime_agevolato": (2000, 2100),
+    "margine_sicurezza":          (0.0, 2.0),
+    "costi_fissi_annui":          (0.0, None),
+    "fatturato_atteso_anno":      (0.0, None),
+    "acconto_imposta_perc":       (0.0, 1.0),
+}
+
+
+def _valida_parametri(payload: dict) -> str | None:
+    """Messaggio d'errore se un valore e' fuori dai limiti di sanita', None
+    se tutto passa."""
+    for campo, (minimo, massimo) in PARAMETRI_LIMITI.items():
+        if campo not in payload or payload[campo] is None:
+            continue
+        try:
+            v = float(payload[campo])
+        except (TypeError, ValueError):
+            return f'"{campo}" deve essere un numero.'
+        if minimo is not None and v < minimo:
+            return f'"{campo}" non può essere minore di {minimo}.'
+        if massimo is not None and v > massimo:
+            return (f'"{campo}" = {v} è fuori dal range plausibile (max {massimo}) '
+                    f'— controlla se intendevi una percentuale come 0-1 invece di 0-100.')
+    return None
+
+
 MOVIMENTO_CAMPI = (
     "data", "importo", "tipo", "descrizione", "categoria",
     "sottocategoria", "fattura_id", "ricorrente", "note",
@@ -80,14 +121,41 @@ def _esc(v) -> str:
 # Calcolo situazione fiscale
 # ---------------------------------------------------------------------------
 
+# Aliquota standard dell'imposta sostitutiva dopo il quinquennio agevolato
+# (art. 1 c. 64 L. 190/2014). L'agevolata (5 %, default in PARAMETRI_DEFAULT)
+# vale solo per i primi 5 anni di attivita'.
+ALIQUOTA_IMPOSTA_STANDARD = 0.15
+
+
+def _aliquota_imposta_per_anno(param: dict, anno: int) -> float:
+    """
+    param["anno_fine_regime_agevolato"] segna il primo anno in cui l'aliquota
+    torna quella standard. Senza questo controllo il campo "Primo anno con
+    aliquota al 15%" nel form Parametri resterebbe solo testo: nessun
+    calcolo lo leggerebbe mai, e l'app continuerebbe a usare il 5% anche
+    dopo la fine dell'agevolazione finche' qualcuno non se ne accorge e
+    non lo cambia a mano.
+    """
+    try:
+        fine_agevolato = int(param.get("anno_fine_regime_agevolato"))
+    except (TypeError, ValueError):
+        fine_agevolato = None
+    if fine_agevolato is not None and anno >= fine_agevolato:
+        return ALIQUOTA_IMPOSTA_STANDARD
+    return float(param.get("aliquota_imposta") or 0.05)
+
+
 def _get_parametri(sb) -> dict:
     try:
         r = sb.table("b2f_parametri_fiscali").select("*").eq("id", 1).single().execute()
-        if r.data:
-            return {**PARAMETRI_DEFAULT, **r.data}
+        param = {**PARAMETRI_DEFAULT, **r.data} if r.data else dict(PARAMETRI_DEFAULT)
     except Exception:
-        pass
-    return dict(PARAMETRI_DEFAULT)
+        param = dict(PARAMETRI_DEFAULT)
+    # Corretta per l'anno corrente: chi chiama senza un anno esplicito
+    # (giroconto su un incasso di oggi, anteprima nell'editor, form
+    # Parametri) intende sempre "quanto si applica adesso".
+    param["aliquota_imposta"] = _aliquota_imposta_per_anno(param, date.today().year)
+    return param
 
 
 def _mesi_attivita(anno: int, data_apertura_iso: str) -> int:
@@ -112,7 +180,11 @@ def _mesi_attivita(anno: int, data_apertura_iso: str) -> int:
 def _situazione_data(sb, anno: int) -> dict:
     param = _get_parametri(sb)
     coeff = float(param["coeff_ateco"])
-    aliq_imp = float(param["aliquota_imposta"])
+    # Non il valore che _get_parametri() ha gia' corretto per l'anno di
+    # oggi: qui "anno" puo' essere un anno diverso da quello corrente (si
+    # puo' guardare la situazione di un anno passato o futuro dal
+    # selettore), quindi l'aliquota va ricalcolata proprio su quell'anno.
+    aliq_imp = _aliquota_imposta_per_anno(param, anno)
     aliq_inps = float(param["aliquota_inps"])
     aliq_acc = float(param["aliquota_acconto"])
     limite_anno = float(param["limite_fatturato_anno"])
@@ -389,9 +461,15 @@ def situazione_dashboard():
                        breadcrumb=breadcrumb)
 
     t = s["totali"]
+    # Il limite dei 85.000 € e' per cassa (art. 1 c. 54 L. 190/2014, "ricavi
+    # o compensi percepiti"): a differenza di imposta/INPS/scadenze qui sotto
+    # (tenute apposta sul fatturato emesso, per restare allineate al foglio
+    # Excel di riferimento — vedi il box sotto), questo indicatore specifico
+    # deve seguire l'incassato, o il rischio "stai per uscire dal regime"
+    # risulterebbe falsato proprio a cavallo di fine anno, quando conta di piu'.
     pct_limite = 0.0
     if s["limite_ragguagliato"] > 0:
-        pct_limite = min(t["fatturato"] / s["limite_ragguagliato"] * 100, 100)
+        pct_limite = min(t["incasso"] / s["limite_ragguagliato"] * 100, 100)
     limite_cls = "neg" if pct_limite >= 90 else "warn" if pct_limite >= 70 else ""
     pct_it = f"{pct_limite:.1f}".replace(".", ",")
 
@@ -453,7 +531,7 @@ def situazione_dashboard():
     ) if t["incasso"] > 0 else ""
 
     # --- Limite forfettario --------------------------------------------------
-    residuo = max(s["limite_ragguagliato"] - t["fatturato"], 0)
+    residuo = max(s["limite_ragguagliato"] - t["incasso"], 0)
     limite = f'''
     <div class="card">
       <div class="card-head">
@@ -462,8 +540,9 @@ def situazione_dashboard():
       </div>
       <div class="meter"><i class="{limite_cls}" style="width:{pct_limite:.1f}%"></i></div>
       <div class="small muted mt-3">
-        € {_fmt_eur(t["fatturato"])} su € {_fmt_eur(s["limite_ragguagliato"])}
-        ragguagliati a {s["mesi_attivita"]} mesi di attività.
+        € {_fmt_eur(t["incasso"])} incassati su € {_fmt_eur(s["limite_ragguagliato"])}
+        ragguagliati a {s["mesi_attivita"]} mesi di attività — per cassa, come
+        vuole la norma sul limite.
         Restano <strong>€ {_fmt_eur(residuo)}</strong>.
       </div>
     </div>'''
@@ -915,6 +994,9 @@ def api_parametri_update():
     if err: return jsonify({"error": "supabase not configured"}), 503
     data = request.get_json(silent=True) or {}
     payload = {k: data[k] for k in PARAMETRI_CAMPI if k in data}
+    errore_validazione = _valida_parametri(payload)
+    if errore_validazione:
+        return jsonify({"error": errore_validazione}), 400
     try:
         r = sb.table("b2f_parametri_fiscali").update(payload).eq("id", 1).execute()
         return jsonify(r.data[0] if r.data else {"id": 1})
@@ -1310,15 +1392,26 @@ def _origine_ripartizione(sb, mid: int) -> dict | None:
     Se questo movimento e' la meta' P.IVA della ripartizione automatica
     di un incasso (fatture/giroconto.py), la fattura a cui appartiene.
 
-    Non copre il legame piu' debole di `spesa_piva_id` (la semplice
-    registrazione dell'incasso): quello si scioglie apposta eliminando
-    il movimento da qui — vedi `_stacca_da_fattura`.
+    Il legame piu' debole di `spesa_piva_id` (la semplice registrazione
+    dell'incasso) di per se' si scioglie apposta eliminando il movimento
+    da qui — vedi `_stacca_da_fattura`. Ma se sopra quella registrazione
+    e' *gia'* stato eseguito un giroconto (`giroconto_piva_id` valorizzato
+    sulla stessa fattura), cancellare la riga "fatturato" lascerebbe la
+    meta' di uscita del giroconto nel libro P.IVA senza piu' un incasso
+    a giustificarla — quindi da quel momento in poi va protetta anche lei.
     """
     try:
         r = (sb.table("b2f_fatture").select("id, numero")
                .eq("giroconto_piva_id", mid).limit(1).execute())
         righe = r.data or []
-        return righe[0] if righe else None
+        if righe:
+            return righe[0]
+        r2 = (sb.table("b2f_fatture").select("id, numero, giroconto_piva_id")
+                .eq("spesa_piva_id", mid).limit(1).execute())
+        righe2 = r2.data or []
+        if righe2 and righe2[0].get("giroconto_piva_id"):
+            return righe2[0]
+        return None
     except Exception:
         return None
 

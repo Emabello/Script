@@ -26,7 +26,7 @@ from fatture.costanti import STATI_EMESSE
 from spese import spese_bp
 from shared.webauthn import webauthn_bp
 
-from shared.theme import render_launchpad
+from shared.theme import render_launchpad, render_saldi_page
 from shared.supabase_client import get_client, is_configured
 
 # Render (come ogni PaaS) termina il TLS su un proxy e inoltra a gunicorn in
@@ -73,6 +73,22 @@ def _greet_name() -> str:
         return ""
 
 
+def _saldi_conti(sb, al: str) -> dict:
+    """
+    I tre conti, a una data. Estratta a parte perche' serve sia alla
+    home (dentro _dashboard_data, insieme a tutto il resto) sia alla
+    pagina dedicata /saldi (da sola, senza il resto della dashboard).
+    """
+    from fatture.fiscale import saldo_piva
+    from spese import dati as personale
+    from spese.revolut import saldo_revolut
+    return {
+        "piva": saldo_piva(sb, al),
+        "personale": personale.saldo_conto(sb, al),
+        "revolut": saldo_revolut(sb, al),
+    }
+
+
 def _dashboard_data() -> dict:
     """
     Dati della home. Ogni blocco e' isolato in un try: se una query
@@ -82,7 +98,7 @@ def _dashboard_data() -> dict:
         return {"errore": "Supabase non configurato. Aggiungi <code>SUPABASE_URL</code> "
                           "e <code>SUPABASE_KEY</code> alle env vars."}
 
-    from fatture.fiscale import situazione_data, saldo_piva
+    from fatture.fiscale import situazione_data
     from fatture import accantonamento as acc
     from fatture.storico import cliente_label
     from fatture.costanti import MESI_NOMI
@@ -93,17 +109,12 @@ def _dashboard_data() -> dict:
     anno = today.year
     out: dict = {"anno": anno}
 
-    # I due conti, ad oggi. Sono la prima cosa che si guarda aprendo
+    # I tre conti, ad oggi. Sono la prima cosa che si guarda aprendo
     # l'app, e sono l'unico numero che nessun'altra pagina dava: /spese
     # mostra il saldo del mese e /fatture/spese-piva quello dell'anno
     # filtrato, non quanto c'e' davvero sui conti.
     try:
-        from spese.revolut import saldo_revolut
-        out["saldi"] = {
-            "piva": saldo_piva(sb, today.isoformat()),
-            "personale": personale.saldo_conto(sb, today.isoformat()),
-            "revolut": saldo_revolut(sb, today.isoformat()),
-        }
+        out["saldi"] = _saldi_conti(sb, today.isoformat())
     except Exception:
         pass
 
@@ -182,6 +193,18 @@ def _dashboard_data() -> dict:
 @app.get("/")
 def launchpad():
     html = render_launchpad(greet_name=_greet_name(), dati=_dashboard_data())
+    return Response(html, mimetype="text/html")
+
+
+@app.get("/saldi")
+def saldi_page():
+    saldi = None
+    if is_configured():
+        try:
+            saldi = _saldi_conti(get_client(), date.today().isoformat())
+        except Exception:
+            saldi = None
+    html = render_saldi_page(saldi)
     return Response(html, mimetype="text/html")
 
 

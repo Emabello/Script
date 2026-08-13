@@ -87,6 +87,18 @@ def parse_date(s):
     y, m, day = map(int, s.split("-")); return dt.date(y, m, day)
 
 
+def _arrotonda_5(h, m):
+    """Arrotonda i minuti al multiplo di 5 piu' vicino, riportando
+    correttamente sull'ora quando l'arrotondamento tocca i 60 (es. 9:58 ->
+    10:00, non 9:00 come faceva `round(m/5)*5 % 60` da solo). L'ora fa il
+    giro a 24 per correttezza, anche se in pratica capita solo con un
+    orario che arrotonda oltre le 23:57."""
+    tot = round(m / 5) * 5
+    if tot == 60:
+        return (h + 1) % 24, 0
+    return h, tot
+
+
 def catalog_to_json():
     """Trasforma il catalogo (clienti -> progetti -> task) in una struttura JSON
     serializzabile, scartando i clienti senza progetti e ordinando per nome."""
@@ -109,18 +121,29 @@ def catalog_to_json():
 
 def day_payload(d):
     """Costruisce il riepilogo di un singolo giorno: elenco delle voci registrate
-    e totale dei minuti lavorati (usato sia dalla settimana che dal mese)."""
+    e totale dei minuti lavorati (usato sia dalla settimana che dal mese).
+
+    Il campo 'total' di ogni voce e' testo scrapato dal portale XS esterno,
+    non garantito nel formato 'Xh Ym' (puo' arrivare vuoto, '-', '45m', o da
+    una timbratura ancora aperta). Quando il parsing fallisce, la voce viene
+    marcata con total_unreadable=True invece di essere sommata come 0 minuti
+    in silenzio: il frontend la segnala (badge sulla voce + conteggio nel
+    riepilogo), cosi' chi guarda sa che il totale e' incompleto invece di
+    vedere un numero sottostimato ma apparentemente normale."""
     entries = client.get_day_entries(d.year, d.month, d.day)
     total_min = 0
+    unread = 0
     for e in entries:
         try:
             h = int(e["total"].split("h")[0])
             m = int(e["total"].split("h")[1].replace("m", "").strip())
             total_min += h * 60 + m
+            e["total_unreadable"] = False
         except Exception:
-            pass
+            e["total_unreadable"] = True
+            unread += 1
     return {"date": d.isoformat(), "weekday": d.weekday(),
-            "entries": entries, "total_min": total_min}
+            "entries": entries, "total_min": total_min, "unread_count": unread}
 
 
 @app.get("/api/status")
@@ -191,8 +214,8 @@ def api_add():
     d = parse_date(data["date"])
     sh, sm = map(int, data["start"].split(":"))
     eh, em = map(int, data["end"].split(":"))
-    sm = round(sm / 5) * 5 % 60
-    em = round(em / 5) * 5 % 60
+    sh, sm = _arrotonda_5(sh, sm)
+    eh, em = _arrotonda_5(eh, em)
     client.add_entry(d.year, d.month, d.day,
                      data["client_id"], data["proj_id"], data["task_id"],
                      sh, sm, eh, em, log_message=data.get("note", ""))
@@ -429,19 +452,60 @@ def g_preview():
 
 @app.post("/api/google/import")
 def g_import():
+    """Scrive su XS gli eventi ricevuti da Google Calendar. Salta le voci che
+    sembrano gia' importate, con lo stesso criterio "a specchio" usato da
+    g_export per non duplicare in senso opposto: (titolo, data, ora di
+    inizio) confrontato con le voci XS gia' presenti nei giorni coinvolti.
+    Il confronto avviene DOPO l'arrotondamento a 5 minuti, perche' e' cosi'
+    che l'ora arriva scritta (e riletta) su XS."""
     ensure_login()
     items = request.get_json(force=True).get("items", [])
+    catalog = catalog_to_json()
+
+    def _names(cid, pid, tid):
+        for c in catalog:
+            if c["id"] != cid:
+                continue
+            for p in c["projects"]:
+                if p["id"] != pid:
+                    continue
+                for t in p["tasks"]:
+                    if t["id"] == tid:
+                        return c["name"], p["name"], t["name"]
+        return None, None, None
+
+    # Set "seen", costruito leggendo (come g_export) le voci XS gia' presenti
+    # nei giorni toccati da questo import: stesso criterio di equivalenza,
+    # a specchio.
+    seen = set()
+    for date in {it.get("date") for it in items if it.get("date")}:
+        try:
+            d0 = parse_date(date)
+        except Exception:
+            continue
+        for ent in client.get_day_entries(d0.year, d0.month, d0.day):
+            title = " - ".join(x for x in [ent["client"], ent["project"], ent["task"]] if x).strip()
+            seen.add((title, date, ent["start"]))
+
     results = []
     for it in items:
         try:
+            date = it["date"]
             sh, sm = map(int, it["start"].split(":"))
             eh, em = map(int, it["end"].split(":"))
-            sm = round(sm / 5) * 5 % 60
-            em = round(em / 5) * 5 % 60
-            d = parse_date(it["date"])
+            sh, sm = _arrotonda_5(sh, sm)
+            eh, em = _arrotonda_5(eh, em)
+            cname, pname, tname = _names(it["client_id"], it["proj_id"], it["task_id"])
+            title = " - ".join(x for x in [cname, pname, tname] if x).strip()
+            key = (title, date, f"{sh:02d}:{sm:02d}")
+            if key in seen:
+                results.append({"date": date, "ok": True, "skipped": True})
+                continue
+            d = parse_date(date)
             client.add_entry(d.year, d.month, d.day, it["client_id"], it["proj_id"],
                              it["task_id"], sh, sm, eh, em, log_message=it.get("note", ""))
-            results.append({"date": it["date"], "ok": True})
+            seen.add(key)
+            results.append({"date": date, "ok": True})
         except Exception as ex:
             results.append({"date": it.get("date"), "ok": False, "error": str(ex)})
     return jsonify({"results": results})
@@ -556,6 +620,7 @@ PAGE = r"""__HEAD__
 .wtotal .eyebrow{margin-bottom:1px;font-size:10px}
 .wtotal .v{font-family:var(--display);font-size:25px;line-height:1;color:var(--gold)}
 .wtotal .v small{font-size:13px;color:var(--muted);font-family:Inter}
+#w-unread:not(:empty){margin-top:4px}
 .range{font-size:13px;color:var(--muted);margin-bottom:14px}
 .range .serif{font-size:15px;color:var(--ink-dim)}
 
@@ -755,7 +820,7 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
         <button class="now" id="now">Oggi</button>
         <button class="arrow" id="next"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></button>
       </div>
-      <div class="wtotal"><div class="eyebrow">Settimana</div><div class="v" id="wtotal">—</div></div>
+      <div class="wtotal"><div class="eyebrow">Settimana</div><div class="v" id="wtotal">—</div><div id="w-unread"></div></div>
     </div>
     <div class="range" id="range"></div>
     <div class="weekstrip" id="weekstrip"></div>
@@ -854,7 +919,7 @@ const CAT={
 function catColors(){return document.documentElement.dataset.theme==="light"?CAT.light:CAT.dark;}
 
 function fmtMin(m){const h=Math.floor(m/60),r=m%60;return h+"h"+(r?" "+(r<10?"0":"")+r+"m":"");}
-function entryMin(e){try{const h=parseInt(e.total.split("h")[0]||0);const m=parseInt((e.total.split("h")[1]||"").replace("m","").trim()||0);return h*60+m;}catch(_){return 0;}}
+function entryMin(e){if(e.total_unreadable)return 0;try{const h=parseInt(e.total.split("h")[0]||0);const m=parseInt((e.total.split("h")[1]||"").replace("m","").trim()||0);return h*60+m;}catch(_){return 0;}}
 function isoLocal(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 const todayISO=()=>isoLocal(new Date());
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove("show"),2200);}
@@ -883,11 +948,11 @@ async function ensureMonthsForWeek(mondayISO){
   await ensureMonth(isoLocal(mo)); await ensureMonth(isoLocal(su));
 }
 function weekData(mondayISO){
-  const mo=new Date(mondayISO+"T00:00"); const days=[]; let tot=0;
+  const mo=new Date(mondayISO+"T00:00"); const days=[]; let tot=0, unread=0;
   for(let i=0;i<7;i++){const d=new Date(mo);d.setDate(d.getDate()+i);const iso=isoLocal(d);
-    const dp=cache[iso]||{date:iso,weekday:(d.getDay()+6)%7,entries:[],total_min:0};
-    days.push(dp); tot+=dp.total_min||0;}
-  return {monday:mondayISO,days,week_total_min:tot};
+    const dp=cache[iso]||{date:iso,weekday:(d.getDay()+6)%7,entries:[],total_min:0,unread_count:0};
+    days.push(dp); tot+=dp.total_min||0; unread+=dp.unread_count||0;}
+  return {monday:mondayISO,days,week_total_min:tot,week_unread:unread};
 }
 async function showWeek(mondayISO, dir){
   currentMonday=mondayISO;
@@ -906,6 +971,7 @@ function renderWeek(data, dir){
   const o={day:"numeric",month:"long"};
   document.getElementById("range").innerHTML='<span class="serif">'+m.toLocaleDateString("it-IT",o)+'</span> — <span class="serif">'+end.toLocaleDateString("it-IT",o)+'</span>';
   document.getElementById("wtotal").innerHTML=data.week_total_min?fmtMin(data.week_total_min):'<small>—</small>';
+  document.getElementById("w-unread").innerHTML=data.week_unread?`<span class="chip warn" title="${data.week_unread} voce/i della settimana con orario non riconosciuto dal portale XS, escluse dal totale">${data.week_unread} non lett${data.week_unread===1?'a':'e'}</span>`:'';
 
   const t=todayISO();
   document.getElementById("weekstrip").innerHTML=data.days.map(d=>{
@@ -928,6 +994,7 @@ function renderWeek(data, dir){
         <div class="dh-left"><span class="wd">${WD_SHORT[day.weekday]}</span><span class="dn tnum">${day.date.slice(8,10)}</span></div>
         <div class="dh-right">
           ${day.total_min?`<span class="pill tnum">${fmtMin(day.total_min)}</span>`:`<span class="free">libero</span>`}
+          ${day.unread_count?`<span class="chip warn" title="${day.unread_count} voce/i con orario non riconosciuto dal portale XS, escluse dal totale del giorno">${day.unread_count} non lett${day.unread_count===1?'a':'e'}</span>`:''}
           <span class="chev"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg></span>
         </div>
       </button>
@@ -955,7 +1022,7 @@ function buildBody(box, i){
       row.innerHTML=`
         <div class="etime tnum">${e.start}<span style="color:var(--faint)">–</span>${e.end}</div>
         <div class="einfo"><div class="ec">${e.client} · ${e.project}</div><div class="et">${e.task||''}</div></div>
-        <div class="edur tnum">${e.total}</div>
+        <div class="edur tnum">${e.total_unreadable?'<span class="chip warn" title="Orario non riconosciuto dal portale XS: non conteggiato nei totali">non letto</span>':e.total}</div>
         <button class="edel" title="Elimina">${e.trans_num?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>':'·'}</button>`;
       const del=row.querySelector(".edel");
       if(e.trans_num){del.onclick=()=>deleteEntry(i,day.date,e.trans_num);}else{del.disabled=true;}
@@ -1131,7 +1198,9 @@ document.getElementById('imp-confirm').onclick=async()=>{
   if(!items.length){toast('Niente da importare');return;}
   const btn=document.getElementById('imp-confirm');btn.disabled=true;btn.textContent='Scrivo su XS…';
   try{const r=await fetch('/api/google/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});const res=await r.json();
-    const ok=res.results.filter(x=>x.ok).length;toast(ok+' '+(ok===1?'ora scritta':'ore scritte')+' su XS');hide('imp');
+    const skipped=res.results.filter(x=>x.skipped).length;
+    const ok=res.results.filter(x=>x.ok&&!x.skipped).length;
+    toast(ok+' '+(ok===1?'ora scritta':'ore scritte')+' su XS'+(skipped?(' · '+skipped+' già presenti'):''));hide('imp');
     cache={};loaded.clear();await showWeek(currentMonday,0);}
   catch(e){toast('Errore importazione');}
   btn.textContent='Scrivi su XS';
@@ -1151,14 +1220,15 @@ function monthData(monthDate){
   const last=new Date(y,m+1,0).getDate();
   const days=[];
   for(let n=1;n<=last;n++){
-    const d=new Date(y,m,n), iso=isoLocal(d), dp=cache[iso]||{entries:[],total_min:0};
-    days.push({date:iso,day:n,weekday:(d.getDay()+6)%7,total_min:dp.total_min||0,entries:dp.entries||[]});
+    const d=new Date(y,m,n), iso=isoLocal(d), dp=cache[iso]||{entries:[],total_min:0,unread_count:0};
+    days.push({date:iso,day:n,weekday:(d.getDay()+6)%7,total_min:dp.total_min||0,entries:dp.entries||[],unread_count:dp.unread_count||0});
   }
   const totalMin=days.reduce((a,d)=>a+d.total_min,0);
+  const unreadTotal=days.reduce((a,d)=>a+(d.unread_count||0),0);
   const worked=days.filter(d=>d.total_min>0);
   const byClient={};
   days.forEach(d=>d.entries.forEach(e=>{byClient[e.client]=(byClient[e.client]||0)+entryMin(e);}));
-  return {y,m,last,days,totalMin,worked,byClient};
+  return {y,m,last,days,totalMin,unreadTotal,worked,byClient};
 }
 function clientRows(md){return Object.entries(md.byClient).sort((a,b)=>b[1]-a[1]);}
 
@@ -1169,6 +1239,7 @@ function blockSummary(md){
   const clients=Object.keys(md.byClient).length;
   const longest=md.days.reduce((a,d)=>d.total_min>(a?a.total_min:0)?d:a,null);
   const longLabel=(longest&&longest.total_min)?new Date(longest.date+"T00:00").toLocaleDateString("it-IT",{weekday:"short",day:"numeric"}):"nessuno";
+  const unreadNotice=md.unreadTotal?`<div class="notice warn mt-3">${md.unreadTotal} voce/i del mese con orario non riconosciuto dal portale XS: escluse dai totali qui sopra.</div>`:"";
   return `<section class="block">
     <div class="block-head"><span class="eyebrow">Riassunto</span><span class="l"></span></div>
     <div class="stat-grid">
@@ -1178,7 +1249,7 @@ function blockSummary(md){
       <div class="stat"><div class="lab">Media / giorno</div><div class="val tnum">${fmtMin(avg)}</div></div>
       <div class="stat"><div class="lab">Clienti attivi</div><div class="val tnum">${clients}</div></div>
       <div class="stat"><div class="lab">Giorno più lungo</div><div class="val tnum">${longest&&longest.total_min?fmtMin(longest.total_min):"—"}</div><div class="sub">${longLabel}</div></div>
-    </div></section>`;
+    </div>${unreadNotice}</section>`;
 }
 
 // ----- Blocco 2: sommatoria del mese per cliente -----

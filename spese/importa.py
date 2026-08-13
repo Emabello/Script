@@ -72,14 +72,44 @@ def clean_bank_description(s: str) -> str:
 # (Data Contabile / Importo / Causale o Descrizione), con openpyxl.
 # ---------------------------------------------------------------------------
 
-def parse_bank_xlsx(file_bytes: bytes) -> list[dict]:
+def _numero_bancario(v) -> float | None:
+    """
+    Un importo puo' arrivare come numero (cella formattata) o come testo
+    con virgola decimale ("1.234,56" — capita quando il file passa da un
+    altro strumento prima di arrivare qui). float() da solo capisce solo
+    il punto: prova prima cosi' com'e', poi convertendo alla notazione
+    con il punto, prima di arrendersi.
+    """
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, str):
+        pulito = v.strip().replace(".", "").replace(",", ".")
+        try:
+            return float(pulito)
+        except ValueError:
+            return None
+    return None
+
+
+def parse_bank_xlsx(file_bytes: bytes) -> dict:
+    """
+    Ritorna {"movimenti": [...], "scartate": n, "motivi": [...],
+    "colonna_data_incerta": bool}. Le righe scartate (data/importo non
+    riconosciuti) prima sparivano senza traccia: chi importava vedeva solo
+    "N movimenti caricati" e non aveva modo di sapere se il numero fosse
+    completo o mancasse qualcosa rispetto al file originale.
+    """
     wb = openpyxl.load_workbook(BytesIO(file_bytes), data_only=True, read_only=True)
     ws = wb.active
     righe = ws.iter_rows(values_only=True)
     try:
         intestazione = next(righe)
     except StopIteration:
-        return []
+        return {"movimenti": [], "scartate": 0, "motivi": [], "colonna_data_incerta": False}
 
     nomi = [str(c or "").strip().lower() for c in intestazione]
 
@@ -90,6 +120,7 @@ def parse_bank_xlsx(file_bytes: bytes) -> list[dict]:
         return None
 
     idx_data = trova("data contabile")
+    colonna_data_incerta = idx_data is None
     if idx_data is None:
         idx_data = 0
     idx_imp = trova("importo")
@@ -101,11 +132,22 @@ def parse_bank_xlsx(file_bytes: bytes) -> list[dict]:
         )
 
     out = []
-    for row in righe:
+    scartate = 0
+    motivi: list[str] = []
+
+    def scarta(motivo: str):
+        nonlocal scartate
+        scartate += 1
+        if len(motivi) < 10:  # basta un campione, non tutte le righe uguali
+            motivi.append(motivo)
+
+    for n_riga, row in enumerate(righe, start=2):  # 2: la 1 e' l'intestazione
         if not row or idx_data >= len(row):
+            scarta(f"riga {n_riga}: vuota")
             continue
         d_raw = row[idx_data]
         if d_raw is None:
+            scarta(f"riga {n_riga}: data mancante")
             continue
         d = None
         if isinstance(d_raw, datetime):
@@ -116,14 +158,16 @@ def parse_bank_xlsx(file_bytes: bytes) -> list[dict]:
             try:
                 d = datetime.strptime(d_raw.strip(), "%d/%m/%Y").date()
             except ValueError:
+                scarta(f"riga {n_riga}: data '{d_raw}' non in formato gg/mm/aaaa")
                 continue
         if d is None:
+            scarta(f"riga {n_riga}: data non riconosciuta")
             continue
 
         imp_raw = row[idx_imp] if idx_imp < len(row) else None
-        try:
-            imp = float(imp_raw)
-        except (TypeError, ValueError):
+        imp = _numero_bancario(imp_raw)
+        if imp is None:
+            scarta(f"riga {n_riga}: importo '{imp_raw}' non numerico")
             continue
 
         raw_desc = row[idx_desc] if idx_desc < len(row) else ""
@@ -138,7 +182,8 @@ def parse_bank_xlsx(file_bytes: bytes) -> list[dict]:
         })
 
     out.sort(key=lambda x: x["data"])
-    return out
+    return {"movimenti": out, "scartate": scartate, "motivi": motivi,
+            "colonna_data_incerta": colonna_data_incerta}
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +229,7 @@ def importa_pagina():
     </div>
 
     <div id="cardRevisione" style="display:none">
+      <div class="notice warn mb-3" id="scartateNotice" style="display:none"></div>
       <div class="card mb-3">
         <div class="card-head"><div class="eyebrow">Applica a selezionate</div></div>
         <div class="field-group">
@@ -278,6 +324,27 @@ def importa_pagina():
           document.getElementById('cardUpload').style.display = 'none';
           document.getElementById('cardRevisione').style.display = 'block';
           renderTabella();
+          // Righe scartate (data/importo non riconosciuti): prima
+          // sparivano senza traccia, ora restano visibili finché non le
+          // guardi — un conto che "quasi torna" è peggio di uno che non
+          // torna per niente, perché non lo sospetti.
+          const notice = document.getElementById('scartateNotice');
+          if (j.scartate > 0 || j.colonna_data_incerta) {{
+            const pezzi = [];
+            if (j.scartate > 0) {{
+              pezzi.push(`${{j.scartate}} riga/righe del file non ${{j.scartate === 1 ? 'è stata' : 'sono state'}} importata/e `
+                + `(formato data o importo non riconosciuto)`
+                + (j.motivi && j.motivi.length ? `: ${{j.motivi.join('; ')}}` : '') + '.');
+            }}
+            if (j.colonna_data_incerta) {{
+              pezzi.push('Colonna "Data Contabile" non trovata nell\\'intestazione: '
+                + 'sto usando la prima colonna del file, controlla che le date siano giuste.');
+            }}
+            notice.textContent = pezzi.join(' ');
+            notice.style.display = 'block';
+          }} else {{
+            notice.style.display = 'none';
+          }}
           toast(`${{MOVS.length}} movimenti caricati`, 'ok');
         }} catch (e) {{ errBox.textContent = 'Errore rete: ' + e.message; errBox.style.display = 'block'; }}
       }}
@@ -364,6 +431,9 @@ def importa_pagina():
           (j.salvate || []).forEach(idx => {{ RIGHE[idx].salvata = true; }});
           renderTabella();
           toast(`${{(j.salvate || []).length}} movimenti salvati`, 'ok');
+          if (j.duplicati && j.duplicati.length) {{
+            toast(`${{j.duplicati.length}} righe già presenti, non duplicate`, 'ok');
+          }}
           if (j.errori && j.errori.length) {{
             toast(`${{j.errori.length}} righe non salvate — vedi console`, 'err');
             console.warn('Righe non salvate:', j.errori);
@@ -382,12 +452,34 @@ def api_importa_carica():
     if not f or not f.filename:
         return jsonify({"error": "nessun file caricato"}), 400
     try:
-        movimenti = parse_bank_xlsx(f.read())
+        esito = parse_bank_xlsx(f.read())
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"file non leggibile: {str(e)[:200]}"}), 400
-    return jsonify({"movimenti": movimenti})
+    return jsonify(esito)
+
+
+def _righe_gia_presenti(client, righe: list[dict]) -> set[tuple]:
+    """
+    (data, importo, descrizione) dei movimenti gia' in `spese` negli anni
+    coperti dalle righe da salvare — per accorgersi se lo stesso estratto
+    conto (o una sua parte, le banche includono qualche giorno di margine
+    fra un export e il successivo) e' gia' stato importato prima.
+    """
+    date_valide = [r.get("data") for r in righe if r.get("data")]
+    if not date_valide:
+        return set()
+    anni = {int(d[:4]) for d in date_valide if len(d) >= 4 and d[:4].isdigit()}
+    esistenti: set[tuple] = set()
+    for anno in anni:
+        for riga in D.righe_periodo(client, anno=anno):
+            esistenti.add((
+                riga.get("data"),
+                round(float(riga.get("importo") or 0), 2),
+                (riga.get("descrizione") or "").strip(),
+            ))
+    return esistenti
 
 
 @spese_bp.post("/api/importa/salva")
@@ -400,13 +492,20 @@ def api_importa_salva():
     if not righe:
         return jsonify({"error": "nessuna riga da salvare"}), 400
 
-    salvate, errori = [], []
+    gia_presenti = _righe_gia_presenti(client, righe)
+
+    salvate, errori, duplicati = [], [], []
     for r in righe:
         idx = r.get("idx")
         cat = (r.get("categoria") or "").strip()
         sub = (r.get("sottocategoria") or "").strip() or None
         if not cat:
             errori.append({"idx": idx, "errore": "categoria mancante"})
+            continue
+        chiave = (r.get("data"), round(float(r.get("importo") or 0), 2),
+                 (r.get("descrizione") or "").strip())
+        if chiave in gia_presenti:
+            duplicati.append(idx)
             continue
         link_id = D.link_categoria(client, cat, sub)
         if link_id is None:
@@ -424,8 +523,12 @@ def api_importa_salva():
             errori.append({"idx": idx, "errore": esito.get("error") or "errore sconosciuto"})
         else:
             salvate.append(idx)
+            # Anche nello stesso file possono esserci due righe identiche
+            # (capita, alcune banche duplicano una transazione nell'export):
+            # segnala la seconda come duplicato invece di scriverla due volte.
+            gia_presenti.add(chiave)
 
-    return jsonify({"salvate": salvate, "errori": errori})
+    return jsonify({"salvate": salvate, "errori": errori, "duplicati": duplicati})
 
 
 def _render(content: str, breadcrumb=None) -> Response:

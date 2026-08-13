@@ -343,10 +343,20 @@ def _form(client, m: dict | None = None) -> str:
 
     albero = D.albero_categorie(client)
     cat_corrente = m.get("categoria") or ""
+    # "Giroconto P.IVA" non e' una scelta libera: la crea solo il giroconto
+    # automatico (fatture/giroconto.py), apposta perche' v_periodi_stipendio
+    # apre un nuovo periodo su ogni entrata con questa categoria — assegnarla
+    # a un rimborso o un regalo qualunque sposterebbe un confine di periodo
+    # senza che nulla lo segnali. Resta nel menu solo se e' gia' quella del
+    # movimento aperto (mostrata disabilitata, non e' comunque modificabile
+    # da qui: vedi il blocco su `collegato` piu' sotto).
+    albero_scelta = [g for g in albero
+                     if g["categoria"] != D.CATEGORIA_GIROCONTO
+                     or g["categoria"] == cat_corrente]
     cat_opts = "".join(
         f'<option value="{_esc(g["categoria"])}"'
         f'{" selected" if g["categoria"] == cat_corrente else ""}>'
-        f'{_esc(g["categoria"])}</option>' for g in albero)
+        f'{_esc(g["categoria"])}</option>' for g in albero_scelta)
 
     # Il movimento che nasce da un giroconto ha una contropartita sul
     # conto P.IVA: si dice, e si impedisce di cancellarlo da qui.
@@ -421,7 +431,7 @@ def _form(client, m: dict | None = None) -> str:
     </div>
     <div id="toast" class="toast"></div>
     <script>
-      const ALBERO = {json.dumps(albero, ensure_ascii=False)};
+      const ALBERO = {json.dumps(albero_scelta, ensure_ascii=False)};
       const MID = {mid if modifica else "null"};
       const SUB_INIZIALE = {json.dumps(m.get("sottocategoria"), ensure_ascii=False)};
 
