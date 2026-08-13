@@ -320,9 +320,13 @@ def fattura_dettaglio(fid):
     acc_card = ""
     scomposizione = None
     try:
-        from .fiscale import get_parametri
+        from .fiscale import get_parametri, _aliquota_imposta_per_anno
         param = get_parametri(sb)
         anno_f = int((f.get("data") or "")[:4] or date.today().year)
+        # get_parametri() corregge l'aliquota solo per l'anno di oggi: la
+        # card "Da accantonare" qui sotto e' per l'anno della fattura,
+        # che puo' essere diverso (fattura vecchia o vista in anticipo).
+        param["aliquota_imposta"] = _aliquota_imposta_per_anno(param, anno_f)
         try:
             r_anno = (sb.table("b2f_fatture").select("totale")
                         .eq("stato", "incassata")

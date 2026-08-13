@@ -185,6 +185,11 @@ def _situazione_data(sb, anno: int) -> dict:
     # puo' guardare la situazione di un anno passato o futuro dal
     # selettore), quindi l'aliquota va ricalcolata proprio su quell'anno.
     aliq_imp = _aliquota_imposta_per_anno(param, anno)
+    # Riscritta anche dentro param: acc.scomponi() piu' sotto e l'export
+    # Excel leggono param["aliquota_imposta"], non la variabile locale
+    # aliq_imp. Senza questa riga userebbero ancora la correzione fatta
+    # da _get_parametri() per l'anno di oggi, non per "anno".
+    param["aliquota_imposta"] = aliq_imp
     aliq_inps = float(param["aliquota_inps"])
     aliq_acc = float(param["aliquota_acconto"])
     limite_anno = float(param["limite_fatturato_anno"])

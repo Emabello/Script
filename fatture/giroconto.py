@@ -164,9 +164,15 @@ def api_giroconto_esegui(fid):
     quando = body.get("data") or f.get("data_incasso") or date.today().isoformat()
 
     # Base per spalmare i costi fissi: l'incassato dell'anno della fattura.
-    from .fiscale import get_parametri
+    from .fiscale import get_parametri, _aliquota_imposta_per_anno
     param = get_parametri(sb)
     anno_f = int((f.get("data") or "")[:4] or date.today().year)
+    # get_parametri() corregge l'aliquota solo per l'anno di oggi: qui si
+    # scrive davvero il giroconto sul database, quindi va ricorretta per
+    # l'anno della fattura, altrimenti una fattura di un anno con
+    # aliquota al 15% verrebbe scomposta ancora al 5%, spostando sul
+    # personale piu' soldi di quanti dovrebbero restare accantonati.
+    param["aliquota_imposta"] = _aliquota_imposta_per_anno(param, anno_f)
     try:
         r = (sb.table("b2f_fatture").select("totale").eq("stato", "incassata")
                .gte("data_incasso", f"{anno_f}-01-01")
