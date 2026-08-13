@@ -512,17 +512,17 @@ def revolut_pagina():
         kpi = f'''
         <div class="grid kpi lead mb-3">
           <div class="card"><div class="stat">
-            <div class="val tnum accent">€ {eur(rev["saldo"], 0)}</div>
+            <div class="val tnum accent">€ {eur(rev["saldo"])}</div>
             <div class="lbl">Totale su Revolut</div>
             <div class="hint">al {data_it(rev["data"])}</div></div></div>
           <div class="card"><div class="stat sm">
-            <div class="val tnum">€ {eur(rev["conto"], 0)}</div>
+            <div class="val tnum">€ {eur(rev["conto"])}</div>
             <div class="lbl">Liquidità</div></div></div>
           <div class="card"><div class="stat sm">
-            <div class="val tnum pos">€ {eur(rev["risparmi"], 0)}</div>
+            <div class="val tnum pos">€ {eur(rev["risparmi"])}</div>
             <div class="lbl">Risparmi</div></div></div>
           <div class="card"><div class="stat sm">
-            <div class="val tnum">€ {eur(rev["investimenti"], 0)}</div>
+            <div class="val tnum">€ {eur(rev["investimenti"])}</div>
             <div class="lbl">Investimenti</div>
             <div class="hint">inserito a mano</div></div></div>
         </div>
@@ -554,9 +554,9 @@ def revolut_pagina():
         <span class="t">{"da estratto" if s.get("fonte") == "estratto" else "a mano"}
           <span class="sub">liquidità € {eur(s.get("conto"))} · risparmi
             € {eur(s.get("risparmi"))} · investimenti € {eur(s.get("investimenti"))}</span></span>
-        <span class="v tnum">€ {eur((float(s.get("conto") or 0)
+        <span class="v tnum">€ {eur(float(s.get("conto") or 0)
                                      + float(s.get("risparmi") or 0)
-                                     + float(s.get("investimenti") or 0)), 0)}</span>
+                                     + float(s.get("investimenti") or 0))}</span>
       </div>''' for s in passato)
     blocco_storico = (f'''
       <div class="card">

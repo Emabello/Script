@@ -693,7 +693,7 @@ def _blocco_saldi(saldi: dict) -> str:
     def saldo_txt(v: float) -> str:
         """Un saldo e' un livello, non una variazione: il "+" davanti non
         aggiunge nulla e si legge come un aumento. Il meno invece serve."""
-        return ("−" if v < 0 else "") + eur(abs(v), 0)
+        return ("−" if v < 0 else "") + eur(abs(v))
 
     def tile(dati: dict, etichetta: str, href: str, hint: str) -> str:
         if not dati.get("disponibile"):
@@ -709,7 +709,7 @@ def _blocco_saldi(saldi: dict) -> str:
                 f'<div class="hint">{hint}</div></div></a>')
 
     rivalsa = float(piva.get("rivalsa_incassata") or 0)
-    hint_piva = (f'di cui € {eur(rivalsa, 0)} di rivalsa INPS incassata'
+    hint_piva = (f'di cui € {eur(rivalsa)} di rivalsa INPS incassata'
                  if rivalsa > 0 else 'movimenti P.IVA, giroconti già usciti')
     hint_pers = f'{pers.get("movimenti", 0)} movimenti, al netto dei risparmi'
 
@@ -719,9 +719,9 @@ def _blocco_saldi(saldi: dict) -> str:
     # Revolut compare solo se e' stato collegato: una tessera a zero
     # sembrerebbe un conto vuoto invece di un conto mai registrato.
     if rev.get("disponibile"):
-        pezzi = [f'risparmi € {eur(rev.get("risparmi", 0), 0)}']
+        pezzi = [f'risparmi € {eur(rev.get("risparmi", 0))}']
         if rev.get("investimenti"):
-            pezzi.append(f'investimenti € {eur(rev["investimenti"], 0)}')
+            pezzi.append(f'investimenti € {eur(rev["investimenti"])}')
         # Uno snapshot vecchio non e' sbagliato, e' vecchio: dirlo evita
         # di leggerlo come se fosse aggiornato a stamattina.
         if (rev.get("giorni") or 0) > 45:
@@ -963,20 +963,20 @@ def _kpi_conto(saldo: dict, tipo: str) -> str:
     tiles = []
     if tipo == "piva":
         tiles = [
-            _kpi(f'€ {eur(saldo["entrate"], 0)}', "Entrate", classe="pos"),
-            _kpi(f'€ {eur(saldo["uscite"], 0)}', "Uscite", classe="neg"),
-            _kpi(f'€ {eur(saldo["girati"], 0)}', "Girate al personale"),
+            _kpi(f'€ {eur(saldo["entrate"])}', "Entrate", classe="pos"),
+            _kpi(f'€ {eur(saldo["uscite"])}', "Uscite", classe="neg"),
+            _kpi(f'€ {eur(saldo["girati"])}', "Girate al personale"),
             _kpi(str(saldo.get("movimenti", 0)), "Movimenti"),
         ]
         if saldo.get("rivalsa_incassata"):
-            tiles.append(_kpi(f'€ {eur(saldo["rivalsa_incassata"], 0)}',
+            tiles.append(_kpi(f'€ {eur(saldo["rivalsa_incassata"])}',
                               "Rivalsa INPS incassata",
                               hint="già dentro il saldo, non un extra"))
     elif tipo == "personale":
         tiles = [
-            _kpi(f'€ {eur(saldo["entrate"], 0)}', "Entrate", classe="pos"),
-            _kpi(f'€ {eur(saldo["uscite"], 0)}', "Uscite", classe="neg"),
-            _kpi(f'€ {eur(saldo.get("risparmiato", 0), 0)}', "Risparmiato",
+            _kpi(f'€ {eur(saldo["entrate"])}', "Entrate", classe="pos"),
+            _kpi(f'€ {eur(saldo["uscite"])}', "Uscite", classe="neg"),
+            _kpi(f'€ {eur(saldo.get("risparmiato", 0))}', "Risparmiato",
                 hint="uscito verso i salvadanai"),
             _kpi(str(saldo.get("movimenti", 0)), "Movimenti"),
         ]
@@ -986,9 +986,9 @@ def _kpi_conto(saldo: dict, tipo: str) -> str:
         hint_data = (f'fermo da {giorni} giorni' if (giorni or 0) > 45
                     else f'aggiornato al {quando}')
         tiles = [
-            _kpi(f'€ {eur(saldo["conto"], 0)}', "Liquidità"),
-            _kpi(f'€ {eur(saldo["risparmi"], 0)}', "Risparmi"),
-            _kpi(f'€ {eur(saldo["investimenti"], 0)}', "Investimenti"),
+            _kpi(f'€ {eur(saldo["conto"])}', "Liquidità"),
+            _kpi(f'€ {eur(saldo["risparmi"])}', "Risparmi"),
+            _kpi(f'€ {eur(saldo["investimenti"])}', "Investimenti"),
             _kpi(quando, "Ultimo estratto", hint=hint_data),
         ]
     if not tiles:
