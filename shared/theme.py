@@ -681,7 +681,7 @@ def _blocco_saldi(saldi: dict) -> str:
     adesso", con la scomposizione aperta a richiesta: un saldo di cui non
     si vede la formazione non e' verificabile.
     """
-    from .fmt import eur, data_it
+    from .fmt import eur, data_it, data_breve
 
     piva = saldi.get("piva") or {}
     pers = saldi.get("personale") or {}
@@ -722,10 +722,17 @@ def _blocco_saldi(saldi: dict) -> str:
         pezzi = [f'risparmi € {eur(rev.get("risparmi", 0))}']
         if rev.get("investimenti"):
             pezzi.append(f'investimenti € {eur(rev["investimenti"])}')
-        # Uno snapshot vecchio non e' sbagliato, e' vecchio: dirlo evita
-        # di leggerlo come se fosse aggiornato a stamattina.
-        if (rev.get("giorni") or 0) > 45:
-            pezzi.append(f'fermo da {rev["giorni"]} giorni')
+        # La data va detta sempre, non solo quando lo snapshot e' vecchio.
+        # Le altre due tessere sono saldi calcolati ad oggi; questa e' una
+        # fotografia, e senza la data si legge come le altre — cosi' uno
+        # scarto di pochi euro contro l'app Revolut sembra un errore
+        # dell'app, mentre e' il mercato che si e' mosso da allora.
+        giorni = rev.get("giorni") or 0
+        quando = data_breve(rev.get("data"))
+        if giorni > 45:
+            pezzi.append(f'fermo da {giorni} giorni')
+        elif quando:
+            pezzi.append(f'fotografia del {quando}')
         tiles += tile(rev, "Revolut", "/spese/revolut", " · ".join(pezzi))
 
     # Il totale ha senso solo se tutti i saldi in gioco sono veri:
