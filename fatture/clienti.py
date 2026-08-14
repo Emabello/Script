@@ -15,15 +15,16 @@ from flask import Response, request, jsonify, redirect, url_for
 from . import fatture_bp
 from shared.theme import render_page
 from shared.design import icon as _icon
+from shared.ordina import chiave_alfabetica, ordina_coppie
 from shared.supabase_client import get_client, is_configured
 
 
-TIPI = [
+TIPI = ordina_coppie([
     ("azienda", "Azienda IT"),
     ("privato", "Privato"),
     ("pa",      "Pubblica Amministrazione"),
     ("estero",  "Cliente estero"),
-]
+])
 
 # Campi anagrafica raccolti dal form
 CAMPI = [
@@ -391,9 +392,11 @@ def api_clienti_picker():
     try:
         r = (sb.table("b2f_clienti").select("*")
              .eq("attivo", True).order("id", desc=True).execute())
-        # Ordino per label alfabeticamente lato Python (piu' semplice)
+        # Ordino per label alfabeticamente lato Python (piu' semplice).
+        # `chiave_alfabetica` e non `.lower()`: un cliente che inizia per
+        # accento (o una ragione sociale con "È") finiva in fondo.
         rows = r.data or []
-        rows.sort(key=lambda c: _label(c).lower())
+        rows.sort(key=lambda c: chiave_alfabetica(_label(c)))
         return jsonify(rows)
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 500

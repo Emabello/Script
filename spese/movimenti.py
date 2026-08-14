@@ -23,7 +23,10 @@ from . import dati as D
 from shared.theme import render_page
 from shared.design import icon
 from shared.fmt import eur, eur_segno, data_it
+from shared.ordina import ordina
 
+# I mesi restano in ordine di calendario: qui l'ordine e' informazione,
+# non un elenco di dati da cercare per nome (vedi shared/ordina.py).
 MESI = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
         "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"]
 
@@ -104,8 +107,8 @@ def movimenti_lista():
     if anno not in anni:
         anni = sorted(set(anni + [anno]), reverse=True)
     voci_cat = D.voci_categoria(client)
-    categorie = sorted({v["categoria"] for v in voci_cat})
-    sottocategorie = sorted({v["sottocategoria"] for v in voci_cat if v["sottocategoria"]})
+    categorie = ordina({v["categoria"] for v in voci_cat})
+    sottocategorie = ordina({v["sottocategoria"] for v in voci_cat if v["sottocategoria"]})
 
     def opzioni(valori, corrente, etichetta_vuota):
         out = [f'<option value="">{etichetta_vuota}</option>']
@@ -136,7 +139,8 @@ def movimenti_lista():
       <summary>Filtri avanzati</summary>
       <div class="field-group mt-2">
         <div class="field"><label>Sottocategoria</label>
-          <select class="input" onchange="filtra('sottocategoria', this.value)">
+          <select class="input" aria-label="Sottocategoria"
+                  onchange="filtra('sottocategoria', this.value)">
             {opzioni([(s, s) for s in sottocategorie], sottocategoria, "Tutte")}
           </select></div>
         <div class="field"><label>Metodo di pagamento</label>
@@ -417,9 +421,7 @@ def _form(client, m: dict | None = None) -> str:
       <div class="field"><label>Metodo di pagamento</label>
         <input id="f_metodo"{ro} list="metodi" value="{_esc(m.get("metodo_pagamento"))}">
         <datalist id="metodi">
-          <option value="Bancomat"><option value="Carta di credito">
-          <option value="Contanti"><option value="Bonifico">
-          <option value="Giroconto"><option value="Addebito diretto">
+          {"".join(f'<option value="{_esc(mp)}">' for mp in D.METODI_PAGAMENTO)}
         </datalist>
       </div>
       <div class="actions">

@@ -30,6 +30,16 @@ Se una proposta viene esplicitamente rifiutata dall'utente, spostala in
 
 ## Altre convenzioni stabilite
 
+- **Menù a tendina**: ogni menù che elenca *dati* (categorie,
+  sottocategorie, clienti, metodi di pagamento, tipi di movimento,
+  clienti/progetti/task delle ore, calendari) si ordina alfabeticamente
+  per la descrizione mostrata, usando `shared/ordina.py` — mai `sorted()`
+  crudo (sbaglia con gli accenti) e mai le colonne `ordine` del database.
+  Restano nella loro sequenza naturale i menù in cui l'ordine è
+  informazione: mesi, anni, stati della fattura, scenari di
+  accantonamento. Quando aggiungi un menù, lancia
+  `python3 tools/verifica_menu.py`: apre tutte le pagine e lo controlla.
+
 - **Schema Supabase**: ogni volta che una migrazione viene applicata,
   aggiorna [docs/schema_supabase.md](docs/schema_supabase.md) con la
   foto aggiornata dello schema (istruzioni di ispezione in README §8.5).

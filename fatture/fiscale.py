@@ -36,7 +36,8 @@ from flask import Response, request, jsonify, send_file
 
 from . import fatture_bp
 from . import accantonamento as acc
-from .costanti import CATEGORIE_SPESE_PIVA, MESI_NOMI, STATI_EMESSE
+from .costanti import (CATEGORIE_SPESE_PIVA, MESI_NOMI, STATI_EMESSE,
+                       TIPI_SPESE_PIVA)
 from shared.theme import render_page
 from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
@@ -1105,7 +1106,7 @@ def spese_piva_list():
     )
     tipo_opts = "".join(
         f'<option value="{k}"{" selected" if tipo==k else ""}>{lbl}</option>'
-        for k, lbl in (("entrata", "Entrata"), ("uscita", "Uscita"), ("giroconto", "Giroconto"))
+        for k, lbl in TIPI_SPESE_PIVA
     )
 
     anno_o = "".join(f'<option value="{y}"{" selected" if y == anno else ""}>{y}</option>'
@@ -1204,6 +1205,10 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
     m = m or {}
     v = lambda k, d="": (m.get(k) if m.get(k) is not None else d)
     tipo_current = m.get("tipo") or "uscita"
+    tipo_opts = "".join(
+        f'<option value="{k}"{" selected" if k==tipo_current else ""}>{lbl}</option>'
+        for k, lbl in TIPI_SPESE_PIVA
+    )
     cat_current = m.get("categoria") or ""
     cat_opts = "".join(
         f'<option value="{k}"{" selected" if k==cat_current else ""}>{lbl}</option>'
@@ -1242,11 +1247,7 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
           <input type="number" step="0.01" inputmode="decimal" id="f_importo" value="{v('importo', 0)}"{ro}></div>
       </div>
       <div class="field"><label>Tipo</label>
-        <select id="f_tipo"{ro}>
-          <option value="entrata"{" selected" if tipo_current=="entrata" else ""}>Entrata</option>
-          <option value="uscita"{" selected" if tipo_current=="uscita" else ""}>Uscita</option>
-          <option value="giroconto"{" selected" if tipo_current=="giroconto" else ""}>Giroconto</option>
-        </select></div>
+        <select id="f_tipo"{ro}>{tipo_opts}</select></div>
       <div class="field"><label>Descrizione</label>
         <input id="f_descrizione" value="{_esc(v('descrizione'))}"{ro}></div>
       <div class="field-group">

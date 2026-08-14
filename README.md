@@ -1128,6 +1128,14 @@ virgolette (PEP 701), che su 3.11 non compilano.
 - Le guardie stanno negli endpoint, non solo nell'interfaccia: nascondere un
   pulsante non impedisce a nessuno di chiamare l'API.
 - I commenti spiegano **perché**, non cosa.
+- **I menù a tendina che elencano dati vanno in ordine alfabetico per la
+  descrizione mostrata** — categorie, sottocategorie, clienti, metodi di
+  pagamento, tipi di movimento, commesse. L'ordinamento passa da
+  `shared/ordina.py` (accenti appiattiti, maiuscole ignorate), non da
+  `sorted()` e non dalle colonne `ordine` del database. Fanno eccezione i
+  menù in cui l'ordine *è* informazione — mesi, anni, stati della fattura,
+  scenari di accantonamento — che restano nella loro sequenza naturale.
+  `tools/verifica_menu.py` controlla la regola su tutte le pagine.
 
 ### Utilità in `tools/`
 
@@ -1137,6 +1145,7 @@ virgolette (PEP 701), che su 3.11 non compilano.
 | `verifica_layout.py` | cerca overflow orizzontali, che sui browser mobili mandano in shrink-to-fit l'intera pagina |
 | `verifica_contrasti.py` | controlla i contrasti WCAG su tutte le combinazioni di tema |
 | `verifica_facsimile.py` | controlli sul PDF generato |
+| `verifica_menu.py` | apre tutte le pagine e controlla che ogni tendina di dati sia alfabetica per descrizione (le eccezioni volute sono elencate nel file) |
 
 ### Analisi funzionale continua
 

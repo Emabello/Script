@@ -1,8 +1,13 @@
 """
 fatture/costanti.py — Costanti condivise del modulo fatture.
 """
+from shared.ordina import ordina_coppie
 
-CATEGORIE_SPESE_PIVA = [
+# Le categorie del conto P.IVA, alfabetiche per etichetta: e' cosi' che
+# arrivano nei menu (filtro movimenti P.IVA, form del movimento, foglio
+# "registra entrata" sulla fattura). Il valore scritto a database e' la
+# chiave, non la posizione: riordinarle non tocca nessuna riga esistente.
+CATEGORIE_SPESE_PIVA = ordina_coppie([
     ("fatturato",        "Fatturato incassato"),
     ("commercialista",   "Commercialista"),
     ("pec",              "PEC"),
@@ -15,7 +20,16 @@ CATEGORIE_SPESE_PIVA = [
     ("formazione",       "Formazione"),
     ("giroconto_personale", "Giroconto P.IVA"),
     ("altro",            "Altro"),
-]
+])
+
+# I tipi di movimento del conto P.IVA. A differenza del conto personale
+# qui "giroconto" e' un tipo legittimo e scrivibile: e' la meta' che esce
+# dal conto P.IVA quando si ripartisce un incasso (vedi giroconto.py).
+TIPI_SPESE_PIVA = ordina_coppie([
+    ("entrata",   "Entrata"),
+    ("uscita",    "Uscita"),
+    ("giroconto", "Giroconto"),
+])
 
 # Categoria dei giroconti che spostano la quota tua dal conto P.IVA a
 # quello personale. Non e' una spesa: e' denaro che cambia conto, e per

@@ -5,7 +5,7 @@ aprire tutto: il README racconta il dominio (fisco, accantonamento,
 migrazioni), qui c'è la corrispondenza file → responsabilità, con le
 trappole che quel file nasconde.
 
-Ultimo aggiornamento: 2026-08-12 · 33 file di codice e configurazione.
+Ultimo aggiornamento: 2026-08-14 · 35 file di codice e configurazione.
 
 **Regola d'oro**: se una modifica tocca un numero, il file che lo calcola
 è uno solo. Prima di scrivere un calcolo, cercalo qui.
@@ -27,6 +27,7 @@ Ultimo aggiornamento: 2026-08-12 · 33 file di codice e configurazione.
 | Colori, spaziature, icone | `shared/design.py` |
 | Struttura di pagina, home | `shared/theme.py` |
 | Formattare euro/date/% | `shared/fmt.py` — **non riscriverli** |
+| Ordinare le voci di un menù | `shared/ordina.py` — alfabetico per descrizione |
 | Il PDF facsimile | `shared/pdfgen.py` |
 | Guardare le schermate senza DB | `tools/preview.py` |
 
@@ -441,6 +442,19 @@ client desktop.
 - `_PIN_GATE`: overlay di sblocco, iniettato in ogni pagina. Intercetta
   anche le `fetch` che rispondono 401 e si riapre.
 
+### `shared/ordina.py` — 53 righe · l'ordine dei menù
+
+`chiave_alfabetica(testo)`, `ordina(voci, per=…)`, `ordina_coppie(coppie)`.
+
+Un menù che elenca **dati** si ordina per la descrizione che si legge, non
+per la chiave tecnica né per una colonna `ordine` del database: chi cerca
+una voce la cerca col nome. `sorted()` da solo non basta — ordina per code
+point, e una categoria accentata finisce dopo la Z.
+
+> Non tocca i menù in cui l'ordine *è* informazione: mesi, anni, stati
+> della fattura, scenari di accantonamento. `tools/verifica_menu.py` tiene
+> l'elenco delle eccezioni, una per una, col motivo.
+
 ### `shared/fmt.py` — 74 righe · formattatori italiani
 
 `eur`, `eur_segno`, `pct`, `data_it`, `data_breve`, `mese_anno`.
@@ -480,16 +494,38 @@ perché l'app è a utente singolo con **un solo worker**.
 
 ## `tools/` — utilità di sviluppo, non servono in produzione
 
-### `tools/preview.py` — 414 righe
+### `tools/preview.py` — 495 righe
 
 Monta l'app con un **finto client Supabase** (`_FakeClient`, che riproduce
 solo la parte di API usata dall'app) e dati realistici di agosto 2026:
 emittente, parametri, 4 clienti, 7 fatture nei vari stati, movimenti P.IVA,
-movimenti personali con `v_spese` e `impostazioni`.
+movimenti personali con `v_spese` e `impostazioni`, l'albero
+`cfg_categorie`/`cfg_sottocategorie`/`cfg_categoria_sottocategoria` (con le
+righe collegate già annidate, come le restituisce PostgREST) e uno
+snapshot Revolut.
 
     python tools/preview.py [porta]     # default 5055
 
-È la base degli altri tre strumenti.
+È la base degli altri strumenti.
+
+> Il rimpiazzo di `get_client`/`is_configured` **non** si scrive più a
+> mano modulo per modulo: quell'elenco si era fermato indietro e
+> `spese/dati.py` non c'era, quindi tutta l'area Spese rispondeva
+> "Supabase non configurato" invece di mostrare i dati finti. Ora si
+> scorrono i moduli già importati dei pacchetti dell'app.
+
+### `tools/verifica_menu.py` — 182 righe
+
+Apre tutte le pagine con l'harness di `preview.py`, estrae ogni `<select>`
+e `<datalist>` dall'HTML servito (più gli elenchi che arrivano via API e
+riempiono i menù in JavaScript) e controlla che le voci siano in ordine
+alfabetico per la descrizione mostrata.
+
+    python3 tools/verifica_menu.py
+
+Le eccezioni volute stanno in `ECCEZIONI`, ognuna col suo motivo: un menù
+nuovo che compare come "non alfabetico" è una domanda — è un elenco di
+dati (si ordina) o una sequenza (si aggiunge lì)?
 
 ### `tools/verifica_layout.py` — 124 righe
 
