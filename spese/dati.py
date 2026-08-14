@@ -32,15 +32,24 @@ Tre cose vanno rispettate, e sono tutte trappole silenziose:
 """
 from datetime import date
 
+from shared.ordina import ordina, ordina_coppie
 from shared.supabase_client import get_client, is_configured
 
 
-TIPI = (
+TIPI = tuple(ordina_coppie([
     ("entrata",   "Entrata"),
     ("uscita",    "Uscita"),
-)
+]))
 TIPI_CHIAVI = tuple(k for k, _ in TIPI)
 TIPI_LABEL = dict(TIPI)
+
+# I metodi di pagamento suggeriti nel form (una `datalist`, quindi il
+# campo resta libero: questi sono solo i suggerimenti). Stavano scritti a
+# mano nell'HTML, in ordine di comodita' di chi li aveva elencati.
+METODI_PAGAMENTO = tuple(ordina([
+    "Bancomat", "Carta di credito", "Contanti", "Bonifico",
+    "Giroconto", "Addebito diretto",
+]))
 
 # Segno con cui ogni tipo entra nel saldo. "giroconto" non e' piu' una
 # scelta del form (era una seconda via, indipendente dalla categoria,
@@ -89,9 +98,9 @@ def voci_categoria(client) -> list[dict]:
     """
     try:
         r = (client.table("cfg_categoria_sottocategoria")
-             .select("id, ordine, categoria_id, sottocategoria_id,"
-                     "cfg_categorie(nome, ordine, attiva),"
-                     "cfg_sottocategorie(nome, ordine, attiva)")
+             .select("id, categoria_id, sottocategoria_id,"
+                     "cfg_categorie(nome, attiva),"
+                     "cfg_sottocategorie(nome, attiva)")
              .eq("attiva", True).execute())
     except Exception:
         return []
@@ -107,12 +116,15 @@ def voci_categoria(client) -> list[dict]:
             "categoria_id":   riga.get("categoria_id"),
             "categoria":      cat.get("nome") or "—",
             "sottocategoria": sub.get("nome"),
-            "ordine_cat":     cat.get("ordine") or 0,
-            "ordine":         riga.get("ordine") or 0,
         })
-    voci.sort(key=lambda v: (v["ordine_cat"], v["categoria"],
-                             v["ordine"], v["sottocategoria"] or ""))
-    return voci
+    # Alfabetico per il nome mostrato, non per le colonne `ordine` del
+    # database: sono la vecchia disposizione manuale di un'app che aveva
+    # un solo elenco, e con una cinquantina di accoppiamenti nei menu
+    # produceva un ordine che solo chi l'ha scritto sa ricostruire.
+    # Questa e' l'unica funzione che alimenta tutti i menu categoria/
+    # sottocategoria dell'area Spese (filtri, form, import da banca).
+    return ordina(ordina(voci, per=lambda v: v["sottocategoria"] or ""),
+                  per=lambda v: v["categoria"])
 
 
 def albero_categorie(client) -> list[dict]:

@@ -20,6 +20,7 @@ os.environ.setdefault('OAUTHLIB_RELAX_TOKEN_SCOPE','1')
 from datetime import timedelta
 from flask import Flask, request, jsonify, Response, session, redirect
 from xs_client import XSClient, _get_credentials
+from shared.ordina import chiave_alfabetica, ordina
 
 app = Flask(__name__)
 client = XSClient()
@@ -101,7 +102,11 @@ def _arrotonda_5(h, m):
 
 def catalog_to_json():
     """Trasforma il catalogo (clienti -> progetti -> task) in una struttura JSON
-    serializzabile, scartando i clienti senza progetti e ordinando per nome."""
+    serializzabile, scartando i clienti senza progetti e ordinando per nome.
+
+    Alfabetico su tutti e tre i livelli: i tre menu del foglio "aggiungi
+    ore" sono in cascata, e finora solo il primo era ordinato — progetti e
+    task arrivavano nell'ordine in cui li elenca il portale."""
     catalog = client.get_catalog()
     out = []
     for c in catalog.values():
@@ -109,13 +114,14 @@ def catalog_to_json():
             continue
         out.append({
             "id": c.id, "name": c.name,
-            "projects": [
+            "projects": ordina([
                 {"id": p.id, "name": p.name,
-                 "tasks": [{"id": t.id, "name": t.name} for t in p.tasks]}
+                 "tasks": ordina([{"id": t.id, "name": t.name} for t in p.tasks],
+                                 per=lambda t: t["name"])}
                 for p in c.projects
-            ],
+            ], per=lambda p: p["name"]),
         })
-    out.sort(key=lambda c: c["name"].lower())
+    out.sort(key=lambda c: chiave_alfabetica(c["name"]))
     return out
 
 
@@ -396,8 +402,9 @@ def g_calendars():
         return jsonify({"connected": False, "error": "Google non collegato"}), 200
     try:
         items = svc.calendarList().list().execute().get("items", [])
-        cals = [{"id": c["id"], "summary": c.get("summary", c["id"]),
-                 "primary": c.get("primary", False)} for c in items]
+        cals = ordina([{"id": c["id"], "summary": c.get("summary", c["id"]),
+                        "primary": c.get("primary", False)} for c in items],
+                      per=lambda c: c["summary"])
         return jsonify({"connected": True, "calendars": cals,
                         "selected": _gstate["calendar_id"]})
     except Exception as ex:

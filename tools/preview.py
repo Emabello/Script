@@ -140,12 +140,82 @@ DB = {
     "b2f_webauthn_credentials": [],
 }
 
+# Le categorie del conto personale. `ordine` e' la vecchia disposizione
+# manuale ereditata dall'app di prima ed e' apposta *non* alfabetica: e'
+# quello che i menu mostravano finche' non si e' deciso che l'ordine di un
+# elenco di dati e' quello del nome che si legge (shared/ordina.py).
+# "Caffè" e' li' per un motivo: con un `sorted()` normale finirebbe dopo
+# "Spesa", perche' ordina per code point e non per alfabeto.
+DB["cfg_categorie"] = [
+    {"id": 1, "nome": "Personale",       "ordine": 1, "attiva": True},
+    {"id": 2, "nome": "Fisso",           "ordine": 2, "attiva": True},
+    {"id": 3, "nome": "Stipendio",       "ordine": 3, "attiva": True},
+    {"id": 4, "nome": "Benzina",         "ordine": 4, "attiva": True},
+    {"id": 5, "nome": "Viaggi",          "ordine": 5, "attiva": True},
+    {"id": 6, "nome": "Altre entrate",   "ordine": 6, "attiva": True},
+    {"id": 7, "nome": "Giroconto P.IVA", "ordine": 7, "attiva": True},
+    {"id": 8, "nome": "Salute",          "ordine": 8, "attiva": True},
+    {"id": 9, "nome": "Èlite (disattiva)", "ordine": 9, "attiva": False},
+]
+DB["cfg_sottocategorie"] = [
+    {"id": n, "nome": nome, "ordine": n, "attiva": True}
+    for n, nome in enumerate([
+        "Ristoranti", "Spesa", "Caffè", "Abbigliamento", "Bonifici",
+        "Telefonia", "Utenze", "Assicurazioni", "Farmacia", "Visite",
+        "Voli", "Hotel",
+    ], start=1)
+]
+# Gli accoppiamenti ammessi: e' questa la tabella che alimenta i menu
+# (categoria_link_id in `spese` punta qui). Le righe portano gia' dentro
+# le due tabelle collegate, perche' il finto client non sa fare le join
+# annidate di PostgREST: e' la stessa forma che torna la query vera.
+_COPPIE = [
+    ("Personale", ["Ristoranti", "Spesa", "Caffè", "Abbigliamento", "Bonifici"]),
+    ("Fisso",     ["Telefonia", "Utenze", "Assicurazioni"]),
+    ("Salute",    ["Farmacia", "Visite"]),
+    ("Viaggi",    ["Voli", "Hotel"]),
+    ("Benzina",   []),
+    ("Stipendio", []),
+    ("Altre entrate", []),
+    ("Giroconto P.IVA", []),
+    ("Èlite (disattiva)", []),
+]
+DB["cfg_categoria_sottocategoria"] = []
+_lid = 0
+for _cat, _subs in _COPPIE:
+    _c = next(c for c in DB["cfg_categorie"] if c["nome"] == _cat)
+    # Ogni categoria ha anche la sua riga senza sottocategoria: e' cosi'
+    # nel database vero (una spesa puo' avere solo la categoria).
+    for _sub in [None] + _subs:
+        _lid += 1
+        _s = next((s for s in DB["cfg_sottocategorie"] if s["nome"] == _sub), None)
+        DB["cfg_categoria_sottocategoria"].append({
+            "id": _lid, "ordine": _lid, "attiva": True,
+            "categoria_id": _c["id"],
+            "sottocategoria_id": _s["id"] if _s else None,
+            "cfg_categorie": {"nome": _c["nome"], "ordine": _c["ordine"],
+                              "attiva": _c["attiva"]},
+            "cfg_sottocategorie": ({"nome": _s["nome"], "ordine": _s["ordine"],
+                                    "attiva": _s["attiva"]} if _s else None),
+        })
+
 # `v_spese` e' la vista che porta i nomi di categoria/sottocategoria e i
 # campi derivati: l'app legge sempre da li', mai da `spese`, quindi il
 # finto database deve averla anche lui o le pagine restano vuote.
+def _link_id(categoria, sottocategoria):
+    """L'id dell'accoppiamento, come lo tiene `spese.categoria_link_id`."""
+    for riga in DB["cfg_categoria_sottocategoria"]:
+        cat = (riga.get("cfg_categorie") or {}).get("nome")
+        sub = (riga.get("cfg_sottocategorie") or {}).get("nome")
+        if cat == categoria and sub == sottocategoria:
+            return riga["id"]
+    return None
+
+
 DB["v_spese"] = [
     {**r, "mese": int(r["data"][5:7]), "anno": int(r["data"][:4]),
-     "metodo_pagamento": None, "categoria_link_id": None}
+     "metodo_pagamento": None,
+     "categoria_link_id": _link_id(r.get("categoria"), r.get("sottocategoria"))}
     for r in DB["spese"]
 ]
 
@@ -395,17 +465,28 @@ sc.is_configured = lambda: True
 
 import app as b2f_app                        # noqa: E402
 
-# I moduli hanno importato get_client/is_configured per nome: li rimpiazzo
-# anche nei rispettivi namespace.
+# I moduli hanno importato get_client/is_configured per nome: il
+# rimpiazzo su shared.supabase_client non li raggiunge, vanno sostituiti
+# anche nei rispettivi namespace. L'elenco era scritto a mano e si era
+# gia' fermato indietro rispetto al codice: `spese.dati` — che e' l'unico
+# accesso ai dati di tutta l'area Spese — non c'era, e ogni pagina che
+# passa da li' (movimenti, importa, risparmi, Revolut) rispondeva
+# "Supabase non configurato" invece di mostrare i dati finti. Ora si
+# scorrono i moduli gia' importati dell'app, cosi' non serve ricordarsene.
 import fatture.views, fatture.storico, fatture.clienti          # noqa: E402
 import fatture.editor, fatture.emittente, fatture.fiscale       # noqa: E402
-import spese.views                                              # noqa: E402
-for mod in (b2f_app, fatture.views, fatture.storico, fatture.clienti,
-            fatture.editor, fatture.emittente, fatture.fiscale, spese.views):
-    if hasattr(mod, "get_client"):
-        mod.get_client = lambda: _FakeClient()
-    if hasattr(mod, "is_configured"):
-        mod.is_configured = lambda: True
+import fatture.giroconto                                        # noqa: E402
+import spese.views, spese.dati, spese.movimenti                 # noqa: E402
+import spese.importa, spese.risparmi, spese.revolut             # noqa: E402
+
+_PACCHETTI = ("app", "fatture", "spese", "shared", "xs_server")
+for _nome, _mod in list(sys.modules.items()):
+    if not _nome.split(".")[0] in _PACCHETTI or _mod is None:
+        continue
+    if hasattr(_mod, "get_client"):
+        _mod.get_client = lambda: _FakeClient()
+    if hasattr(_mod, "is_configured"):
+        _mod.is_configured = lambda: True
 
 application = b2f_app.app
 
