@@ -834,6 +834,21 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
     if d.get("saldi"):
         blocchi.append(_blocco_saldi(d["saldi"]))
 
+    # Subito sotto i saldi, l'unica cosa che la home chiede di fare: e'
+    # arrivato lo stipendio (o il giroconto dalla P.IVA, che dal 2026 e'
+    # lo stipendio di fatto) e la quota di risparmio non e' ancora
+    # uscita. Il numero e' quello vero, non "ricordati di risparmiare":
+    # un avviso che non porta la cifra costringe ad aprire la pagina per
+    # sapere se vale la pena aprirla.
+    av = d.get("avviso_risparmio") or {}
+    if av.get("consigliato"):
+        blocchi.append(
+            f'<div class="notice mb-3">'
+            f'<strong>È arrivato lo stipendio del periodo aperto il '
+            f'{data_it(av.get("dal"))}</strong> e non hai ancora spostato niente '
+            f'nei salvadanai. Il consigliato è <strong>€ {eur(av["consigliato"])}</strong>. '
+            f'<a href="/spese/risparmi">Apri la procedura →</a></div>')
+
     # --- Tessere KPI -------------------------------------------------------
     acc = d.get("accantonamento") or {}
     pref = acc.get("scenario_preferito", "consigliato")

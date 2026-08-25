@@ -114,7 +114,8 @@ ultimi movimenti.
 
 Il timesheet originale (`xs_server.py`), che parla con un portale esterno
 tramite `xs_client.py`. È rimasto com'era: la hub gli inietta soltanto
-l'intestazione.
+l'intestazione — più il ponte verso le fatture, che è nuovo e sta in
+[§ 6.1](#61--il-mese-di-ore-e-la-fattura-che-lo-racconta).
 
 ### Fatture — `/fatture`
 
@@ -229,9 +230,9 @@ sbagliato — non c'è nessun altro punto in cui la cosa verrebbe fuori.
 |---|---|
 | `b2f_emittente` | riga unica: i tuoi dati, più nome e mail dello studio |
 | `b2f_clienti` | anagrafica clienti |
-| `b2f_fatture` | i documenti, con stato, date dei passaggi e ripartizione |
+| `b2f_fatture` | i documenti, con stato, date dei passaggi, ripartizione e il mese di ore che raccontano — [§ 8.13](#813--la-fattura-si-ricorda-di-quali-ore-è-fatta-necessaria) |
 | `b2f_spese_piva` | movimenti del conto P.IVA |
-| `b2f_parametri_fiscali` | riga unica: aliquote e parametri di accantonamento |
+| `b2f_parametri_fiscali` | riga unica: aliquote, parametri di accantonamento e tariffa giornaliera — [§ 8.14](#814--la-tariffa-giornaliera-è-un-parametro-non-una-costante-necessaria) |
 | `b2f_revolut` | saldi Revolut, uno snapshot per data — [§ 8.10](#810--tabella-dei-saldi-revolut) |
 | `b2f_webauthn_credentials` | credenziali dello sblocco biometrico |
 
@@ -243,7 +244,7 @@ sbagliato — non c'è nessun altro punto in cui la cosa verrebbe fuori.
 | `cfg_categorie` · `cfg_sottocategorie` | le voci |
 | `cfg_categoria_sottocategoria` | gli accoppiamenti ammessi fra le due |
 | `impostazioni` | saldo iniziale, percentuale di risparmio, quote di destinazione |
-| `risparmi_periodo` | quanto hai messo via davvero, per periodo |
+| `risparmi_periodo` | **non più una fonte per nessun calcolo**: dopo la [§ 8.11](#811--i-risparmi-diventano-movimenti-veri-necessaria) il risparmio è un'uscita di `spese`, categoria *Risparmi* |
 
 ### Viste
 
@@ -440,6 +441,52 @@ così spariscono entrambe le righe; da `/fatture/spese-piva` tipo e importo di
 un giroconto (manuale o da fattura) non si possono più cambiare una volta
 registrato, per non disallineare i due conti — va eliminato e rifatto.
 
+### La procedura di fine periodo
+
+Il giroconto porta il denaro **sul** conto personale. La domanda subito
+dopo è quanta parte di quel denaro non deve restarci: è il risparmio, e
+`/spese/risparmi` la trasforma in una procedura di due passi, nell'ordine
+in cui il denaro si muove davvero.
+
+1. **L'incasso è arrivato sul personale?** Se ci sono fatture già
+   incassate il cui denaro sta ancora sul conto P.IVA, la procedura le
+   elenca con il link e chiede di ripartirle prima. Non è un vincolo, è
+   un ordine di grandezza: la quota si applica a quel che resta sul conto
+   personale, e finché l'incasso non è arrivato lì quel numero è più
+   basso del vero.
+2. **Quanto ne metti via.** Il consigliato è la percentuale di
+   `impostazioni` applicata a quel che resta nel periodo — lo stesso
+   numero della colonna *Risparmio consigliato* di `v_risparmi_mese`. Si
+   può correggere, e mentre lo si scrive l'anteprima mostra quanto
+   finisce in ciascuno dei cinque salvadanai. Alla conferma l'app
+   registra **un'uscita vera** dal conto personale, categoria *Risparmi*,
+   con la data del bonifico.
+
+Il bonifico lo fai tu dalla banca: l'app registra che è successo, non
+sposta denaro. Sembra una sfumatura e non lo è — è la differenza fra un
+saldo che segue la banca e uno che la anticipa.
+
+**Un movimento solo, non cinque.** La banca vede un bonifico; la
+ripartizione fra i secchielli è un calcolo, e `v_risparmi_mese` lo rifà
+per ogni periodo dalle percentuali di `impostazioni`. Cinque righe
+darebbero cinque movimenti che sull'estratto non esistono, e la
+riconciliazione riga per riga tornerebbe a non tornare.
+
+**Perché non c'è più il campo "Risparmio effettivo".** C'era, e scriveva
+un numero su `risparmi_periodo` **al posto** del movimento bancario: è la
+seconda strada che la [§ 8.11](#811--i-risparmi-diventano-movimenti-veri-necessaria)
+ha chiuso dopo che era costata 829,78 € di scarto in diciotto mesi. Da
+allora `v_risparmi_mese` calcola l'effettivo dai movimenti e quella
+colonna non entra in nessun conto: continuare ad accettarla vorrebbe dire
+scrivere dove nessuno guarda, che è peggio di un errore — sembra
+funzionare. `PATCH /spese/api/risparmi` risponde 409 e dice dove andare.
+
+**L'avviso in home** compare solo quando c'è davvero qualcosa da fare: un
+periodo aperto, un consigliato sopra zero e nessuna uscita verso i
+salvadanai dentro quel periodo. Porta la cifra, non un "ricordati di
+risparmiare": un avviso senza il numero costringe ad aprire la pagina per
+sapere se vale la pena aprirla, e in un mese non lo legge più nessuno.
+
 ---
 
 ## 6. Il ciclo di vita della fattura
@@ -464,6 +511,49 @@ divergere dalla fattura vera senza che nessuno se ne accorga. Tornando indietro
 lungo il percorso, le date dei passi non più raggiunti vengono ripulite, ma
 quelle dei passi già attraversati restano: correggere un errore non deve
 falsificare la cronologia.
+
+### 6.1 — Il mese di ore e la fattura che lo racconta
+
+Le ore stanno sul portale XS, le fatture su Supabase, e per un anno
+l'unico ponte fra i due è stato ricopiare "20 giornate" a mano. Ora il
+ponte è doppio, e va nei due versi.
+
+**Dal timesheet alla fattura.** Nel riepilogo del mese (`/ore`, bottone
+"Riepilogo mese") c'è il blocco *Fattura*: dice quante giornate da 8 ore
+fanno i minuti del mese e apre l'editor già compilato — **una riga sola**,
+giornate × `tariffa_giornaliera`. Se quel mese è già stato fatturato lo
+dice prima, col link alla fattura che esiste: due fatture sullo stesso
+periodo non danno nessun errore, si scoprono a fine anno e una va
+cancellata a mano.
+
+Una riga sola e non una per cliente, ed è una scelta: la fattura la emetti
+a **un** cliente — quello che ti paga — mentre i clienti finali del lavoro
+sono informazione tua. Una riga per ciascuno finirebbe stampata sul PDF
+che il cliente legge.
+
+**Dalla fattura al timesheet.** In fondo al dettaglio della fattura c'è la
+card *Ore fatturate*: giornate, ore, giorni lavorati, la ripartizione per
+cliente, e il link che apre `/ore` direttamente sul riepilogo di quel mese.
+
+Quello che la fattura si porta dietro è una **foto**, non una lettura dal
+vivo (`ore_snapshot`, [§ 8.13](#813--la-fattura-si-ricorda-di-quali-ore-è-fatta-necessaria)),
+per due motivi che vale la pena tenere a mente prima di "ottimizzare"
+sostituendola con una query:
+
+- il portale si legge **un giorno alla volta**: un mese sono una trentina
+  di richieste HTTP, troppe per aprire una pagina — per questo la lettura
+  sta sempre dietro a un bottone;
+- fra due anni quel mese sul portale potrebbe non esserci più. La fattura
+  invece resta, e deve continuare a saper dire di cosa era fatta.
+
+La foto porta la data in cui è stata scattata, e un bottone la rilegge.
+Una foto senza data si legge come un dato dal vivo: è lo stesso errore che
+la tessera Revolut ha già fatto una volta.
+
+**La giornata è 8 ore**, e si conta sul totale dei minuti del mese, non
+sui giorni in cui hai timbrato: due mezze giornate sono una giornata da
+fatturare. È la stessa definizione che il riepilogo del timesheet mostra
+come "giorni pieni da 8h" — se cambia lì, cambia in `shared/ore.py`.
 
 ---
 

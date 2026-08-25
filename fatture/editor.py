@@ -92,8 +92,8 @@ def _precompila_da_ore(sb, init: dict, periodo: str):
     if riep.get("errore"):
         return init, (f'<div class="notice err">Non sono riuscito a leggere le '
                       f'ore di {MESI_NOMI[mese - 1]} {anno}: '
-                      f'{_esc_txt(riep["errore"])}. La fattura si compila lo '
-                      f'stesso a mano.</div>')
+                      f'{_esc_txt(str(riep["errore"]).rstrip(". "))}. La fattura '
+                      f'si compila lo stesso a mano.</div>')
 
     giornate = riep["giornate"]
     if giornate <= 0:

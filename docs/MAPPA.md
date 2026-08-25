@@ -5,7 +5,7 @@ aprire tutto: il README racconta il dominio (fisco, accantonamento,
 migrazioni), qui c'è la corrispondenza file → responsabilità, con le
 trappole che quel file nasconde.
 
-Ultimo aggiornamento: 2026-08-14 · 35 file di codice e configurazione.
+Ultimo aggiornamento: 2026-08-25 · 36 file di codice e configurazione.
 
 **Regola d'oro**: se una modifica tocca un numero, il file che lo calcola
 è uno solo. Prima di scrivere un calcolo, cercalo qui.
@@ -23,6 +23,8 @@ Ultimo aggiornamento: 2026-08-14 · 35 file di codice e configurazione.
 | Scrivere sul conto personale | `spese/dati.py` — **unico posto** |
 | Saldo reale dei conti | `fatture/fiscale.py::saldo_piva` · `spese/dati.py::saldo_conto` · `spese/revolut.py::saldo_revolut` |
 | Risparmi, salvadanai, Revolut | `spese/revolut.py` |
+| Le ore di un mese, per fatturarle | `shared/ore.py` |
+| Quanto vale una giornata | `b2f_parametri_fiscali.tariffa_giornaliera` |
 | Stati della fattura, rivalsa | `fatture/costanti.py` |
 | Colori, spaziature, icone | `shared/design.py` |
 | Struttura di pagina, home | `shared/theme.py` |
@@ -163,6 +165,11 @@ caricato via `fetch` da `/fatture/api/situazione`.
   girasse dopo, una descrizione contenente `__PDF_SCRIPT__` verrebbe espansa.
 - Tutto ciò che finisce in un blob JSON ha `<` → `<`: una riga con
   `</script>` dentro chiuderebbe il tag.
+- `GET /fatture/nuova?ore=AAAA-MM` arriva dal timesheet: `_precompila_da_ore()`
+  legge il mese dal portale (`shared/ore.py`) e riempie **una riga sola** —
+  giornate × `tariffa_giornaliera()` — portandosi dietro la foto delle ore,
+  che il salvataggio scrive sulla fattura. Una riga per cliente finirebbe
+  sul PDF, e lì i clienti finali del lavoro non c'entrano niente.
 - `calc()` lato client: scorporo della rivalsa, bollo 2 € sopra 77,47 €,
   totale = imponibile + bollo addebitato. La variante “rivalsa addebitata”
   (corrispettivo + 4 %) è stata rimossa apposta.
@@ -178,8 +185,12 @@ Il file più denso dell'area: qui vive la pagina che si guarda di più.
   `POST /api/fatture/<fid>/registra-entrata`,
   `GET /api/next_progressivo`.
 - Il dettaglio compone: riepilogo con lo **scorporo della rivalsa**, righe,
-  card accantonamento, card ripartizione, linea temporale, azioni, e tre
-  fogli modali (avanzamento, cambio stato, ripartizione, registra entrata).
+  card accantonamento, card ripartizione, **card "Ore fatturate"**
+  (`_card_ore`), linea temporale, azioni, e tre fogli modali (avanzamento,
+  cambio stato, ripartizione, registra entrata).
+- `POST /api/fatture/<fid>/ore` aggancia (o stacca) un mese di ore e
+  riscrive la foto; `GET /api/fatture-per-ore?periodo=AAAA-MM` è quello
+  che il timesheet chiama per dire "questo mese l'hai già fatturato".
 - `cliente_label()` — usata anche da `app.py` e `giroconto.py` — ritorna
   **testo grezzo**: chi lo stampa deve passarlo da `_esc()`.
 
@@ -292,11 +303,14 @@ passa da qui.
   `movimento()`, `crea()`, `aggiorna()`, `elimina()`, `collegato()`.
 - Saldi: `saldo_iniziale()` (dalla riga `impostazioni` con `valido_dal`
   più vecchia: è l'apertura, non l'ultima versione delle percentuali),
-  `risparmio_totale()` (somma di `risparmi_periodo.effettivo_risparmio`) e
-  `saldo_conto()` — apertura + movimenti − risparmio, paginato.
+  `risparmio_totale()` (dalle righe di categoria "Risparmi", **non** dal
+  saldo) e `saldo_conto()` — apertura + entrate − uscite, paginato.
 - Totali: `totali()`, `per_categoria()`.
 - Risparmi: `periodi_risparmio()` (traduce i nomi con spazi e maiuscole
-  della vista in chiavi normali), `risparmio_effettivo()`, `impostazioni()`.
+  della vista in chiavi normali), `risparmio_del_periodo()` ("il bonifico
+  di questo periodo l'ho già registrato?"), `registra_bonifico_risparmio()`
+  (**scrive** l'uscita verso i salvadanai), `avviso_risparmio()` (quello
+  che la home mostra, o `None`), `impostazioni()`.
 
 > **Le tre regole della tabella `spese`**, e sono tutte trappole silenziose:
 > 1. `mese` e `anno` sono NOT NULL senza default: vanno ricavati dalla data
@@ -313,11 +327,14 @@ passa da qui.
 > `TIPI` non contiene più `giroconto` (migrazione README §8.9); `TIPI_SEGNO`
 > sì, ma solo in **lettura**, per le righe storiche non ancora migrate.
 >
-> **Il risparmio non è una riga di `spese`.** Quello che registri sulla
-> pagina Risparmi finisce su `risparmi_periodo` ed *esce* dal conto: è
-> così che lo tratta `v_risparmi_mese` (`delta = … − effettivo_risparmio`),
-> e così deve trattarlo chiunque calcoli il saldo. Chi somma solo entrate
-> e uscite conta due volte tutto ciò che è stato risparmiato.
+> **Il risparmio è una riga di `spese` come tutte le altre** (migrazione
+> §8.11, applicata il 25/08/2026): un'uscita di categoria "Risparmi", con
+> la data vera del bonifico verso i salvadanai. Era il contrario fino a
+> quella data — un numero su `risparmi_periodo` che *sostituiva* il
+> movimento bancario — ed è il motivo per cui il saldo dell'app e quello
+> di WeBank sono scivolati via di 829,78 € in diciotto mesi. Chi calcola
+> un saldo somma i movimenti e basta: qualunque quarto termine è la
+> vecchia trappola che torna.
 
 ### `spese/views.py` — 181 righe · dashboard `/spese`
 
@@ -345,9 +362,11 @@ dell'anno, ultimi movimenti, quanto è arrivato dalla P.IVA.
 - La metà di un giroconto non si modifica né si cancella da qui: la guardia
   è nell'endpoint, non solo nel form.
 
-### `spese/risparmi.py` — 326 righe · periodi e risparmio
+### `spese/risparmi.py` — periodi, risparmio e **procedura di fine periodo**
 
-`GET /risparmi`, `GET /api/risparmi`, `PATCH /api/risparmi`.
+`GET /risparmi`, `GET /api/risparmi`, `POST /api/risparmi/esegui`.
+`PATCH /api/risparmi` risponde 409: dichiarava il risparmio su
+`risparmi_periodo`, colonna che dopo la §8.11 non legge più nessuno.
 
 I periodi vanno da un bonifico al successivo — categoria *Stipendio* **o**
 *Giroconto P.IVA*: da quando c'è la partita IVA il giroconto è lo stipendio
@@ -359,6 +378,18 @@ quote di tutti i periodi (il "dovrebbe") accanto ai saldi Revolut (il
 "c'è"). Uno scarto non è di per sé un errore — dai salvadanai si preleva —
 ma questo è l'unico posto in cui si vede.
 
+**La procedura di fine periodo** (`_card_procedura`) è il pezzo che
+chiude il cerchio: due passi nell'ordine in cui il denaro si muove
+davvero — prima il giroconto dal conto P.IVA al personale (lo esegue
+`fatture/giroconto.py`, qui compare solo l'elenco delle fatture incassate
+che lo aspettano), poi l'uscita verso i salvadanai, con l'anteprima di
+come si divide fra i cinque secchielli secondo `impostazioni`. Conferma
+esplicita, e quello che resta scritto è un movimento vero.
+
+> Il bonifico lo fa l'utente dalla banca: l'app **registra** che è
+> successo, non sposta denaro. Sembra una sfumatura, non lo è — è la
+> differenza fra un saldo che segue la banca e uno che la anticipa.
+>
 > `risparmio_effettivo` a 0 è trattato come “non ancora registrato”: la
 > vista fa `coalesce` a zero e non c'è modo di distinguere i due casi.
 
@@ -441,6 +472,27 @@ client desktop.
   shell senza toccarne la logica (sostituisce `<div class="wrap">`).
 - `_PIN_GATE`: overlay di sblocco, iniettato in ogni pagina. Intercetta
   anche le `fetch` che rispondono 401 e si riapre.
+
+### `shared/ore.py` — il ponte fra timesheet e fattura
+
+`riepilogo_mese(anno, mese)` legge il portale XS **un giorno alla volta**
+(`xs_client.get_day_entries`) e riassume il mese: minuti, ore, giornate da
+8h, giorni lavorati, ripartizione per cliente. Più i formattatori
+`giornate()`, `ore()`, `fmt_min()`.
+
+Da qui nascono due cose, ed è la stessa somma: la riga della fattura di
+fine mese (giornate × `tariffa_giornaliera`) e la **foto** che resta
+attaccata alla fattura in `b2f_fatture.ore_snapshot` (§8.13).
+
+> **Trenta richieste HTTP per un mese.** È il motivo per cui la lettura
+> sta dietro a un gesto esplicito — il bottone "precompila", il bottone
+> "aggiorna dal portale" — e mai dentro il caricamento di una pagina.
+> L'altro motivo per cui si salva una foto invece di rileggere: fra due
+> anni quel mese sul portale potrebbe non esserci più, la fattura sì.
+>
+> L'import di `xs_server` è **ritardato dentro la funzione**: quel modulo
+> crea la app Flask che tutto il resto estende, e importarlo in testa a un
+> file di `shared/` legherebbe l'ordine degli import dell'intera hub.
 
 ### `shared/ordina.py` — 53 righe · l'ordine dei menù
 

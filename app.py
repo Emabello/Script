@@ -176,6 +176,18 @@ def _dashboard_data() -> dict:
     except Exception:
         pass
 
+    # "E' arrivato lo stipendio e non hai ancora messo via niente": e'
+    # l'unico avviso della home che chiede di fare qualcosa, e compare
+    # solo quando c'e' davvero qualcosa da fare (vedi
+    # spese/dati.py::avviso_risparmio). Se comparisse sempre, in un mese
+    # nessuno lo leggerebbe piu'.
+    try:
+        avviso = personale.avviso_risparmio(sb)
+        if avviso:
+            out["avviso_risparmio"] = avviso
+    except Exception:
+        pass
+
     try:
         r = (sb.table("spese").select("data,importo,descrizione,tipo")
                .order("data", desc=True).limit(4).execute())
