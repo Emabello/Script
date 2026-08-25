@@ -2,15 +2,21 @@
 
 Foto dello schema reale su Supabase, presa con la query di [README §8.5](../README.md#85--ispezionare-lo-schema). **Va rigenerata dopo ogni migrazione**: si aggiorna qui, non a mano.
 
-Ultimo aggiornamento: 2026-08-12.
+Ultimo aggiornamento: 2026-08-25.
 
 
-> **Nota**: l'export usato per questa foto è stato preso prima di allargare i `rpad()` della query (fatto in questo stesso aggiornamento): alcuni nomi lunghi risultavano troncati e incollati al campo successivo. Ricostruiti incrociando il codice che li usa:
+> **Nota**: questa foto è stata riverificata campo per campo contro il database
+> vivo il 25/08/2026, tramite il connettore MCP di Supabase invece che con l'export
+> testuale di §8.5 — colonne, vincoli, indici, definizioni delle viste, funzioni,
+> trigger e RLS. Cade con questo anche il dubbio sui nomi troncati dal vecchio
+> export (`b2f_parametri_fiscali.anno_fine_regime_agevolato`,
+> `cfg_categoria_sottocategoria.sottocategoria_id`, `spese.created_at`,
+> `v_spese.created_at`): erano ricostruiti a mano, ora sono confermati.
 >
-> - `b2f_parametri_fiscali.anno_fine_regime_agevolato`: nome/tipo ricostruiti (la query originale li aveva troncati/incollati)
-> - `cfg_categoria_sottocategoria.sottocategoria_id`: nome/tipo ricostruiti (la query originale li aveva troncati/incollati)
-> - `spese.created_at`: nome/tipo ricostruiti (la query originale li aveva troncati/incollati)
-> - `v_spese.created_at`: nome/tipo ricostruiti (la query originale li aveva troncati/incollati)
+> Allineate in questo giro: `v_risparmi_mese` (era la definizione pre-8.7),
+> `v_periodi_stipendio` (mancavano i giroconti dalla P.IVA), la FK
+> `b2f_fatture_spesa_piva_id_fkey` di §8.6 (ora esiste davvero), e le tabelle
+> `b2f_revolut` e `b2f_saldi_verifica`, che mancavano del tutto.
 
 
 ---
@@ -21,6 +27,8 @@ Ultimo aggiornamento: 2026-08-12.
 - [`b2f_emittente`](#b2femittente)
 - [`b2f_fatture`](#b2ffatture)
 - [`b2f_parametri_fiscali`](#b2fparametrifiscali)
+- [`b2f_revolut`](#b2frevolut)
+- [`b2f_saldi_verifica`](#b2fsaldiverifica)
 - [`b2f_spese_piva`](#b2fspesepiva)
 - [`b2f_webauthn_credentials`](#b2fwebauthncredentials)
 - [`cfg_categoria_sottocategoria`](#cfgcategoriasottocategoria)
@@ -167,19 +175,8 @@ Ultimo aggiornamento: 2026-08-12.
 - `b2f_fatture_cliente_id_fkey`: FOREIGN KEY (cliente_id) REFERENCES b2f_clienti(id) ON DELETE RESTRICT
 - `b2f_fatture_giroconto_piva_id_fkey`: FOREIGN KEY (giroconto_piva_id) REFERENCES b2f_spese_piva(id) ON DELETE SET NULL
 - `b2f_fatture_pkey`: PRIMARY KEY (id)
-
-> **Asimmetria, migrazione pronta in README §8.6**: `giroconto_piva_id` ha
-> una FK verso `b2f_spese_piva(id)` (`ON DELETE SET NULL`), ma `spesa_piva_id`
-> — che punta alla stessa tabella per lo stesso motivo, la riga "registra
-> incasso" — non ce l'ha. Verificato sui dati reali del 2026-08-12 (export
-> completo, tutti gli 8 controlli di integrità a zero righe): nessun
-> `spesa_piva_id` orfano, si può aggiungere senza rischio:
-> ```sql
-> alter table b2f_fatture
->   add constraint b2f_fatture_spesa_piva_id_fkey
->   foreign key (spesa_piva_id) references b2f_spese_piva(id) on delete set null;
-> ```
 - `b2f_fatture_scenario_valido`: CHECK (((accantonamento_scenario IS NULL) OR (accantonamento_scenario = ANY (ARRAY['minimo'::text, 'consigliato'::text, 'prudente'::text, 'sicuro'::text]))))
+- `b2f_fatture_spesa_piva_id_fkey`: FOREIGN KEY (spesa_piva_id) REFERENCES b2f_spese_piva(id) ON DELETE SET NULL
 - `b2f_fatture_stato_check`: CHECK ((stato = ANY (ARRAY['bozza'::text, 'inviata_studio'::text, 'trasmessa_sdi'::text, 'incassata'::text, 'annullata'::text])))
 - `b2f_fatture_tipo_doc_check`: CHECK ((tipo_doc = ANY (ARRAY['TD01'::text, 'TD02'::text, 'TD03'::text, 'TD04'::text, 'TD05'::text, 'TD06'::text, 'TD16'::text, 'TD17'::text, 'TD18'::text, 'TD19'::text, 'TD20'::text, 'TD24'::text, 'TD25'::text, 'TD26'::text, 'TD27'::text])))
 
@@ -228,6 +225,56 @@ Ultimo aggiornamento: 2026-08-12.
 **Indici:**
 
 - `CREATE UNIQUE INDEX b2f_parametri_fiscali_pkey ON public.b2f_parametri_fiscali USING btree (id)`
+
+
+---
+
+## `b2f_revolut`
+
+| colonna | tipo | null | identity | default |
+|---|---|---|---|---|
+| `data` | date | NO | NO |  |
+| `conto` | numeric | NO | NO | 0 |
+| `risparmi` | numeric | NO | NO | 0 |
+| `investimenti` | numeric | NO | NO | 0 |
+| `salvadanai` | jsonb | NO | NO | '{}'::jsonb |
+| `fonte` | text | NO | NO | 'estratto'::text |
+| `note` | text | YES | NO |  |
+| `created_at` | timestamp with time zone | NO | NO | now() |
+| `updated_at` | timestamp with time zone | NO | NO | now() |
+
+**Vincoli:**
+
+- `b2f_revolut_pkey`: PRIMARY KEY (data)
+
+**Indici:**
+
+- `CREATE UNIQUE INDEX b2f_revolut_pkey ON public.b2f_revolut USING btree (data)`
+
+
+---
+
+## `b2f_saldi_verifica`
+
+| colonna | tipo | null | identity | default |
+|---|---|---|---|---|
+| `id` | bigint | NO | NO | nextval('b2f_saldi_verifica_id_seq'::regclass) |
+| `conto` | text | NO | NO |  |
+| `data` | date | NO | NO |  |
+| `saldo_banca` | numeric | NO | NO |  |
+| `note` | text | YES | NO |  |
+| `created_at` | timestamp with time zone | NO | NO | now() |
+
+**Vincoli:**
+
+- `b2f_saldi_verifica_conto_check`: CHECK ((conto = ANY (ARRAY['personale'::text, 'piva'::text])))
+- `b2f_saldi_verifica_conto_data_key`: UNIQUE (conto, data)
+- `b2f_saldi_verifica_pkey`: PRIMARY KEY (id)
+
+**Indici:**
+
+- `CREATE UNIQUE INDEX b2f_saldi_verifica_conto_data_key ON public.b2f_saldi_verifica USING btree (conto, data)`
+- `CREATE UNIQUE INDEX b2f_saldi_verifica_pkey ON public.b2f_saldi_verifica USING btree (id)`
 
 
 ---
@@ -307,9 +354,9 @@ Ultimo aggiornamento: 2026-08-12.
 
 **Vincoli:**
 
-- `cfg_categoria_sottocategoria_categoria_id_fkFOREIGN`: KEY (categoria_id) REFERENCES cfg_categorie(id) ON DELETE CASCADE
+- `cfg_categoria_sottocategoria_categoria_id_fkey`: FOREIGN KEY (categoria_id) REFERENCES cfg_categorie(id) ON DELETE CASCADE
 - `cfg_categoria_sottocategoria_pkey`: PRIMARY KEY (id)
-- `cfg_categoria_sottocategoria_sottocategoria_FOREIGN`: KEY (sottocategoria_id) REFERENCES cfg_sottocategorie(id) ON DELETE CASCADE
+- `cfg_categoria_sottocategoria_sottocategoria_id_fkey`: FOREIGN KEY (sottocategoria_id) REFERENCES cfg_sottocategorie(id) ON DELETE CASCADE
 
 **Indici:**
 
@@ -464,7 +511,7 @@ WITH stipendi AS (
          SELECT vs.data AS data_bonifico,
             vs.importo AS importo_bonifico
            FROM v_spese vs
-          WHERE vs.tipo = 'entrata'::text AND vs.categoria = 'Stipendio'::text
+          WHERE vs.tipo = 'entrata'::text AND (vs.categoria = ANY (ARRAY['Stipendio'::text, 'Giroconto P.IVA'::text]))
         ), ord AS (
          SELECT stipendi.data_bonifico,
             stipendi.importo_bonifico,
@@ -484,30 +531,31 @@ WITH stipendi AS (
 
 | colonna | tipo |
 |---|---|
-| `Importo` | Prima Del Bonifico    numeric |
-| `Importo` | Prima Del Bonifico (dunumeric |
-| `Data` | bonifico                 date |
-| `Data` | prossimo bonifico        date |
+| `Importo Prima Del Bonifico` | numeric |
+| `Importo Prima Del Bonifico (dup)` | numeric |
+| `Data bonifico` | date |
+| `Data prossimo bonifico` | date |
 | `Mese` | text |
-| `Importo` | Bonifico              numeric |
-| `Totale` | Fisso                  numeric |
-| `Totale` | Personale              numeric |
-| `Totale` | Benzina                numeric |
-| `Totale` | Viaggi                 numeric |
-| `Totale` | Speso                  numeric |
-| `Totale` | Altre Entrate          numeric |
-| `Totale` | Rimanente              numeric |
-| `Risparmio` | consigliato (€)     numeric |
-| `Totale` | Rimanente (finale)     numeric |
-| `Quota` | Fondo Emergenze         numeric |
-| `Quota` | Viaggi                  numeric |
-| `Quota` | Fondo Casa              numeric |
-| `Quota` | Regali                  numeric |
-| `Quota` | Altro                   numeric |
-| `_Fine` | periodo (debug)         timestamp with time zone |
+| `Importo Bonifico` | numeric |
+| `Totale Fisso` | numeric |
+| `Totale Personale` | numeric |
+| `Totale Benzina` | numeric |
+| `Totale Viaggi` | numeric |
+| `Totale Speso` | numeric |
+| `Totale Altre Entrate` | numeric |
+| `Totale Rimanente` | numeric |
+| `Risparmio consigliato (€)` | numeric |
+| `Risparmio effettivo (€)` | numeric |
+| `Totale Rimanente (finale)` | numeric |
+| `Quota Fondo Emergenze` | numeric |
+| `Quota Viaggi` | numeric |
+| `Quota Fondo Casa` | numeric |
+| `Quota Regali` | numeric |
+| `Quota Altro` | numeric |
+| `_Fine periodo (debug)` | timestamp with time zone |
 
 ```sql
-WITH per AS (
+ WITH per AS (
          SELECT ps.data_bonifico,
             ps.importo_bonifico,
             ps.prossimo_bonifico,
@@ -540,21 +588,26 @@ WITH per AS (
                 END), 0::numeric), 2) AS totale_viaggi,
             round(COALESCE(sum(
                 CASE
-                    WHEN vs.tipo = 'uscita'::text THEN vs.importo
+                    WHEN vs.tipo = 'uscita'::text AND COALESCE(vs.categoria, ''::text) <> 'Risparmi'::text THEN vs.importo
                     ELSE 0::numeric
                 END), 0::numeric), 2) AS totale_speso,
             round(COALESCE(sum(
                 CASE
-                    WHEN vs.tipo = 'entrata'::text AND vs.categoria <> 'Stipendio'::text THEN vs.importo
+                    WHEN vs.tipo = 'entrata'::text AND (vs.categoria <> ALL (ARRAY['Stipendio'::text, 'Giroconto P.IVA'::text, 'Risparmi'::text])) THEN vs.importo
                     ELSE 0::numeric
-                END), 0::numeric), 2) AS totale_altre_entrate
+                END), 0::numeric), 2) AS totale_altre_entrate,
+            round(COALESCE(sum(
+                CASE
+                    WHEN COALESCE(vs.categoria, ''::text) = 'Risparmi'::text THEN
+                    CASE
+                        WHEN vs.tipo = 'uscita'::text THEN vs.importo
+                        ELSE - vs.importo
+                    END
+                    ELSE 0::numeric
+                END), 0::numeric), 2) AS effettivo_risparmio
            FROM per
              LEFT JOIN v_spese vs ON vs.data >= per.data_bonifico AND vs.data <= per.fine_periodo
           GROUP BY per.data_bonifico, per.prossimo_bonifico, per.fine_periodo, per.importo_bonifico
-        ), eff AS (
-         SELECT rp.data_bonifico,
-            round(COALESCE(rp.effettivo_risparmio, 0::real)::numeric, 2) AS effettivo_risparmio
-           FROM risparmi_periodo rp
         ), calc AS (
          SELECT a.data_bonifico,
             a.prossimo_bonifico,
@@ -566,6 +619,7 @@ WITH per AS (
             a.totale_viaggi,
             a.totale_speso,
             a.totale_altre_entrate,
+            a.effettivo_risparmio,
             p.saldo_iniziale,
             p.percentuale_risparmio,
             p.perc_fondo_emergenze,
@@ -573,9 +627,7 @@ WITH per AS (
             p.perc_fondo_casa,
             p.perc_regali,
             p.perc_altro,
-            COALESCE(e.effettivo_risparmio, 0::numeric) AS effettivo_risparmio,
-            a.importo_bonifico + a.totale_altre_entrate - a.totale_speso - COALESCE(e.effettivo_risparmio, 0::numeric) AS delta,
-            sum(a.importo_bonifico + a.totale_altre_entrate - a.totale_speso - COALESCE(e.effettivo_risparmio, 0::numeric)) OVER (ORDER BY a.data_bonifico ROWS UNBOUNDED PRECEDING) AS running_delta
+            sum(a.importo_bonifico + a.totale_altre_entrate - a.totale_speso - a.effettivo_risparmio) OVER (ORDER BY a.data_bonifico ROWS UNBOUNDED PRECEDING) AS running_delta
            FROM agg a
              CROSS JOIN LATERAL ( SELECT i.saldo_iniziale,
                     i.percentuale_risparmio,
@@ -588,7 +640,6 @@ WITH per AS (
                   WHERE i.valido_dal <= a.data_bonifico
                   ORDER BY i.valido_dal DESC
                  LIMIT 1) p
-             LEFT JOIN eff e USING (data_bonifico)
         ), bal AS (
          SELECT c.data_bonifico,
             c.prossimo_bonifico,
@@ -600,6 +651,7 @@ WITH per AS (
             c.totale_viaggi,
             c.totale_speso,
             c.totale_altre_entrate,
+            c.effettivo_risparmio,
             c.saldo_iniziale,
             c.percentuale_risparmio,
             c.perc_fondo_emergenze,
@@ -607,89 +659,49 @@ WITH per AS (
             c.perc_fondo_casa,
             c.perc_regali,
             c.perc_altro,
-            c.effettivo_risparmio,
-            c.delta,
             c.running_delta,
             COALESCE(lag(c.running_delta) OVER (ORDER BY c.data_bonifico), 0::numeric) AS running_delta_prev
            FROM calc c
         ), outt AS (
-         SELECT round((bal.saldo_iniziale + bal.running_delta_prev::double precision)::numeric, 2) AS importo_prima_del_bonifico,
-            bal.data_bonifico,
+         SELECT bal.data_bonifico,
             bal.prossimo_bonifico,
             bal.fine_periodo,
-            round(bal.importo_bonifico::numeric, 2) AS importo_bonifico,
+            bal.importo_bonifico,
             bal.totale_fisso,
             bal.totale_personale,
             bal.totale_benzina,
             bal.totale_viaggi,
             bal.totale_speso,
             bal.totale_altre_entrate,
-            round(bal.importo_bonifico + bal.totale_altre_entrate - bal.totale_speso, 2) AS totale_rimanente_bonifico,
-            bal.saldo_iniziale + bal.running_delta_prev::double precision + bal.importo_bonifico::double precision + bal.totale_altre_entrate::double precision - bal.totale_speso::double precision AS base_calcolo,
             bal.effettivo_risparmio,
+            bal.saldo_iniziale,
             bal.percentuale_risparmio,
             bal.perc_fondo_emergenze,
             bal.perc_viaggi,
             bal.perc_fondo_casa,
             bal.perc_regali,
-            bal.perc_altro
+            bal.perc_altro,
+            bal.running_delta,
+            bal.running_delta_prev,
+            round((bal.saldo_iniziale + bal.running_delta_prev::double precision)::numeric, 2) AS importo_prima_del_bonifico,
+            bal.saldo_iniziale + bal.running_delta_prev::double precision + bal.importo_bonifico::double precision + bal.totale_altre_entrate::double precision - bal.totale_speso::double precision AS base_calcolo
            FROM bal
-        ), final AS (
-         SELECT outt.importo_prima_del_bonifico,
-            outt.data_bonifico,
-            outt.prossimo_bonifico,
-            outt.fine_periodo,
-            outt.importo_bonifico,
-            outt.totale_fisso,
-            outt.totale_personale,
-            outt.totale_benzina,
-            outt.totale_viaggi,
-            outt.totale_speso,
-            outt.totale_altre_entrate,
-            outt.totale_rimanente_bonifico,
-            outt.base_calcolo,
-            outt.effettivo_risparmio,
-            outt.percentuale_risparmio,
-            outt.perc_fondo_emergenze,
-            outt.perc_viaggi,
-            outt.perc_fondo_casa,
-            outt.perc_regali,
-            outt.perc_altro,
-            round(
-                CASE
-                    WHEN (outt.base_calcolo * outt.percentuale_risparmio) < 0::double precision THEN 0::double precision
-                    ELSE outt.base_calcolo * outt.percentuale_risparmio
-                END::numeric, 2) AS risparmio_consigliato
-           FROM outt
         )
  SELECT importo_prima_del_bonifico AS "Importo Prima Del Bonifico",
     importo_prima_del_bonifico AS "Importo Prima Del Bonifico (dup)",
     data_bonifico AS "Data bonifico",
     prossimo_bonifico AS "Data prossimo bonifico",
-        CASE EXTRACT(month FROM prossimo_bonifico)::integer
-            WHEN 1 THEN 'gennaio'::text
-            WHEN 2 THEN 'febbraio'::text
-            WHEN 3 THEN 'marzo'::text
-            WHEN 4 THEN 'aprile'::text
-            WHEN 5 THEN 'maggio'::text
-            WHEN 6 THEN 'giugno'::text
-            WHEN 7 THEN 'luglio'::text
-            WHEN 8 THEN 'agosto'::text
-            WHEN 9 THEN 'settembre'::text
-            WHEN 10 THEN 'ottobre'::text
-            WHEN 11 THEN 'novembre'::text
-            WHEN 12 THEN 'dicembre'::text
-            ELSE NULL::text
-        END AS "Mese",
-    importo_bonifico AS "Importo Bonifico",
+    to_char(data_bonifico::timestamp with time zone, 'TMmonth'::text) AS "Mese",
+    round(importo_bonifico::numeric, 2) AS "Importo Bonifico",
     totale_fisso AS "Totale Fisso",
     totale_personale AS "Totale Personale",
     totale_benzina AS "Totale Benzina",
     totale_viaggi AS "Totale Viaggi",
     totale_speso AS "Totale Speso",
     totale_altre_entrate AS "Totale Altre Entrate",
-    round(totale_rimanente_bonifico, 2) AS "Totale Rimanente",
-    risparmio_consigliato AS "Risparmio consigliato (€)",
+    round(importo_bonifico + totale_altre_entrate - totale_speso, 2) AS "Totale Rimanente",
+    round(GREATEST(base_calcolo * percentuale_risparmio, 0::double precision)::numeric, 2) AS "Risparmio consigliato (€)",
+    effettivo_risparmio AS "Risparmio effettivo (€)",
     round((base_calcolo - effettivo_risparmio::double precision)::numeric, 2) AS "Totale Rimanente (finale)",
     round((effettivo_risparmio::double precision * perc_fondo_emergenze)::numeric, 2) AS "Quota Fondo Emergenze",
     round((effettivo_risparmio::double precision * perc_viaggi)::numeric, 2) AS "Quota Viaggi",
@@ -697,7 +709,7 @@ WITH per AS (
     round((effettivo_risparmio::double precision * perc_regali)::numeric, 2) AS "Quota Regali",
     round((effettivo_risparmio::double precision * perc_altro)::numeric, 2) AS "Quota Altro",
     fine_periodo AS "_Fine periodo (debug)"
-   FROM final
+   FROM outt
   ORDER BY data_bonifico;
 ```
 
@@ -915,6 +927,7 @@ $function$
 - `CREATE TRIGGER trg_b2f_emittente_updated BEFORE UPDATE ON public.b2f_emittente FOR EACH ROW EXECUTE FUNCTION b2f_touch_updated_at()`
 - `CREATE TRIGGER trg_b2f_fatture_updated BEFORE UPDATE ON public.b2f_fatture FOR EACH ROW EXECUTE FUNCTION b2f_touch_updated_at()`
 - `CREATE TRIGGER trg_b2f_parametri_updated BEFORE UPDATE ON public.b2f_parametri_fiscali FOR EACH ROW EXECUTE FUNCTION b2f_touch_updated_at()`
+- `CREATE TRIGGER trg_b2f_revolut_updated BEFORE UPDATE ON public.b2f_revolut FOR EACH ROW EXECUTE FUNCTION b2f_touch_updated_at()`
 - `CREATE TRIGGER trg_b2f_spese_piva_updated BEFORE UPDATE ON public.b2f_spese_piva FOR EACH ROW EXECUTE FUNCTION b2f_touch_updated_at()`
 
 
@@ -928,6 +941,8 @@ $function$
 | `b2f_emittente` | ATTIVA |
 | `b2f_fatture` | ATTIVA |
 | `b2f_parametri_fiscali` | ATTIVA |
+| `b2f_revolut` | ATTIVA |
+| `b2f_saldi_verifica` | ATTIVA |
 | `b2f_spese_piva` | ATTIVA |
 | `b2f_webauthn_credentials` | ATTIVA |
 | `cfg_categoria_sottocategoria` | ATTIVA |
