@@ -1082,10 +1082,19 @@ sono righe di `spese` come tutte le altre, categoria "Risparmi", con la
 data vera del bonifico. Il saldo del conto torna a essere
 `apertura + entrate − uscite`, la stessa formula della banca.
 
-**È a saldo invariato con qualsiasi versione del codice**, e non per
-caso: le uscite che inserisce (14.912,07 €) sono esattamente pari al
-risparmio dichiarato che azzera. Si può quindi lanciare prima o dopo il
-deploy, senza finestre in cui i numeri saltano.
+> **Va lanciata appena il codice nuovo va in produzione, o prima.**
+> `saldo_conto()` non sottrae più il risparmio dichiarato: finché i
+> bonifici non sono righe di `spese`, il saldo mostrato è più alto del
+> vero di tutto il dichiarato (14.912,07 € sui dati di agosto 2026). Non
+> è un dato corrotto — è la formula nuova applicata a dati vecchi — e si
+> sistema lanciando questo script.
+
+**Lanciarla non muove il saldo**, né col codice vecchio né col nuovo, e
+non per caso: le uscite che inserisce (14.912,07 €) sono esattamente pari
+al risparmio dichiarato che azzera, nello stesso script. Con il codice
+vecchio quello che smette di essere sottratto da un lato ricompare come
+uscita dall'altro; con il nuovo, riporta il saldo dov'era. In entrambi i
+casi si finisce a 3.259,04 € al 25/08/2026.
 
 ```sql
 -- 1. la categoria
