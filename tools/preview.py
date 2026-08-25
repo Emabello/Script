@@ -36,7 +36,7 @@ DB = {
         "anno_fine_regime_agevolato": 2031,
         "margine_sicurezza": 0.10, "costi_fissi_annui": 1200.0,
         "fatturato_atteso_anno": 40000.0, "acconto_imposta_perc": 1.00,
-        "scenario_preferito": "consigliato",
+        "scenario_preferito": "consigliato", "tariffa_giornaliera": 250.00,
     }],
     "b2f_clienti": [
         {"id": 1, "tipo": "azienda", "denominazione": "B2FORGE SRL",
@@ -259,6 +259,7 @@ def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
     totale = round(imponibile + (bollo if bollo_dovuto else 0), 2)
     return {
         "id": fid, "anno": 2026, "progressivo": prog,
+        "ore_periodo": None, "ore_snapshot": None, "ore_lette_il": None,
         "numero": f"2026/{prog:03d}", "data": data, "tipo_doc": "TD01",
         "natura_iva": "N2.2", "cliente_id": cliente_id, "cliente_snapshot": snap,
         "righe": [{**r, "tot": round(r["qta"] * r["prezzo"], 2)} for r in righe],
@@ -276,10 +277,29 @@ def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
     }
 
 
+def _ore(f):
+    """Attacca alla fattura la foto delle ore di maggio 2026 (README §8.13)."""
+    return {**f,
+            "ore_periodo": "2026-05-01",
+            "ore_lette_il": "2026-06-05T09:12:00",
+            "ore_snapshot": {
+                "anno": 2026, "mese": 5, "periodo": "2026-05-01",
+                "minuti": 9600, "ore": 160.0, "giornate": 20.0,
+                "giorni_lavorati": 21, "giorni_mese": 31,
+                "voci_illeggibili": 0,
+                "clienti": [
+                    {"nome": "ACME Sistemi", "minuti": 5760, "ore": 96.0, "giornate": 12.0},
+                    {"nome": "Nordest Logistica", "minuti": 2880, "ore": 48.0, "giornate": 6.0},
+                    {"nome": "Interno / formazione", "minuti": 960, "ore": 16.0, "giornate": 2.0},
+                ],
+                "letto_il": "2026-06-05T09:12:00", "errore": None}}
+
+
 DB["b2f_fatture"] = [
-    _fattura(1, 1, "2026-06-05", 1,
-             [{"descrizione": "Attività di consulenza SAP / sviluppo ABAP", "qta": 20, "um": "", "prezzo": 250.00}],
-             "incassata", "2026-06-30", spesa_piva_id=3),
+    _ore(_fattura(1, 1, "2026-06-05", 1,
+                  [{"descrizione": "Attività di consulenza SAP / sviluppo ABAP",
+                    "qta": 20, "um": "gg", "prezzo": 250.00}],
+                  "incassata", "2026-06-30", spesa_piva_id=3)),
     _fattura(2, 2, "2026-06-20", 2,
              [{"descrizione": "Consulenza infrastruttura di rete", "qta": 9, "um": "h", "prezzo": 195.00}],
              "incassata", "2026-07-10", spesa_piva_id=5),

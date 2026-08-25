@@ -1313,6 +1313,54 @@ on conflict (conto, data) do update
 secondi, e sono la differenza fra accorgersi di uno scarto in una
 settimana o in un anno e mezzo.
 
+### 8.13 — La fattura si ricorda di quali ore è fatta (**necessaria**)
+
+Fino a oggi la fattura e il timesheet non si parlavano: le ore stanno sul
+portale XS, la fattura su Supabase, e l'unico ponte era la memoria di chi
+scriveva "20 giornate" nella riga. Queste tre colonne sono quel ponte.
+
+`ore_periodo` è il mese di competenza (il primo giorno del mese, così è
+una data vera e non una stringa da parsare). `ore_snapshot` è la **foto**
+del riepilogo del portale al momento in cui l'hai agganciata: totale
+minuti, giornate, giorni lavorati, ripartizione per cliente. È una foto e
+non una lettura dal vivo per due motivi — il portale si legge un giorno
+alla volta (trenta richieste HTTP per un mese: troppo per aprire una
+pagina) e fra due anni quel mese sul portale potrebbe non esserci più,
+mentre la fattura resta.
+
+`ore_lette_il` dice **quando** è stata scattata: una foto senza data si
+legge come un dato dal vivo, ed è lo stesso errore che la tessera Revolut
+ha già fatto una volta.
+
+```sql
+alter table b2f_fatture
+  add column if not exists ore_periodo  date,
+  add column if not exists ore_snapshot jsonb,
+  add column if not exists ore_lette_il timestamptz;
+
+comment on column b2f_fatture.ore_periodo  is
+  'Mese di competenza delle ore fatturate (primo giorno del mese)';
+comment on column b2f_fatture.ore_snapshot is
+  'Foto del riepilogo ore del portale XS: minuti, giornate, per cliente';
+comment on column b2f_fatture.ore_lette_il is
+  'Quando è stata scattata ore_snapshot';
+```
+
+### 8.14 — La tariffa giornaliera è un parametro, non una costante (**necessaria**)
+
+Serve alla precompilazione della fattura dal timesheet: giornate ×
+tariffa, una riga sola. Sta accanto alle aliquote e non nel codice perché
+il giorno che cambia non deve servire un deploy — è un numero
+commerciale, non una regola del forfettario.
+
+```sql
+alter table b2f_parametri_fiscali
+  add column if not exists tariffa_giornaliera numeric(12,2) not null default 250;
+
+comment on column b2f_parametri_fiscali.tariffa_giornaliera is
+  'Tariffa per giornata da 8 ore, usata per precompilare la fattura dalle ore';
+```
+
 ## 9. Sicurezza
 
 **Accesso all'app.** PIN, più sblocco biometrico via WebAuthn. Il gate in

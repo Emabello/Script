@@ -26,7 +26,7 @@ from .costanti import (
 from shared.theme import render_page
 from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
-from shared.fmt import eur as _fmt_eur, data_it as _fmt_date, pct
+from shared.fmt import (eur as _fmt_eur, data_it as _fmt_date, mese_anno, pct)
 
 
 def cliente_label(f: dict) -> str:
@@ -222,6 +222,118 @@ def storico_list():
 # ---------------------------------------------------------------------------
 # Dettaglio
 # ---------------------------------------------------------------------------
+
+def _card_ore(f: dict) -> str:
+    """
+    La card "Ore fatturate" del dettaglio, dalla foto salvata sulla fattura.
+
+    Tre stati, e sono tre messaggi diversi:
+
+    1. **nessun periodo agganciato** — un selettore di mese e un bottone.
+       Il mese proposto e' quello *prima* della data della fattura: le ore
+       si fatturano a fine mese, quindi la fattura del 2 luglio racconta
+       giugno molto piu' spesso di quanto racconti luglio.
+    2. **periodo agganciato ma foto vuota** (letta quando il portale non
+       aveva ancora niente) — si dice, e si offre di rileggere.
+    3. **foto piena** — giornate, ore, giorni lavorati, la ripartizione
+       per cliente e il link al riepilogo di quel mese nel timesheet.
+
+    La ripartizione per cliente e' l'unico posto dove quei nomi compaiono:
+    sul PDF non ci vanno (il cliente che paga non c'entra con i clienti
+    finali del lavoro), ma "20 giornate" senza sapere per chi non risponde
+    alla domanda per cui uno apre questa card.
+    """
+    from shared import ore as O
+
+    periodo = f.get("ore_periodo")
+    snap = f.get("ore_snapshot") or {}
+    mm = (periodo or "")[:7]
+
+    # Il mese proposto quando non c'e' niente di agganciato.
+    data_f = str(f.get("data") or "")[:10]
+    try:
+        anno_p, mese_p = int(data_f[:4]), int(data_f[5:7])
+        mese_p -= 1
+        if mese_p == 0:
+            anno_p, mese_p = anno_p - 1, 12
+        proposto = f"{anno_p:04d}-{mese_p:02d}"
+    except (ValueError, IndexError):
+        proposto = ""
+
+    testa = '<div class="card-head"><div class="eyebrow">Ore fatturate</div>'
+
+    if not periodo:
+        return f'''
+        <div class="card" id="cardOre">
+          {testa}</div>
+          <p class="small muted">Questa fattura non è agganciata a nessun mese
+            di ore. Agganciala e resterà scritto quante giornate e per quali
+            clienti — anche fra due anni, quando il portale non se le
+            ricorderà più.</p>
+          <div class="field mt-3">
+            <label>Mese delle ore</label>
+            <input type="month" id="f_ore_periodo" value="{proposto}">
+          </div>
+          <div class="actions">
+            <button type="button" class="btn ghost block" onclick="onLeggiOre()">
+              Leggi le ore dal portale</button>
+          </div>
+          <p class="hint mt-2">La lettura interroga il portale XS un giorno
+            alla volta: per un mese sono una trentina di richieste, ci mette
+            qualche secondo.</p>
+        </div>'''
+
+    letto = f.get("ore_lette_il") or snap.get("letto_il") or ""
+    riga_letto = (f'<p class="hint mt-3">Foto del {_fmt_date(letto[:10])}'
+                  f'{" alle " + _esc(letto[11:16]) if len(letto) >= 16 else ""}. '
+                  f'Rileggila se hai corretto le ore sul portale.</p>')
+    azioni = f'''
+      <div class="actions mt-4">
+        <button type="button" class="btn ghost" onclick="onLeggiOre({mm!r})">
+          Aggiorna dal portale</button>
+        <a class="btn ghost" href="/ore?mese={_esc(mm)}">Vedi il mese nel timesheet</a>
+      </div>'''
+
+    minuti = int(snap.get("minuti") or 0)
+    if minuti <= 0:
+        return f'''
+        <div class="card" id="cardOre">
+          {testa}<span class="chip warn">vuota</span></div>
+          <p class="small muted">Agganciata a
+            <strong>{_esc(mese_anno(periodo))}</strong>, ma la foto non contiene
+            nessuna ora: al momento della lettura il portale non ne aveva.</p>
+          {azioni}{riga_letto}
+        </div>'''
+
+    righe_cli = "".join(
+        f'''<div class="row">
+          <span class="t">{_esc(c.get("nome"))}
+            <span class="sub">{O.fmt_min(c.get("minuti"))}</span></span>
+          <span class="v tnum">{_fmt_eur(c.get("giornate"))} gg</span>
+        </div>''' for c in (snap.get("clienti") or []))
+
+    illeggibili = int(snap.get("voci_illeggibili") or 0)
+    avviso_ill = ""
+    if illeggibili:
+        avviso_ill = (f'<div class="notice warn mt-3">{illeggibili} voce/i del '
+                      f'mese hanno un orario che il portale non espone in modo '
+                      f'leggibile: non sono in questi totali.</div>')
+
+    return f'''
+    <div class="card" id="cardOre">
+      {testa}<span class="chip">{_esc(mese_anno(periodo))}</span></div>
+      <div class="stat">
+        <div class="val tnum accent">{_fmt_eur(snap.get("giornate"))} <small>giornate</small></div>
+        <div class="lbl">{O.fmt_min(minuti)} su {int(snap.get("giorni_lavorati") or 0)}
+          giorni lavorati</div>
+      </div>
+      <div class="rows detail mt-4">{righe_cli or
+        '<div class="row"><span class="t muted">Nessun cliente nella foto</span></div>'}</div>
+      {avviso_ill}
+      {azioni}
+      {riga_letto}
+    </div>'''
+
 
 @fatture_bp.get("/<int:fid>")
 def fattura_dettaglio(fid):
@@ -537,6 +649,14 @@ def fattura_dettaglio(fid):
         {k: [v[0], v[1]] for k, v in DATE_STATO.items()}, ensure_ascii=False)
     oggi_iso = date.today().isoformat()
 
+    # --- Ore fatturate ------------------------------------------------
+    # In fondo, dopo i soldi: e' la risposta alla domanda "questi 5.000
+    # euro da dove vengono?". La foto e' quella salvata sulla fattura
+    # (README §8.13), non una lettura dal vivo: il portale si legge un
+    # giorno alla volta, e una pagina che si apre non puo' aspettare
+    # trenta richieste HTTP. Il bottone rilegge quando serve.
+    ore_card = _card_ore(f)
+
     # Importi dei quattro scenari per il foglio di ripartizione. Calcolati
     # qui una volta sola: il client li rilegge, non li ricalcola.
     scelte_js = _json.dumps(
@@ -571,6 +691,7 @@ def fattura_dettaglio(fid):
 
         {acc_card}
         {giroconto_card}
+        {ore_card}
       </div>
 
       <div class="stack">
@@ -743,6 +864,36 @@ def fattura_dettaglio(fid):
       }}
       function openModal(id) {{ document.getElementById(id).classList.add('show'); }}
       function closeModal(id) {{ document.getElementById(id).classList.remove('show'); }}
+
+      // --- ore: legge il portale e riscrive la foto sulla fattura ---
+      // Il bottone si disabilita e lo dice: la lettura e' una trentina di
+      // richieste HTTP al portale XS, e senza un segnale sembra che non
+      // sia successo niente e si clicca due volte.
+      async function onLeggiOre(periodo) {{
+        const campo = document.getElementById('f_ore_periodo');
+        const mm = periodo || (campo && campo.value) || '';
+        if (!/^\\d{{4}}-\\d{{2}}$/.test(mm)) {{
+          toast('Scegli il mese delle ore', 'err'); return;
+        }}
+        const card = document.getElementById('cardOre');
+        const btns = card ? card.querySelectorAll('button') : [];
+        btns.forEach(b => {{ b.disabled = true; }});
+        toast('Leggo le ore dal portale, un giorno alla volta…');
+        try {{
+          const r = await fetch('/fatture/api/fatture/' + FATTURA_ID + '/ore', {{
+            method: 'POST', headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{periodo: mm}}),
+          }});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err');
+                        btns.forEach(b => {{ b.disabled = false; }}); return; }}
+          toast('Ore aggiornate', 'ok');
+          setTimeout(()=>location.reload(), 700);
+        }} catch (e) {{
+          toast('Errore rete: ' + e.message, 'err');
+          btns.forEach(b => {{ b.disabled = false; }});
+        }}
+      }}
 
       // Etichette e campi data associati a ciascuno stato, dal server:
       // una sola definizione, in fatture/costanti.py.
@@ -1080,7 +1231,8 @@ def api_fattura_update(fid):
     campi = ("data", "tipo_doc", "natura_iva", "cliente_id", "cliente_snapshot",
              "righe", "imponibile", "bollo", "bollo_addebitato", "cassa_perc",
              "cassa_importo", "totale", "divisa", "pagamento_mod",
-             "pagamento_cond", "scadenza", "iban", "note")
+             "pagamento_cond", "scadenza", "iban", "note",
+             "ore_periodo", "ore_snapshot", "ore_lette_il")
     payload = {k: data[k] for k in campi if k in data}
     if not payload:
         return jsonify({"error": "nessun campo da aggiornare"}), 400
@@ -1203,6 +1355,102 @@ def api_fattura_registra_entrata(fid):
     return jsonify({"ok": True, "spesa_piva_id": spesa_piva_id})
 
 
+@fatture_bp.get("/api/fatture-per-ore")
+def api_fatture_per_ore():
+    """
+    Le fatture agganciate a un mese di ore. `?periodo=AAAA-MM`.
+
+    Serve al timesheet per dire "questo mese l'hai già fatturato" prima
+    che tu ne faccia una seconda: due fatture sullo stesso periodo non
+    danno nessun errore, si scoprono a fine anno e una va cancellata a
+    mano.
+    """
+    sb, err = _supabase_or_error()
+    if err:
+        return jsonify({"error": "supabase not configured"}), 503
+    periodo = (request.args.get("periodo") or "").strip()
+    try:
+        anno, mese = int(periodo[:4]), int(periodo[5:7])
+        if not 1 <= mese <= 12:
+            raise ValueError
+    except (ValueError, IndexError):
+        return jsonify({"error": "periodo non valido, atteso AAAA-MM"}), 400
+    try:
+        r = (sb.table("b2f_fatture")
+               .select("id,numero,stato,totale,data,ore_periodo")
+               .eq("ore_periodo", f"{anno:04d}-{mese:02d}-01")
+               .order("data", desc=True).execute())
+        righe = r.data or []
+    except Exception:
+        # Colonna assente (migrazione §8.13 non ancora lanciata): il
+        # timesheet non deve rompersi per questo, semplicemente non sa
+        # dire se il mese e' gia' fatturato.
+        righe = []
+    for f in righe:
+        f["stato"] = normalizza_stato(f.get("stato"))
+    return jsonify({"periodo": periodo, "fatture": righe})
+
+
+@fatture_bp.post("/api/fatture/<int:fid>/ore")
+def api_fattura_ore(fid):
+    """
+    Aggancia (o riaggancia) una fattura a un mese di ore.
+
+    Body: {"periodo": "2026-07"} — oppure {"periodo": null} per staccarla.
+
+    Legge il portale XS **adesso**, un giorno alla volta: e' lento apposta
+    (vedi shared/ore.py) ed e' per questo che sta dietro a un bottone e
+    non dentro il caricamento del dettaglio. Quello che resta scritto e'
+    una foto con la sua data: il portale, fra due anni, quel mese potrebbe
+    non averlo piu'.
+
+    Non e' ristretto alle bozze come le altre modifiche: la foto delle ore
+    non cambia il documento — non tocca righe, importi, numero — descrive
+    il lavoro che c'e' dietro. Su una fattura gia' trasmessa e' anzi
+    l'unico momento in cui uno se ne ricorda.
+    """
+    sb, err = _supabase_or_error()
+    if err:
+        return jsonify({"error": "supabase not configured"}), 503
+
+    f, errore = _carica_fattura(sb, fid)
+    if errore:
+        return errore
+
+    body = request.get_json(silent=True) or {}
+    periodo = body.get("periodo")
+
+    if periodo in (None, "", False):
+        payload = {"ore_periodo": None, "ore_snapshot": None, "ore_lette_il": None}
+    else:
+        periodo = str(periodo).strip()
+        try:
+            anno, mese = int(periodo[:4]), int(periodo[5:7])
+            if not 1 <= mese <= 12:
+                raise ValueError
+        except (ValueError, IndexError):
+            return jsonify({"error": f'Periodo non valido: "{periodo[:20]}". '
+                                     f'Atteso AAAA-MM.'}), 400
+
+        from shared import ore as O
+        riep = O.riepilogo_mese(anno, mese)
+        if riep.get("errore"):
+            return jsonify({"error": riep["errore"]}), 502
+        payload = {"ore_periodo": riep["periodo"], "ore_snapshot": riep,
+                   "ore_lette_il": riep["letto_il"]}
+
+    try:
+        sb.table("b2f_fatture").update(payload).eq("id", fid).execute()
+    except Exception as e:
+        msg = str(e)
+        if "ore_periodo" in msg or "ore_snapshot" in msg:
+            return jsonify({
+                "error": "Colonne mancanti su b2f_fatture: esegui la migrazione "
+                         "README §8.13 nell'SQL Editor di Supabase."}), 409
+        return jsonify({"error": msg[:250]}), 500
+    return jsonify({"ok": True, **payload})
+
+
 @fatture_bp.post("/api/fatture")
 def api_fattura_create():
     sb, err = _supabase_or_error()
@@ -1241,6 +1489,13 @@ def api_fattura_create():
         "stato":             normalizza_stato(data.get("stato") or "bozza"),
         "note":              data.get("note"),
     }
+
+    # Il legame con le ore (README §8.13) si scrive solo se c'e': una
+    # fattura senza ore non deve fallire l'insert su un database dove la
+    # migrazione non e' ancora stata lanciata.
+    for campo in ("ore_periodo", "ore_snapshot", "ore_lette_il"):
+        if data.get(campo):
+            payload[campo] = data[campo]
 
     try:
         r = sb.table("b2f_fatture").insert(payload).execute()
