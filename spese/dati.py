@@ -69,6 +69,16 @@ CATEGORIA_GIROCONTO = "Giroconto P.IVA"
 # per sbaglio sfasa tutto lo storico dei risparmi.
 CATEGORIA_STIPENDIO = "Stipendio"
 
+# Categoria dei trasferimenti verso i salvadanai (Revolut): sono uscite
+# vere dal conto, con la data vera del bonifico. Prima di README §8.11
+# quel denaro usciva dal saldo tramite `risparmi_periodo`, un numero
+# scritto a mano che sostituiva il movimento bancario: le due strade
+# convivevano senza che nulla dicesse quale valesse per quale bonifico,
+# e un anno di scarti si e' accumulato in silenzio (vedi il log
+# funzionale, voce chiusa il 25/08/2026). Adesso il saldo del conto si
+# calcola SOLO dai movimenti del conto, come quello della banca.
+CATEGORIA_RISPARMIO = "Risparmi"
+
 CAMPI_SCRITTURA = ("data", "descrizione", "importo", "tipo",
                    "metodo_pagamento", "categoria_link_id")
 
@@ -257,62 +267,81 @@ def totali_periodo(client, anno=None, mese=None, tipo=None, categoria=None,
     return totali(righe)
 
 
-def saldo_iniziale(client) -> float:
+def apertura(client) -> dict:
     """
-    Il saldo di partenza del conto personale, da `impostazioni`.
+    Il punto di partenza del conto: quanto c'era, e **a che data**.
 
     Si prende la riga con `valido_dal` **piu' vecchia**, non la piu'
     recente: e' il saldo di apertura, il punto da cui i movimenti
     iniziano a contare. Le righe successive esistono per far cambiare le
     percentuali di risparmio nel tempo (e' cosi' che le usa
     v_risparmi_mese), non per ridefinire l'apertura.
+
+    La data conta quanto l'importo. Finche' `valido_dal` diceva
+    2000-01-01 su un saldo che era invece quello del 26/02/2025, chi
+    avesse importato i movimenti dell'anno prima li avrebbe sommati
+    sopra un'apertura che li conteneva gia': il saldo sarebbe saltato di
+    un migliaio di euro senza un errore, senza niente da guardare.
+    Restituendo anche la data, `saldo_conto()` puo' contare solo i
+    movimenti che vengono dopo.
     """
+    vuoto = {"saldo": 0.0, "dal": None}
     try:
         r = (client.table("impostazioni").select("saldo_iniziale,valido_dal")
              .order("valido_dal", desc=False).limit(1).execute())
         righe = _righe(r)
     except Exception:
-        return 0.0
+        return vuoto
     if not righe:
-        return 0.0
+        return vuoto
     try:
-        return round(float(righe[0].get("saldo_iniziale") or 0), 2)
+        v = round(float(righe[0].get("saldo_iniziale") or 0), 2)
     except (TypeError, ValueError):
-        return 0.0
+        return vuoto
+    return {"saldo": v, "dal": (righe[0].get("valido_dal") or "")[:10] or None}
+
+
+def saldo_iniziale(client) -> float:
+    """Solo l'importo dell'apertura. Vedi `apertura()` per la data."""
+    return apertura(client)["saldo"]
 
 
 def risparmio_totale(client, al: str | None = None) -> float:
     """
-    Quanto hai messo da parte in tutto, fino a `al`.
+    Quanto e' finito nei salvadanai in tutto, fino a `al`, **al netto
+    dei rientri**.
 
-    E' la somma di `risparmi_periodo.effettivo_risparmio`, cioe' di
-    quello che periodo per periodo hai dichiarato di aver risparmiato.
+    Si legge dai movimenti, non da una dichiarazione: sono le righe di
+    `spese` con categoria "Risparmi", cioe' i bonifici verso Revolut
+    con la loro data vera, piu' le entrate della stessa categoria per i
+    soldi tornati indietro (il 27/05/2026 sono usciti 430,17 e rientrati
+    lo stesso giorno: contarli solo in uscita direbbe che sono stati
+    risparmiati, e non e' vero).
 
-    **Quel denaro esce dal conto personale**, e non lascia una riga in
-    `spese`: se ne va su Revolut, dove stanno i salvadanai. Non e' una
-    lettura dedotta — e' esattamente cosi' che ragiona `v_risparmi_mese`,
-    che nel calcolo del saldo corrente scrive
-
-        delta = bonifico + altre_entrate - speso - effettivo_risparmio
-
-    e riporta il running total nella colonna "Importo Prima Del
-    Bonifico". Chi calcola il saldo del conto deve sottrarlo allo stesso
-    modo, o conta due volte soldi che sul conto non ci sono piu'.
-
-    Le righe sono una per periodo (poche decine): niente paginazione.
+    **Non entra piu' nel saldo del conto** — quelle uscite sono gia'
+    dentro `uscite`, come ogni altro movimento. Serve alla pagina
+    Risparmi e al confronto con i saldi Revolut.
     """
     al = al or date.today().isoformat()
-    try:
-        r = (client.table("risparmi_periodo").select("effettivo_risparmio,data_bonifico")
-             .lte("data_bonifico", al).execute())
-    except Exception:
-        return 0.0
     tot = 0.0
-    for riga in _righe(r):
+    offset, passo = 0, 1000
+    while True:
         try:
-            tot += float(riga.get("effettivo_risparmio") or 0)
-        except (TypeError, ValueError):
-            continue
+            pagina = _righe(client.table("v_spese").select("importo,tipo,data,categoria")
+                            .eq("categoria", CATEGORIA_RISPARMIO).lte("data", al)
+                            .order("data", desc=False)
+                            .range(offset, offset + passo - 1).execute())
+        except Exception:
+            return round(tot, 2)
+        for riga in pagina:
+            try:
+                imp = abs(float(riga.get("importo") or 0))
+            except (TypeError, ValueError):
+                continue
+            tot += imp if TIPI_SEGNO.get(riga.get("tipo"), 0) < 0 else -imp
+        if len(pagina) < passo:
+            break
+        offset += passo
     return round(tot, 2)
 
 
@@ -320,20 +349,34 @@ def saldo_conto(client, al: str | None = None) -> dict:
     """
     Saldo reale del conto personale a una data (default: oggi).
 
-    Non e' il "saldo del mese" ne' quello dell'anno: e' quanto c'e' sul
-    conto, cioe'
+        saldo = apertura + entrate - uscite
 
-        saldo di apertura + entrate - uscite - risparmio messo da parte
+    Nient'altro. E' la stessa formula con cui la banca calcola il suo, e
+    questo non e' un dettaglio: **il saldo di un conto si calcola solo
+    dai movimenti di quel conto**. Ogni volta che un euro esce senza
+    lasciare una riga qui dentro, il saldo mente e nessuno se ne accorge.
 
-    I movimenti con data futura restano fuori: sono previsti, non ancora
-    accaduti.
+    Fino al 25/08/2026 c'era un quarto termine, `- risparmio_messo_via`,
+    che toglieva i bonifici verso i salvadanai Revolut leggendoli da
+    `risparmi_periodo` — un numero digitato a mano al posto del
+    movimento bancario. Le due strade convivevano: alcuni bonifici erano
+    registrati come uscite (tolti una volta), altri solo dichiarati
+    (tolti una volta), qualcuno tutti e due (tolti **due** volte),
+    qualcuno nessuno dei due (**mai** tolti). In diciotto mesi lo scarto
+    contro l'estratto era arrivato a 829,78 euro, in due direzioni
+    opposte che si mascheravano a vicenda. Ora quei bonifici sono righe
+    di `spese` come tutte le altre, categoria "Risparmi", con la data
+    vera del bonifico (README §8.11): una sola strada, una sola verita'.
 
-    L'ultimo termine e' quello che si dimentica facilmente. Il risparmio
-    dichiarato su `risparmi_periodo` non e' una riga di `spese`: e'
-    denaro uscito dal conto verso i salvadanai Revolut. Senza sottrarlo
-    il saldo risulta piu' alto del vero di tutto quello che hai
-    risparmiato dall'inizio, e non torna con `v_risparmi_mese`, che
-    invece lo sottrae (vedi `risparmio_totale`).
+    Due dettagli che sembrano piccoli e non lo sono:
+
+    * si parte **dalla data dell'apertura**, non dall'inizio dei tempi.
+      Il saldo di apertura fotografa un conto a un giorno preciso: un
+      movimento anteriore a quel giorno e' gia' dentro quel numero, e
+      sommarlo lo conterebbe due volte. Finche' `valido_dal` diceva
+      2000-01-01 la cosa non si poteva nemmeno vedere.
+    * i movimenti con data futura restano fuori: sono previsti, non
+      ancora accaduti.
 
     Legge `spese` a blocchi finche' non finiscono. PostgREST tronca ogni
     richiesta a un tetto (di solito 1000 righe) e la tabella ne ha gia'
@@ -344,16 +387,22 @@ def saldo_conto(client, al: str | None = None) -> dict:
     """
     al = al or date.today().isoformat()
     vuoto = {"al": al, "disponibile": False, "saldo": 0.0, "entrate": 0.0,
-             "uscite": 0.0, "saldo_iniziale": 0.0, "risparmiato": 0.0,
-             "movimenti": 0}
+             "uscite": 0.0, "saldo_iniziale": 0.0, "dal": None,
+             "risparmiato": 0.0, "movimenti": 0}
+
+    ap = apertura(client)
+    dal = ap["dal"]
 
     entrate = uscite = 0.0
     n = 0
     offset, passo = 0, 1000
     while True:
         try:
-            pagina = _righe(client.table("spese").select("importo,tipo,data")
-                            .lte("data", al).order("data", desc=False)
+            q = (client.table("spese").select("importo,tipo,data")
+                 .lte("data", al))
+            if dal:
+                q = q.gt("data", dal)
+            pagina = _righe(q.order("data", desc=False)
                             .range(offset, offset + passo - 1).execute())
         except Exception:
             return vuoto
@@ -371,16 +420,18 @@ def saldo_conto(client, al: str | None = None) -> dict:
             break
         offset += passo
 
-    apertura = saldo_iniziale(client)
-    risparmiato = risparmio_totale(client, al)
     return {
         "al": al,
         "disponibile": True,
-        "saldo_iniziale": apertura,
+        "saldo_iniziale": ap["saldo"],
+        "dal": dal,
         "entrate": round(entrate, 2),
         "uscite": round(uscite, 2),
-        "risparmiato": risparmiato,
-        "saldo": round(apertura + entrate - uscite - risparmiato, 2),
+        # Non entra piu' nel saldo: e' gia' dentro `uscite`. Resta qui
+        # perche' la home e /spese lo mostrano come "di cui finito nei
+        # salvadanai", che e' un'informazione, non una correzione.
+        "risparmiato": risparmio_totale(client, al),
+        "saldo": round(ap["saldo"] + entrate - uscite, 2),
         "movimenti": n,
     }
 
@@ -659,3 +710,89 @@ def anni_disponibili(client) -> list[int]:
         return anni or [date.today().year]
     except Exception:
         return [date.today().year]
+
+
+# ---------------------------------------------------------------------------
+# Verifica contro l'estratto conto
+# ---------------------------------------------------------------------------
+
+# Sotto questa soglia lo scarto non vale un allarme: arrotondamenti e
+# operazioni contabilizzate a cavallo del giorno del controllo.
+TOLLERANZA_VERIFICA = 1.00
+
+
+def ultima_verifica(client, conto: str) -> dict | None:
+    """
+    L'ultimo saldo dichiarato dalla banca per questo conto, se registrato.
+
+    E' l'unico punto in cui entra un numero di **fonte esterna** con cui
+    confrontarsi. Senza, un errore nei movimenti resta invisibile finche'
+    qualcuno non apre l'app della banca e fa il confronto a mente: e'
+    esattamente cosi' che uno scarto di 829,78 euro e' cresciuto per
+    diciotto mesi senza che niente lo segnalasse.
+    """
+    try:
+        r = (client.table("b2f_saldi_verifica")
+             .select("data,conto,saldo_banca,note")
+             .eq("conto", conto).order("data", desc=True).limit(1).execute())
+        righe = _righe(r)
+    except Exception:
+        return None
+    if not righe:
+        return None
+    v = righe[0]
+    try:
+        return {"data": (v.get("data") or "")[:10],
+                "saldo_banca": round(float(v.get("saldo_banca") or 0), 2),
+                "note": v.get("note")}
+    except (TypeError, ValueError):
+        return None
+
+
+def verifica_saldo(client, conto: str, saldo_calcolato: float,
+                   saldo_al: str | None = None) -> dict | None:
+    """
+    Confronta il saldo calcolato dall'app con l'ultimo estratto registrato.
+
+    Il confronto giusto e' **alla data dell'estratto**, non a oggi: fra
+    quel giorno e adesso ci sono movimenti veri, e la differenza non
+    sarebbe un errore. Chi chiama passa quindi il saldo ricalcolato a
+    quella data (`saldo_al`), non quello di oggi.
+
+    Ritorna None se non c'e' nessun controllo registrato — meglio non
+    dire niente che dire "tutto a posto" senza aver confrontato nulla.
+    """
+    v = ultima_verifica(client, conto)
+    if not v:
+        return None
+    scarto = round(float(saldo_calcolato or 0) - v["saldo_banca"], 2)
+    giorni = None
+    try:
+        giorni = (date.today() - date.fromisoformat(v["data"])).days
+    except (TypeError, ValueError):
+        pass
+    return {
+        "data": v["data"],
+        "saldo_banca": v["saldo_banca"],
+        "saldo_app": round(float(saldo_calcolato or 0), 2),
+        "scarto": scarto,
+        "allineato": abs(scarto) <= TOLLERANZA_VERIFICA,
+        "giorni": giorni,
+        "saldo_al": saldo_al or v["data"],
+        "note": v.get("note"),
+    }
+
+
+def registra_verifica(client, conto: str, data_estratto: str,
+                      saldo_banca: float, note: str | None = None) -> dict:
+    """Registra il saldo letto sull'estratto. Uno per conto per data."""
+    try:
+        client.table("b2f_saldi_verifica").upsert({
+            "conto": conto,
+            "data": data_estratto,
+            "saldo_banca": round(float(saldo_banca or 0), 2),
+            "note": note,
+        }, on_conflict="conto,data").execute()
+        return {"ok": True}
+    except Exception as e:
+        return {"error": str(e)[:200]}

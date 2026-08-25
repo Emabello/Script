@@ -18,47 +18,17 @@ come), **Stato**.
 
 ## Aperti
 
-### [2026-08-14] Il saldo del conto personale mostrato dall'app non è quello della banca: € 3.859,16 contro € 3.354,64
-**Cosa**: con gli stessi occhi, lo stesso giorno (14/08/2026): `/saldi` mostra "WeBank Personale € 3.859,16 · 1027 movimenti, al netto dei risparmi"; il conto vero (WeBank CC 1088-00062465) dice "Saldo disponibile 3.354,64 €". **Scarto: € 504,52 in eccesso nell'app.** Gli altri due conti tornano: P.IVA € 1.506,15 identico al saldo WeBank del CC 00180479; Revolut salvadanai € 8.525,63 contro € 8.525,86 sommando i quattro salvadanai a schermo (−0,23, interessi maturati dopo lo snapshot) e investimenti € 5.272,33 contro € 5.293,13 (−20,80, mercato). Cioè: l'unico conto che non torna è quello calcolato in avanti dall'app, non quelli fotografati.
-**Perché si rompe**: `spese/dati.py::saldo_conto()` è `saldo_iniziale + entrate − uscite − risparmio_totale()`, una catena in cui ogni anello può spostare il totale senza dare errore — (a) `impostazioni.saldo_iniziale` con `valido_dal` più vecchio è il valore di apertura e non è mai stato verificato contro un estratto (già segnalato nella voce dei "Fatti" del 13/08: "resta da verificare che il *valore* di `saldo_iniziale` in tabella sia quello giusto"); (b) movimenti mai importati (l'import da banca è manuale: ogni riga non caricata è uno scarto permanente); (c) `risparmi_periodo` sottratto una volta di troppo o di meno; (d) righe duplicate dall'import. Le quattro cause danno lo stesso sintomo — un numero plausibile e sbagliato — e si distinguono solo riconciliando riga per riga.
-**Cosa si sa dopo gli estratti (14/08, stessa sessione)**: l'utente ha fornito sette estratti conto trimestrali, dal 25/09/2024 al 30/06/2026. Sono stati letti 1.310 movimenti e **i totali ricavati combaciano al centesimo con quelli dichiarati dalla banca in ognuno dei sette** (es. Q2 2026: +9.513,13 / −7.980,20), e 1.624,39 (saldo al 30/09/2024) più la somma delle 1.310 righe fa esattamente 3.492,51, il saldo dichiarato al 30/06/2026. Il lato banca è quindi una base certa, riga per riga: lo scarto sta tutto nel lato app. Restano quattro ipotesi, che la riconciliazione riga-a-riga distingue: `saldo_iniziale` sbagliato, movimenti mai importati, doppioni, risparmio sottratto due volte. **Su quest'ultima**: gli estratti mostrano che i versamenti verso i conti propri (Revolut) sono movimenti bancari veri — 34 uscite per € 13.389,38, meno € 607,58 di rientri, **netto € 12.781,80** nel periodo. Se quelle righe sono state importate in `spese` come uscite, `saldo_conto()` le conta una volta come uscita e una seconda volta dentro `risparmio_totale()`; l'errore però spinge il saldo *verso il basso*, mentre qui è troppo alto — quindi o non sono importate, o convivono due errori di segno opposto e quello dei movimenti mancanti è il più grande.
-**Impatto**: il saldo è l'ancora di tutta la pagina Saldi e della home, ed è il numero su cui si decide se si può spendere. Uno scarto di mezzo migliaio di euro in eccesso è nella direzione peggiore.
-**La riconciliazione, eseguita (14/08)**: la query è girata sul database vero. Al 30/06/2026 — l'ultima data in cui la banca dichiara un saldo, quindi l'unico confronto pulito — la banca dice 3.492,51 e l'app calcola 2.324,65. Lo scarto di −1.167,86 si scompone **esattamente**, senza residui:
-
-| voce | effetto su (app − banca) |
-|---|---|
-| ancora: `saldo_iniziale` 2.869,54 contro 2.866,31 reali al 26/02/2025 | +3,23 |
-| 12 bonifici verso conti propri non registrati in `spese` | +11.722,38 |
-| risparmio dichiarato in `risparmi_periodo` che li sostituisce | −11.090,86 |
-| **→ residuo del meccanismo risparmi** | **+631,52** |
-| 35 righe della banca mai registrate | −1.380,87 |
-| 27 righe di `spese` che in banca non esistono | −421,74 |
-| 520 righe registrate con la data spostata di qualche giorno | **0,00** |
-| **totale** | **−1.167,86** |
-
-**La riga che vale zero è la scoperta più importante della seconda query**: le 547 righe che sembravano "spese non bancarie" hanno tutte `metodo_pagamento = Webank`, e 537 hanno in banca una riga di importo identico entro 7 giorni. Non sono spese fatte con altri strumenti: sono gli stessi movimenti registrati con la **data valuta** invece della data contabile (o viceversa). Sul saldo non pesano — entrano ed escono dallo stesso conto, solo in un altro giorno — ma rendono inservibile ogni confronto che accoppi su data esatta, e gonfiano di dieci volte l'apparente disallineamento (555 "buchi" contro ~18 veri). Chiunque riconcili questa tabella in futuro deve accoppiare con tolleranza sulla data, o vedrà un disastro che non c'è.
-
-Quindi l'app sbaglia **in tutte e due le direzioni insieme**, e oggi (14/08) il saldo è in eccesso di 504,52 solo perché dal 01/07 in poi ha registrato +1.534,51 mentre la banca faceva −137,87: nei due mesi non coperti dagli estratti mancano ~1.672 € di uscite (luglio 2026: 76 righe per +2.814,36 di netto, agosto: 24 righe per −497,45). Un dato buono: maggio e giugno 2026 combaciano al centesimo, con lo stesso numero di righe — l'import recente funziona, il guasto è nello storico.
-**Come si chiude**: delle 35 righe mancanti, 16 sono assenze vere (+1.737,37: accrediti Satispay, rimborsi da amici, spese col bancomat mai registrate) e vanno inserite — script pronto, idempotente, che usa `insert_spesa_first_free_id` come fa l'app; 16 hanno una gemella in `spese` oltre la tolleranza di 7 giorni o a un centesimo di distanza (−63,11 contro −63,10, −8,28 contro −8,29) e non vanno toccate; 3 riguardano Revolut e dipendono dalla decisione sui trasferimenti. Fatto quell'inserimento resta **+569,51**, e anche quello è tutto attribuito: +631,52 di bonifici non coperti dal dichiarato, +612,38 delle due ricariche Revolut fatte **con la carta** (che sfuggono anche alla regola dei bonifici: nessuno le toglie, in nessuno dei due modi), −430,17 del rientro da Revolut del 27/05 mai registrato, −247,45 di 12 righe di `spese` che in banca non esistono (ipotesi da verificare: pagamenti Satispay registrati uno per uno mentre la banca porta solo l'addebito SDD cumulativo — sarebbero contati due volte), +3,23 di ancora.
-**Stato**: causa trovata e quantificata; correzione 1 (le 16 righe) preparata e provata, non ancora applicata (tocca dati reali, non codice: va decisa con l'utente). Il pezzo più grosso non è un bug di calcolo ma il meccanismo dei risparmi — voce sotto. La query di riconciliazione è stata verificata prima dell'uso su un PostgreSQL 16 locale con lo schema reale e buchi/doppioni iniettati apposta.
-
-### [2026-08-14] `risparmi_periodo` è una dichiarazione a mano che sostituisce movimenti veri, e la regola non è applicata in modo uniforme
-**Cosa**: i bonifici verso i conti propri (Revolut) dovrebbero uscire dal saldo non come movimenti ma tramite `risparmio_totale()`, la somma di `risparmi_periodo.effettivo_risparmio` — un movimento bancario certo sostituito da un numero digitato a mano. Sui dati reali, dal 27/02/2025 al 30/06/2026 sono usciti **13.139,38 €** in 29 bonifici, e i due trattamenti convivono: 12 bonifici (11.722,38 €) non sono in `spese` e vengono tolti solo dal risparmio dichiarato; gli altri 17 (1.417,00 € — gli ordini permanenti da 50 € e due bonifici singoli) sono registrati come normali uscite. Tolto dal saldo in tutto: 11.090,86 dichiarati + 1.417,00 registrati = 12.507,86 contro 13.139,38 usciti davvero. **Residuo: 631,52 €** che restano nel saldo senza esistere in banca.
-**Perché si rompe**: ogni euro trasferito su Revolut e non dichiarato come risparmio resta nel saldo WeBank **per sempre**, e nessuno può accorgersene: il movimento bancario che proverebbe l'uscita è stato escluso apposta da `spese`. È il solo punto del sistema in cui un numero di *fonte bancaria* viene rimpiazzato da un numero di *fonte umana* senza un confronto fra i due — e la pagina Risparmi confronta il dichiarato con i salvadanai Revolut, cioè con un'altra dichiarazione, non con i bonifici. Peggio: poiché una parte dei bonifici *è* registrata come uscita, se quegli stessi importi finissero anche dentro un `effettivo_risparmio` verrebbero tolti due volte. Le due strade coesistono e niente dice quale valga per quale bonifico.
-**Impatto**: sui dati di oggi, 631,52 € di saldo che non esistono, in una direzione che cresce da sola a ogni bonifico non dichiarato; più il rischio simmetrico di doppia sottrazione sui 17 bonifici trattati nell'altro modo.
-**Stato**: aperto, proposta da decidere con l'utente. La strada che chiude il buco per costruzione: importare anche quei bonifici in `spese` come normali uscite (categoria dedicata, es. "Risparmio Revolut") e **togliere** `− risparmio_totale()` da `saldo_conto()`. Il saldo tornerebbe a essere solo "apertura + movimenti", cioè quello che dice la banca; `risparmi_periodo` resterebbe quello che è davvero, il quanto-volevo-mettere-da-parte della pagina Risparmi, senza più fare doppio lavoro come uscita implicita. Richiede una migrazione dei dati storici, non solo una modifica di codice.
+### [2026-08-21] I tre KPI di `/fatture/storico` seguono il filtro di stato, ma si chiamano come se fossero dell'anno
+**Cosa**: in `fatture/storico.py: storico_list()` la query applica il filtro di stato scelto nella toolbar (`q.eq("stato", stato)`), e le tre tessere di riepilogo — "Fatturato {anno}", "Incassato", "Da incassare" — si calcolano su quelle stesse `rows`, non su tutte le fatture dell'anno.
+**Perché si rompe**: filtrando "Incassata" restano solo le incassate, quindi `tot_fatturato == tot_incassato` e **"Da incassare" mostra € 0,00 anche se ci sono fatture trasmesse e non pagate**; filtrando "Bozza" le tessere mostrano tutte zero (nessuna bozza è in `STATI_EMESSE`), come se nell'anno non fosse stato fatturato nulla. L'etichetta però continua a dire "Fatturato {anno}", cioè promette un totale d'anno mentre mostra il totale del sottoinsieme filtrato.
+**Impatto**: chi apre lo storico già filtrato (o filtra per cercare una fattura e poi guarda in alto) legge un credito residuo sbagliato — proprio il numero per cui si va a controllare lo storico. Nessun errore visibile: i numeri sono coerenti fra loro, solo calcolati su una base diversa da quella annunciata.
+**Stato**: non corretto. Due strade: calcolare le tessere su una seconda query senza filtro di stato (restano "dell'anno" come dicono), oppure lasciarle sul filtro e cambiare le etichette perché lo dicano. La prima è più vicina a cosa serve guardando quella pagina.
 
 ### [2026-08-14] `spese.data` mescola data contabile e data valuta, e nessuno sa quale sia quale
 **Cosa**: 537 righe su 927 nel periodo coperto dagli estratti hanno in banca una riga di importo identico ma con data diversa (fino a qualche giorno). Le due date esistono entrambe sull'estratto — contabile e valuta — e l'import (`spese/importa.py`) prende la contabile, mentre le righe inserite a mano prendono il giorno in cui la spesa è stata fatta. Nella colonna `data` finiscono mescolate, senza niente che dica quale delle due sia.
 **Perché si rompe**: due danni concreti. (1) **I periodi di paga**: `v_risparmi_mese` unisce le spese al periodo con `data BETWEEN data_bonifico AND fine_periodo`. Una spesa del 31/03 registrata col 02/04 salta nel periodo successivo — il "Totale Speso" di due periodi consecutivi è sbagliato in direzioni opposte, e il risparmio consigliato con lui. Stessa cosa per `mese`/`anno`, che sono ricavati da `data`: un movimento di fine mese cade nel mese sbagliato dei KPI. (2) **La riconciliazione**: accoppiando su data esatta, questi 537 movimenti appaiono contemporaneamente come "mancanti in `spese`" e "in più rispetto alla banca", gonfiando di dieci volte il disallineamento apparente (555 buchi contro ~18 veri) e nascondendo i pochi problemi veri nel rumore. È esattamente quello che è successo alla prima passata di questo audit.
 **Impatto**: sul saldo totale zero (entrano ed escono dallo stesso conto), sui numeri per periodo e per mese sì, e su ogni futuro controllo di coerenza.
 **Stato**: aperto. Il minimo è decidere quale data è *la* data (la contabile è quella che la banca usa per il saldo, quindi è lei) e allineare l'import a quella scelta; meglio ancora, tenere anche `data_valuta` in una colonna sua, così il confronto con l'estratto può usare l'una o l'altra invece di indovinare. Fino ad allora, chi riconcilia deve accoppiare con tolleranza sulla data.
-
-### [2026-08-14] Due righe in `impostazioni`, e solo la più vecchia conta per il saldo
-**Cosa**: `impostazioni` ha due righe — `valido_dal` 2000-01-01 (percentuale 0,25) e 2026-02-25 (percentuale 0,35) — con lo **stesso** `saldo_iniziale` 2.869,54. `saldo_iniziale()` legge la riga con `valido_dal` più vecchio, ed è corretto così (è l'apertura). Ma il valore 2.869,54 è il saldo reale al **26/02/2025** (2.866,31 in banca, 3,23 di scarto), non al 2000-01-01: la data è un'etichetta che mente, e `spese` infatti comincia il 27/02/2025.
-**Perché si rompe**: due modi concreti. (1) Chi guarda la tabella non ha modo di sapere a che data si riferisce quell'importo — se un domani si importassero i movimenti 2024 (gli estratti ci sono), verrebbero sommati sopra un'apertura che li contiene già, e il saldo salterebbe di ~1.240 € senza nessun errore. (2) Aggiornare `saldo_iniziale` sulla riga **nuova** — la cosa naturale da fare, visto che è quella "valida oggi" — non cambia niente: l'app legge solo la più vecchia, e la modifica sparisce in silenzio.
-**Impatto**: nessun danno oggi; una trappola sicura al primo intervento sui dati storici o alla prima correzione dell'apertura.
-**Stato**: aperto. Minimo sindacale: portare `valido_dal` della prima riga a 2025-02-26 (è quello che il numero significa davvero) e mettere il valore esatto, 2.866,31. Meglio: che `saldo_conto()` parta da quella data invece di sommare tutto ciò che trova, così una riga più vecchia dell'apertura non può falsare il saldo.
 
 ### [2026-08-14] L'app sa quanto *vale* l'investimento Revolut, non quanto ci è stato *versato*
 **Cosa**: `b2f_revolut.investimenti` è la valorizzazione del portafoglio, scritta a mano (l'estratto consolidato non la contiene). Non esiste in nessuna tabella il capitale versato verso l'investimento. Dal PDF "Trading account statement" 27/05/2025-14/08/2026 quel numero si ricostruisce: **€ 1.871,85 netti in EUR** (35 versamenti per € 2.291,96, meno € 420,11 di prelievi) **e $ 1.420,34 in USD** (27 versamenti, nessun prelievo) — ma è un documento che sta fuori dall'app, e nessuno lo legge.
@@ -111,6 +81,161 @@ Quindi l'app sbaglia **in tutte e due le direzioni insieme**, e oggi (14/08) il 
 ---
 
 ## Fatti (storico — per non riproporli)
+
+### ~~`risparmi_periodo` sostituisce movimenti veri~~ · ~~la dichiarazione è datata all'inizio del periodo~~ → risolte il 25/08/2026
+**Cosa è cambiato**: `saldo_conto()` non sottrae più le dichiarazioni. La formula è tornata `apertura + entrate − uscite`, la stessa della banca, e parte dalla **data dell'apertura** invece che dall'inizio dei tempi. I bonifici verso i salvadanai sono diventati normali uscite di `spese`, categoria "Risparmi", con la data vera del bonifico (migrazione README §8.11); `v_risparmi_mese` legge il risparmio effettivo da quei movimenti ed esclude quelle uscite da "Totale Speso", perché mettere da parte non è spendere. `risparmi_periodo` resta il *quanto volevo mettere via* della pagina Risparmi e non tocca più nessun saldo.
+
+Entrambe le voci cadono per la stessa ragione: **sparisce la seconda strada**. Non c'è più un modo di far uscire denaro dal conto che non sia una riga di `spese`, quindi non c'è più niente da tenere allineato a mano, né una data di comodo diversa da quella in cui il denaro si muove.
+
+La migrazione è **a saldo invariato con qualsiasi versione del codice**, e non per caso: le uscite che inserisce (14.912,07 €) sono esattamente pari al risparmio dichiarato che azzera, nello stesso script. Si può quindi lanciare prima o dopo il deploy senza finestre in cui i numeri saltano.
+
+### ~~Non c'è nessun controllo che guardi fuori dall'app~~ → aggiunto il 25/08/2026
+**Cosa era**: ogni totale dell'app è coerente per costruzione — torna con i movimenti perché dai movimenti è calcolato — e proprio per questo **nessun controllo interno può accorgersi di un movimento mai registrato**. È la ragione per cui uno scarto di 829,78 € è cresciuto per diciotto mesi in silenzio: non esisteva un solo numero di fonte esterna con cui confrontarsi.
+**Cosa è cambiato**: la tabella `b2f_saldi_verifica` (README §8.12) tiene il saldo dichiarato dalla banca, per conto e per data; `/saldi` ricalcola il proprio saldo **a quella data** e mostra il confronto, con la tolleranza di 1 € per gli arrotondamenti. Uno scarto si vede in giorni invece che in anni. Va alimentata a mano, dieci secondi ogni volta che si apre un estratto: è l'unico punto del sistema in cui un numero entra da fuori, e vale la pena che sia un gesto consapevole.
+
+### ~~Il saldo del conto personale non è quello della banca~~ → chiuso il 25/08/2026, scarto **0,00**
+**Cosa è cambiato**: riconciliati riga per riga tutti i 1.188 movimenti bancari dal 03/01/2025 al 25/08/2026 (cinque estratti PDF trimestrali più due export .xlsx) contro le righe di `spese`; corrette le 33 differenze trovate. Al 30/06/2026 e al 25/08/2026 il saldo calcolato dall'app e quello dichiarato da WeBank coincidono al centesimo. Sotto, la cronaca completa: serve perché le stesse categorie di errore possono ripresentarsi, e perché il metodo (accoppiamento per importo con tolleranza di ±7 giorni sulla data) è l'unico che funziona su questa tabella.
+
+**Le scritture applicate il 25/08/2026**, tutte reversibili (valori precedenti annotati qui sotto):
+
+| intervento | righe | effetto sul saldo |
+|---|---|---|
+| inserite le entrate e le uscite presenti in banca e mai registrate | 18 | +1.681,37 |
+| eliminate le righe di `spese` che in banca non esistono | 11 | +243,15 |
+| corretti due movimenti a un centesimo di distanza (63,10→63,11 il 09/07/2025, 8,29→8,28 il 16/07/2025) | 2 | 0,00 |
+| eliminato un doppione da 2,70 (McDonald's importato due volte, con data valuta e con data contabile) | 1 | +2,70 |
+| eliminata l'uscita da 600,00 dell'11/06/2026, che era un bonifico Revolut contato anche come risparmio | 1 | +600,00 |
+| `impostazioni`: `saldo_iniziale` 2.869,54 → **2.876,61**, `valido_dal` 2000-01-01 → **2025-02-26** (allineato anche sulla seconda riga, per non lasciare due verità) | 2 | +7,07 |
+| `risparmi_periodo`: dichiarazioni allineate ai bonifici Revolut realmente partiti (totale da 11.873,26 a 14.912,07) | 17 | −3.038,81 |
+
+Valori precedenti delle dichiarazioni, per poter tornare indietro: 2025-03-31 412,38 · 2025-04-29 603,44 · 2025-05-29 685,00 · 2025-06-23 845,00 · 2025-06-30 770,98 · 2025-08-28 670,00 · 2025-09-27 666,00 · 2025-10-28 645,00 · 2025-11-27 480,00 · 2025-12-17 690,00 · 2025-12-23 302,00 · 2026-01-30 435,00 · 2026-02-26 680,00 · 2026-04-01 760,00 · 2026-04-29 696,46 · 2026-06-01 978,62 · 2026-07-01 782,40.
+
+**Quello che resta storto, e non è un errore di dati**: ai punti intermedi lo scarto non è zero (−18,30 al 30/06/2025, −1.177,00 al 31/12/2025, −20,10 al 31/03/2026). È lo sfasamento documentato nella voce aperta qui sopra: la dichiarazione è datata all'inizio del periodo, il bonifico parte dopo — al 31/12/2025 l'app ha già tolto i 1.170,00 dichiarati il 23/12 mentre in banca sono usciti il 07/01. Si riassorbe da solo, ma finché `saldo_conto()` sottrae le dichiarazioni per `data_bonifico` il saldo resta sbagliato per una parte di ogni mese.
+
+**Conseguenza da tenere d'occhio**: ora `coerenza()` su `/spese/revolut` segnala 1.244,33 di risparmio dichiarato in più rispetto a quello che c'è su Revolut. **Non è un errore nuovo**: il dichiarato ora misura tutto il denaro *versato* verso Revolut (verità bancaria), i salvadanai misurano quello che c'è *oggi* — e da Revolut è anche uscito qualcosa (430,17 rientrati il 27/05/2026, 150,00 il 03/08/2026, più le spese fatte con la carta Revolut). È esattamente il limite descritto nella voce aperta "L'app sa quanto *vale* l'investimento, non quanto ci è stato *versato*".
+
+### [2026-08-14] Il saldo del conto personale mostrato dall'app non è quello della banca: € 3.859,16 contro € 3.354,64
+**Cosa**: con gli stessi occhi, lo stesso giorno (14/08/2026): `/saldi` mostra "WeBank Personale € 3.859,16 · 1027 movimenti, al netto dei risparmi"; il conto vero (WeBank CC 1088-00062465) dice "Saldo disponibile 3.354,64 €". **Scarto: € 504,52 in eccesso nell'app.** Gli altri due conti tornano: P.IVA € 1.506,15 identico al saldo WeBank del CC 00180479; Revolut salvadanai € 8.525,63 contro € 8.525,86 sommando i quattro salvadanai a schermo (−0,23, interessi maturati dopo lo snapshot) e investimenti € 5.272,33 contro € 5.293,13 (−20,80, mercato). Cioè: l'unico conto che non torna è quello calcolato in avanti dall'app, non quelli fotografati.
+**Perché si rompe**: `spese/dati.py::saldo_conto()` è `saldo_iniziale + entrate − uscite − risparmio_totale()`, una catena in cui ogni anello può spostare il totale senza dare errore — (a) `impostazioni.saldo_iniziale` con `valido_dal` più vecchio è il valore di apertura e non è mai stato verificato contro un estratto (già segnalato nella voce dei "Fatti" del 13/08: "resta da verificare che il *valore* di `saldo_iniziale` in tabella sia quello giusto"); (b) movimenti mai importati (l'import da banca è manuale: ogni riga non caricata è uno scarto permanente); (c) `risparmi_periodo` sottratto una volta di troppo o di meno; (d) righe duplicate dall'import. Le quattro cause danno lo stesso sintomo — un numero plausibile e sbagliato — e si distinguono solo riconciliando riga per riga.
+**Cosa si sa dopo gli estratti (14/08, stessa sessione)**: l'utente ha fornito sette estratti conto trimestrali, dal 25/09/2024 al 30/06/2026. Sono stati letti 1.310 movimenti e **i totali ricavati combaciano al centesimo con quelli dichiarati dalla banca in ognuno dei sette** (es. Q2 2026: +9.513,13 / −7.980,20), e 1.624,39 (saldo al 30/09/2024) più la somma delle 1.310 righe fa esattamente 3.492,51, il saldo dichiarato al 30/06/2026. Il lato banca è quindi una base certa, riga per riga: lo scarto sta tutto nel lato app. Restano quattro ipotesi, che la riconciliazione riga-a-riga distingue: `saldo_iniziale` sbagliato, movimenti mai importati, doppioni, risparmio sottratto due volte. **Su quest'ultima**: gli estratti mostrano che i versamenti verso i conti propri (Revolut) sono movimenti bancari veri — 34 uscite per € 13.389,38, meno € 607,58 di rientri, **netto € 12.781,80** nel periodo. Se quelle righe sono state importate in `spese` come uscite, `saldo_conto()` le conta una volta come uscita e una seconda volta dentro `risparmio_totale()`; l'errore però spinge il saldo *verso il basso*, mentre qui è troppo alto — quindi o non sono importate, o convivono due errori di segno opposto e quello dei movimenti mancanti è il più grande.
+**Impatto**: il saldo è l'ancora di tutta la pagina Saldi e della home, ed è il numero su cui si decide se si può spendere. Uno scarto di mezzo migliaio di euro in eccesso è nella direzione peggiore.
+**La riconciliazione, eseguita (14/08)**: la query è girata sul database vero. Al 30/06/2026 — l'ultima data in cui la banca dichiara un saldo, quindi l'unico confronto pulito — la banca dice 3.492,51 e l'app calcola 2.324,65. Lo scarto di −1.167,86 si scompone **esattamente**, senza residui:
+
+| voce | effetto su (app − banca) |
+|---|---|
+| ancora: `saldo_iniziale` 2.869,54 contro 2.866,31 reali al 26/02/2025 | +3,23 |
+| 12 bonifici verso conti propri non registrati in `spese` | +11.722,38 |
+| risparmio dichiarato in `risparmi_periodo` che li sostituisce | −11.090,86 |
+| **→ residuo del meccanismo risparmi** | **+631,52** |
+| 35 righe della banca mai registrate | −1.380,87 |
+| 27 righe di `spese` che in banca non esistono | −421,74 |
+| 520 righe registrate con la data spostata di qualche giorno | **0,00** |
+| **totale** | **−1.167,86** |
+
+**La riga che vale zero è la scoperta più importante della seconda query**: le 547 righe che sembravano "spese non bancarie" hanno tutte `metodo_pagamento = Webank`, e 537 hanno in banca una riga di importo identico entro 7 giorni. Non sono spese fatte con altri strumenti: sono gli stessi movimenti registrati con la **data valuta** invece della data contabile (o viceversa). Sul saldo non pesano — entrano ed escono dallo stesso conto, solo in un altro giorno — ma rendono inservibile ogni confronto che accoppi su data esatta, e gonfiano di dieci volte l'apparente disallineamento (555 "buchi" contro ~18 veri). Chiunque riconcili questa tabella in futuro deve accoppiare con tolleranza sulla data, o vedrà un disastro che non c'è.
+
+Quindi l'app sbaglia **in tutte e due le direzioni insieme**, e oggi (14/08) il saldo è in eccesso di 504,52 solo perché dal 01/07 in poi ha registrato +1.534,51 mentre la banca faceva −137,87: nei due mesi non coperti dagli estratti mancano ~1.672 € di uscite (luglio 2026: 76 righe per +2.814,36 di netto, agosto: 24 righe per −497,45). Un dato buono: maggio e giugno 2026 combaciano al centesimo, con lo stesso numero di righe — l'import recente funziona, il guasto è nello storico.
+**Come si chiude**: delle 35 righe mancanti, 16 sono assenze vere (+1.737,37: accrediti Satispay, rimborsi da amici, spese col bancomat mai registrate) e vanno inserite — script pronto, idempotente, che usa `insert_spesa_first_free_id` come fa l'app; 16 hanno una gemella in `spese` oltre la tolleranza di 7 giorni o a un centesimo di distanza (−63,11 contro −63,10, −8,28 contro −8,29) e non vanno toccate; 3 riguardano Revolut e dipendono dalla decisione sui trasferimenti. Fatto quell'inserimento resta **+569,51**, e anche quello è tutto attribuito: +631,52 di bonifici non coperti dal dichiarato, +612,38 delle due ricariche Revolut fatte **con la carta** (che sfuggono anche alla regola dei bonifici: nessuno le toglie, in nessuno dei due modi), −430,17 del rientro da Revolut del 27/05 mai registrato, −247,45 di 12 righe di `spese` che in banca non esistono (ipotesi da verificare: pagamenti Satispay registrati uno per uno mentre la banca porta solo l'addebito SDD cumulativo — sarebbero contati due volte), +3,23 di ancora.
+**Stato**: causa trovata e quantificata; correzione 1 (le 16 righe) preparata e provata, non ancora applicata (tocca dati reali, non codice: va decisa con l'utente). Il pezzo più grosso non è un bug di calcolo ma il meccanismo dei risparmi — voce sotto. La query di riconciliazione è stata verificata prima dell'uso su un PostgreSQL 16 locale con lo schema reale e buchi/doppioni iniettati apposta.
+
+**Aggiornamento 25/08/2026 — il pezzo mancante è stato trovato, e lo scarto torna a zero.** Con l'estratto WeBank del conto personale dal 01/07 al 25/08 (107 righe) e l'accesso diretto al database, la riconciliazione riga per riga accoppia **104 righe su 107** (importo firmato uguale, data entro ±7 giorni su contabile o valuta). Le tre righe di banca non accoppiate e le due di `spese` spiegano lo scarto **per intero, senza residuo**:
+
+| voce | effetto su (app − banca) |
+|---|---|
+| 09/07/2026, bonifico di € 2.457,48 "favore Emanuele Bellotti" mai registrato in `spese` | +2.457,48 |
+| risparmio dichiarato per il periodo 01/07 (`risparmi_periodo`) | −782,40 |
+| doppione: lo stesso McDonald's da € 2,70 importato due volte (id 1024 con data valuta 12/08, id 1029 con data contabile 13/08, da due import diversi — `created_at` 12/08 e 14/08); in banca la riga è una sola | −2,70 |
+| **scarto luglio-agosto** | **+1.672,38** |
+| scarto al 30/06 già scomposto sopra | −1.167,86 |
+| **= scarto di oggi, app 3.763,56 contro banca 3.259,04** | **+504,52** |
+
+Due conferme che vengono dallo stesso confronto: (1) **le entrate combaciano al centesimo** — 4.947,09 su entrambi i lati nei due mesi: il guasto è tutto sulle uscite; (2) il **giroconto P.IVA di € 3.491,85** registrato come riga unica del 31/07 in banca è arrivato in **due tranche** (2.000,00 il 05/08 e 1.491,85 il 13/08, "trasferimento da conto *0479"): l'importo è esatto, la data no. Sul saldo di oggi non pesa, ma sposta di due settimane il confine di periodo che `v_periodi_stipendio` apre proprio su quel giroconto, e con lui il "Totale Speso" e il risparmio consigliato di due periodi.
+
+**Cosa manca per chiudere**: sapere dove sono andati i 2.457,48 del 09/07 (Revolut? HYPE? un altro conto?). Da lì dipende la correzione: se erano risparmio, il dichiarato di 782,40 per quel periodo è incompleto e va portato a 2.457,48; se erano una spesa vera, va inserita la riga in `spese` e il dichiarato va azzerato, altrimenti quel denaro viene tolto due volte. I due snapshot Revolut disponibili (13/08 e 25/08) sono entrambi successivi e non permettono di dedurlo. **Attenzione**: sistemare solo luglio-agosto senza sistemare anche le 16 righe mancanti pre-30/06 non fa combaciare il saldo — lo fa passare da +504,52 a −1.167,86, cioè inverte il segno dell'errore.
+
+**Correzione applicata il 25/08/2026** (decisa dall'utente: i 2.457,48 erano andati su Revolut, quindi erano risparmio). Due scritture sul database vero, tramite connettore:
+
+1. `risparmi_periodo`, `data_bonifico = 2026-07-01`: `effettivo_risparmio` da **782,40 → 2.457,48** (l'unico trasferimento verso Revolut in quel periodo; il bonifico di 50,00 del 14/07 è HYPE ed era già registrato come uscita).
+2. `spese`: eliminata la riga **id 1029** (2026-08-13, € 2,70, "Mcdonald'S 35 Mil Ano", metodo "Import banca", categoria_link_id `c2827ce1-153b-4844-88a1-d07e22ea4b29`), doppione di `id 1024` (2026-08-12, stesso importo). Verificato prima che non fosse referenziata da `b2f_spese_piva.giroconto_personale_id` né da `b2f_fatture.giroconto_personale_id`.
+
+Il saldo dell'app passa da 3.763,56 a **2.091,18**, e lo scarto contro la banca da +504,52 a **−1.167,86: esattamente, al centesimo, il residuo pre-30/06 già scomposto sopra**. Il contributo di luglio-agosto è ora zero — la conferma più forte che la scomposizione era giusta.
+
+**Attenzione a come si legge il numero adesso**: la pagina Saldi mostra meno di quello che c'è in banca, non più. Non è un peggioramento, è lo stesso errore di prima con l'altro pezzo tolto di mezzo: restano da correggere le 16 righe mancanti pre-30/06 e le altre voci di quella tabella. Fino ad allora il saldo del conto personale resta indicativo.
+
+**Seconda riconciliazione, 25/08/2026 — periodo 27/02/2026 → 30/06/2026 (estratto WeBank, 281 righe).** Accoppiate **275 su 281**. Le sei righe rimaste, più una di `spese`, spiegano tutto:
+
+| riga di banca | in `spese`? | effetto |
+|---|---|---|
+| 13/03 −737,00 "favore emanuele bellotti **notprovide**" | no | bonifico a Revolut |
+| 02/04 −2.040,00 idem | no | bonifico a Revolut |
+| 27/05 −430,17 idem, e **+430,17 rientrato lo stesso giorno** ("BON.DA EMANUELE BELLOTTI RISPARMI", rif. `PY05Q…` = Revolut) | nessuna delle due | netto zero |
+| 11/06 −600,00 idem | **sì**, id 899 | bonifico a Revolut, ma registrato come uscita |
+| 30/03 due pagamenti da −4,50 | registrati come **una** riga da 9,00 (id 727) | netto zero |
+
+**La discriminante è nella causale**, e vale su tutto lo storico: i bonifici verso Revolut sono `vostra disposizione … favore emanuele bellotti notprovide` (minuscolo, importi grossi, canale diverso); i `VS.DISP. RIF. … FAVORE EMANUELE BELLOTTI . NR. BONIFICO SEPA` (maiuscolo, 50,00 ogni mese) sono il giroconto ricorrente su **HYPE**, e quelli sono sempre registrati come uscite. Nel periodo 27/02 → 25/08 i bonifici Revolut sono esattamente cinque: 737,00 · 2.040,00 · 430,17 (tornato indietro) · 600,00 · 2.457,48. Nessuna ricarica Revolut con carta.
+
+**Correzioni applicate** (stessa regola scelta dall'utente: quello che va su Revolut è risparmio, si dichiara e non si registra come uscita):
+
+| periodo | prima | dopo | perché |
+|---|---|---|---|
+| 2026-02-26 | 680,00 | **737,00** | bonifico del 13/03 |
+| 2026-04-01 | 760,00 | **2.040,00** | bonifico del 02/04 |
+| 2026-04-29 | 696,46 | **0** | l'unico bonifico del periodo è rientrato lo stesso giorno |
+| 2026-06-01 | 978,62 | **600,00** | bonifico dell'11/06 |
+| `spese` id 899 | 600,00 uscita 11/06 (`categoria_link_id` `dfc2a0e0-8fff-4c12-a923-99304a0790f8`, metodo Webank) | **eliminata** | era lo stesso bonifico contato una seconda volta come uscita |
+
+**Risultato: lo scarto è ora costante a −829,78 sia al 30/06 sia al 25/08.** Un residuo che non cambia più fra due date lontane due mesi significa che **da fine febbraio 2026 in poi app e banca si muovono in perfetto passo**: tutto l'errore rimasto è anteriore al 27/02/2026. Previsione verificabile: il saldo WeBank al 26/02/2026 deve essere **3.245,67** (l'app dice 2.415,89). Per chiudere serve l'estratto **27/02/2025 → 26/02/2026**, l'unico anno mai riconciliato riga per riga.
+
+**Storico bancario completo ricostruito, 25/08/2026.** Cinque estratti trimestrali PDF (Q1 2025 → Q1 2026) più i due export .xlsx: **1.188 movimenti dal 03/01/2025 al 25/08/2026**, uniti in un unico file. Ogni PDF si autoverifica (saldo iniziale + entrate − uscite = saldo finale dichiarato, al centesimo) e la catena ricostruita centra **tutti e sette** i saldi dichiarati dalla banca: 3.978,51 (31/03/25) · 4.416,27 (30/06/25) · 4.358,50 (30/09/25) · 4.372,17 (31/12/25) · 1.959,58 (31/03/26) · 3.492,51 (30/06/26) · 3.259,04 (25/08/26). Il lato banca è quindi una base certa su tutto il periodo, non più solo fino al 30/06/2026. Nota per chi riparserà i PDF: nelle righe di **entrata** l'importo è incollato alla descrizione (`1.944,00BON.DA SILERON S.R.L.`) e non è un token numerico a sé — un parser ingenuo estrae tutte le uscite e **zero** entrate, e i totali sembrano comunque plausibili.
+
+**Dove sta il residuo di −829,78**, con i numeri:
+
+| voce | importo |
+|---|---|
+| **l'ancora**: `impostazioni.saldo_iniziale` = 2.869,54 contro il saldo reale al 26/02/2025 (giorno prima della prima riga di `spese`) = **2.876,61** | **−7,07** |
+| l'anno 27/02/2025 → 26/02/2026, mai riconciliato riga per riga | −822,71 |
+
+Sul secondo pezzo, quello che si vede già dal solo lato banca: nell'anno sono usciti verso Revolut **9.673,21** in 17 bonifici con causale `NOTPROVIDE`, contro **8.712,78** dichiarati in `risparmi_periodo` — **960,43 mai dichiarati**. Da solo questo renderebbe l'app *più alta* della banca di 960,43; siccome invece è *più bassa* di 822,71, convivono ~1.783 € di errori di segno opposto — cioè bonifici Revolut registrati **anche** come uscite in `spese` (lo stesso doppio conteggio già trovato sul bonifico di giugno 2026) e/o entrate mai registrate. Per separarli servono le righe di `spese` di quell'anno: il connettore Supabase si è disconnesso a metà lavoro e la query non è stata eseguita.
+
+**Riconciliazione finale, 25/08/2026 — l'anno 27/02/2025 → 26/02/2026.** 668 righe di banca contro 651 di `spese`: **accoppiate 638**. Lo scarto di −829,78 si scompone **al centesimo, senza residuo**:
+
+| voce | effetto su (app − banca) |
+|---|---|
+| l'ancora: `saldo_iniziale` 2.869,54 contro 2.876,61 reali al 26/02/2025 | −7,07 |
+| 8 bonifici Revolut (`NOTPROVIDE`) mai registrati | +8.465,21 |
+| 2 ricariche Revolut **con carta** mai registrate (20/05 e 11/06/2025, `REVOLUT**4658* DUBLIN IE`) | +612,38 |
+| 5 entrate mai registrate: 1.638,81 e 216,60 di accrediti Satispay, 15+15+23 di rimborsi da amici | −1.908,41 |
+| 14 uscite mai registrate (fra cui 126,87 e 1,07 in Giappone, un bonifico continuativo da 50) | +298,43 |
+| 13 righe di `spese` che in banca non esistono (quasi tutte senza descrizione, caricate il 30/12/2025; due sono la stessa spesa a un centesimo di distanza: 63,10 contro 63,11 e 8,29 contro 8,28) | −314,54 |
+| risparmi dichiarati nel periodo | −7.975,78 |
+| **totale** | **−829,78** |
+
+**La scoperta che spiega il meccanismo**: confrontando periodo per periodo il dichiarato con il bonifico Revolut realmente partito, **le dichiarazioni sono sistematicamente sfasate di un periodo**. Dichiarato 685 per il periodo che chiude il 22/06, e 685,00 partiti il 24/06; dichiarato 845 per il periodo del 23/06, e 845,00 partiti il 30/06; dichiarato 770,98 per il 30/06, e 770,98 partiti il 30/07. Non è un caso: si dichiara alla chiusura del periodo e si bonifica all'apertura del successivo. Il totale però non torna lo stesso — **nell'anno sono usciti verso Revolut 9.077,59 mai registrati in `spese`, contro 7.975,78 dichiarati: 1.101,81 non dichiarati da nessuna parte**. (Altri 1.202,00 di bonifici Revolut, del marzo-maggio 2025, sono invece registrati come normali uscite: quelli il saldo li toglie correttamente una volta sola.)
+
+**Cosa serve per chiudere**, con l'effetto di ciascun pezzo sul saldo:
+
+| intervento | righe | effetto |
+|---|---|---|
+| ancora: `impostazioni.saldo_iniziale` → 2.876,61, `valido_dal` → 2025-02-26 | 1 | +7,07 |
+| inserire le entrate mancanti | 5 | +1.908,41 |
+| inserire le uscite mancanti | 14 | −298,43 |
+| eliminare (o correggere di un centesimo) le righe che in banca non esistono | 13 | +314,54 |
+| portare il dichiarato totale a 9.077,59 | ~4 periodi | −1.101,81 |
+| **saldo app = saldo banca** | | **+829,78** |
+
+Nessuno dei pezzi da solo chiude: applicarne una parte sposta il saldo mostrato senza avvicinarlo al vero. Le 13 righe senza descrizione sono l'unico punto che richiede il giudizio dell'utente (spese in contanti mai passate dal conto, oppure doppioni).
+
+
+---
+
+### ~~Due righe in `impostazioni`, e solo la più vecchia conta per il saldo~~ → corretto il 25/08/2026
+**Cosa è cambiato**: `saldo_iniziale` portato al valore reale verificato sull'estratto (2.876,61 al 26/02/2025, giorno prima della prima riga di `spese`) e `valido_dal` da 2000-01-01 a 2025-02-26, che è la data a cui quel numero si riferisce davvero; allineata anche la seconda riga, così non restano due `saldo_iniziale` diversi in tabella. Resta da fare la parte di codice: `saldo_conto()` somma ancora tutto quello che trova invece di partire dalla data dell'apertura, quindi importare movimenti anteriori al 26/02/2025 li conterebbe due volte.
+
+### [2026-08-14] Due righe in `impostazioni`, e solo la più vecchia conta per il saldo
+**Cosa**: `impostazioni` ha due righe — `valido_dal` 2000-01-01 (percentuale 0,25) e 2026-02-25 (percentuale 0,35) — con lo **stesso** `saldo_iniziale` 2.869,54. `saldo_iniziale()` legge la riga con `valido_dal` più vecchio, ed è corretto così (è l'apertura). Ma il valore 2.869,54 è il saldo reale al **26/02/2025** (2.866,31 in banca, 3,23 di scarto), non al 2000-01-01: la data è un'etichetta che mente, e `spese` infatti comincia il 27/02/2025.
+**Perché si rompe**: due modi concreti. (1) Chi guarda la tabella non ha modo di sapere a che data si riferisce quell'importo — se un domani si importassero i movimenti 2024 (gli estratti ci sono), verrebbero sommati sopra un'apertura che li contiene già, e il saldo salterebbe di ~1.240 € senza nessun errore. (2) Aggiornare `saldo_iniziale` sulla riga **nuova** — la cosa naturale da fare, visto che è quella "valida oggi" — non cambia niente: l'app legge solo la più vecchia, e la modifica sparisce in silenzio.
+**Impatto**: nessun danno oggi; una trappola sicura al primo intervento sui dati storici o alla prima correzione dell'apertura.
+**Stato**: aperto. Minimo sindacale: portare `valido_dal` della prima riga a 2025-02-26 (è quello che il numero significa davvero) e mettere il valore esatto, 2.866,31. Meglio: che `saldo_conto()` parta da quella data invece di sommare tutto ciò che trova, così una riga più vecchia dell'apertura non può falsare il saldo.
 
 - 2026-08-12: KPI di `/spese/movimenti` troncati a 300 righe → totali sbagliati su periodi ampi. Fix: `totali_periodo()`/`righe_periodo()` senza tetto.
 - 2026-08-12: "Dalla P.IVA" sempre a zero (cercava `tipo='giroconto'`, mai scritto dai flussi automatici). Fix: sotto-totale per categoria, non per tipo.

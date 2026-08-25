@@ -138,6 +138,15 @@ DB = {
                        "vacanze": 1400.00, "regali": 400.00, "altro": 125.39},
     }],
     "b2f_webauthn_credentials": [],
+    # Il controllo contro l'estratto (README 8.12). Il primo e' allineato,
+    # il secondo no: cosi' la pagina Saldi mostra entrambi gli stati senza
+    # dover toccare i dati per vedere come si comporta l'avviso.
+    "b2f_saldi_verifica": [
+        {"id": 1, "conto": "personale", "data": "2026-08-25",
+         "saldo_banca": 7603.25, "note": "Estratto WeBank"},
+        {"id": 2, "conto": "piva", "data": "2026-08-25",
+         "saldo_banca": 1400.00, "note": "Saldo WeBank P.IVA"},
+    ],
 }
 
 # Le categorie del conto personale. `ordine` e' la vecchia disposizione
@@ -353,6 +362,12 @@ class _Query:
     def gte(self, col, val):
         self.filters.append(("gte", col, val)); return self
 
+    def gt(self, col, val):
+        self.filters.append(("gt", col, val)); return self
+
+    def lt(self, col, val):
+        self.filters.append(("lt", col, val)); return self
+
     def lte(self, col, val):
         self.filters.append(("lte", col, val)); return self
 
@@ -377,6 +392,8 @@ class _Query:
             if kind == "in" and v not in val: return False
             if kind == "gte" and (v is None or str(v) < str(val)): return False
             if kind == "lte" and (v is None or str(v) > str(val)): return False
+            if kind == "gt" and (v is None or str(v) <= str(val)): return False
+            if kind == "lt" and (v is None or str(v) >= str(val)): return False
         return True
 
     def execute(self):
