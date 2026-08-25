@@ -107,6 +107,34 @@ Il saldo dell'app passa da 3.763,56 a **2.091,18**, e lo scarto contro la banca 
 
 Sul secondo pezzo, quello che si vede già dal solo lato banca: nell'anno sono usciti verso Revolut **9.673,21** in 17 bonifici con causale `NOTPROVIDE`, contro **8.712,78** dichiarati in `risparmi_periodo` — **960,43 mai dichiarati**. Da solo questo renderebbe l'app *più alta* della banca di 960,43; siccome invece è *più bassa* di 822,71, convivono ~1.783 € di errori di segno opposto — cioè bonifici Revolut registrati **anche** come uscite in `spese` (lo stesso doppio conteggio già trovato sul bonifico di giugno 2026) e/o entrate mai registrate. Per separarli servono le righe di `spese` di quell'anno: il connettore Supabase si è disconnesso a metà lavoro e la query non è stata eseguita.
 
+**Riconciliazione finale, 25/08/2026 — l'anno 27/02/2025 → 26/02/2026.** 668 righe di banca contro 651 di `spese`: **accoppiate 638**. Lo scarto di −829,78 si scompone **al centesimo, senza residuo**:
+
+| voce | effetto su (app − banca) |
+|---|---|
+| l'ancora: `saldo_iniziale` 2.869,54 contro 2.876,61 reali al 26/02/2025 | −7,07 |
+| 8 bonifici Revolut (`NOTPROVIDE`) mai registrati | +8.465,21 |
+| 2 ricariche Revolut **con carta** mai registrate (20/05 e 11/06/2025, `REVOLUT**4658* DUBLIN IE`) | +612,38 |
+| 5 entrate mai registrate: 1.638,81 e 216,60 di accrediti Satispay, 15+15+23 di rimborsi da amici | −1.908,41 |
+| 14 uscite mai registrate (fra cui 126,87 e 1,07 in Giappone, un bonifico continuativo da 50) | +298,43 |
+| 13 righe di `spese` che in banca non esistono (quasi tutte senza descrizione, caricate il 30/12/2025; due sono la stessa spesa a un centesimo di distanza: 63,10 contro 63,11 e 8,29 contro 8,28) | −314,54 |
+| risparmi dichiarati nel periodo | −7.975,78 |
+| **totale** | **−829,78** |
+
+**La scoperta che spiega il meccanismo**: confrontando periodo per periodo il dichiarato con il bonifico Revolut realmente partito, **le dichiarazioni sono sistematicamente sfasate di un periodo**. Dichiarato 685 per il periodo che chiude il 22/06, e 685,00 partiti il 24/06; dichiarato 845 per il periodo del 23/06, e 845,00 partiti il 30/06; dichiarato 770,98 per il 30/06, e 770,98 partiti il 30/07. Non è un caso: si dichiara alla chiusura del periodo e si bonifica all'apertura del successivo. Il totale però non torna lo stesso — **nell'anno sono usciti verso Revolut 9.077,59 mai registrati in `spese`, contro 7.975,78 dichiarati: 1.101,81 non dichiarati da nessuna parte**. (Altri 1.202,00 di bonifici Revolut, del marzo-maggio 2025, sono invece registrati come normali uscite: quelli il saldo li toglie correttamente una volta sola.)
+
+**Cosa serve per chiudere**, con l'effetto di ciascun pezzo sul saldo:
+
+| intervento | righe | effetto |
+|---|---|---|
+| ancora: `impostazioni.saldo_iniziale` → 2.876,61, `valido_dal` → 2025-02-26 | 1 | +7,07 |
+| inserire le entrate mancanti | 5 | +1.908,41 |
+| inserire le uscite mancanti | 14 | −298,43 |
+| eliminare (o correggere di un centesimo) le righe che in banca non esistono | 13 | +314,54 |
+| portare il dichiarato totale a 9.077,59 | ~4 periodi | −1.101,81 |
+| **saldo app = saldo banca** | | **+829,78** |
+
+Nessuno dei pezzi da solo chiude: applicarne una parte sposta il saldo mostrato senza avvicinarlo al vero. Le 13 righe senza descrizione sono l'unico punto che richiede il giudizio dell'utente (spese in contanti mai passate dal conto, oppure doppioni).
+
 ### [2026-08-25] La dichiarazione di risparmio è datata all'inizio del periodo, non al giorno in cui il denaro esce
 **Cosa**: `risparmi_periodo` ha come chiave `data_bonifico`, cioè il giorno in cui **si apre** il periodo di paga, e `saldo_conto()` sottrae ogni dichiarazione con `data_bonifico <= al`. Ma il bonifico verso Revolut che quella dichiarazione rappresenta parte in un giorno qualsiasi *dentro* il periodo — di solito settimane dopo.
 **Perché si rompe**: caso reale di oggi. Il periodo aperto il 26/02/2026 dichiara 737,00; il bonifico vero è partito il **13/03/2026**. Dal 26/02 al 12/03 l'app sottrae dal saldo denaro che in banca c'è ancora: in quei 15 giorni il saldo mostrato è **737 € più basso del vero**. Non è un errore che si accumula (si riassorbe appena il bonifico parte), ma nella finestra è pieno.
