@@ -89,6 +89,10 @@ Entrambe le voci cadono per la stessa ragione: **sparisce la seconda strada**. N
 
 La migrazione è **a saldo invariato con qualsiasi versione del codice**, e non per caso: le uscite che inserisce (14.912,07 €) sono esattamente pari al risparmio dichiarato che azzera, nello stesso script. Si può quindi lanciare prima o dopo il deploy senza finestre in cui i numeri saltano.
 
+### ~~La tessera Revolut non diceva di che giorno era la fotografia~~ → corretto il 25/08/2026
+**Cosa era**: su `/saldi` la data dello snapshot compariva solo quando aveva più di 45 giorni. Le altre due tessere sono saldi calcolati a oggi; quella è una fotografia, e senza la data si legge come le altre — così uno scarto di pochi euro contro l'app Revolut sembra un errore dell'app, mentre è il mercato che si è mosso da allora.
+**Cosa è cambiato**: la data si dice sempre ("fotografia del …"), e oltre i 45 giorni resta l'avviso più forte. Il commit veniva dal branch `claude/app-audit-dropdown-sort-oigtqr`, rimasto fuori da ogni PR: recuperato con cherry-pick e portato in `main` insieme al resto.
+
 ### ~~Non c'è nessun controllo che guardi fuori dall'app~~ → aggiunto il 25/08/2026
 **Cosa era**: ogni totale dell'app è coerente per costruzione — torna con i movimenti perché dai movimenti è calcolato — e proprio per questo **nessun controllo interno può accorgersi di un movimento mai registrato**. È la ragione per cui uno scarto di 829,78 € è cresciuto per diciotto mesi in silenzio: non esisteva un solo numero di fonte esterna con cui confrontarsi.
 **Cosa è cambiato**: la tabella `b2f_saldi_verifica` (README §8.12) tiene il saldo dichiarato dalla banca, per conto e per data; `/saldi` ricalcola il proprio saldo **a quella data** e mostra il confronto, con la tolleranza di 1 € per gli arrotondamenti. Uno scarto si vede in giorni invece che in anni. Va alimentata a mano, dieci secondi ogni volta che si apre un estratto: è l'unico punto del sistema in cui un numero entra da fuori, e vale la pena che sia un gesto consapevole.
