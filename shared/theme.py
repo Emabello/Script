@@ -1008,7 +1008,66 @@ def _kpi_conto(saldo: dict, tipo: str) -> str:
     return f'<div class="grid kpi mb-4">{"".join(tiles)}</div>'
 
 
-def render_saldi_page(saldi: dict | None, coerenza_html: str = "") -> str:
+
+def _blocco_verifiche(verifiche: dict) -> str:
+    """
+    Il confronto fra quello che l'app calcola e quello che la banca
+    dichiara sull'estratto.
+
+    E' l'unico controllo del sistema che guarda **fuori da se stesso**.
+    Tutto il resto e' coerente per costruzione — i totali tornano con i
+    movimenti perche' dai movimenti sono calcolati — e proprio per
+    questo non puo' accorgersi di un movimento che non e' mai stato
+    registrato. Solo un numero di fonte bancaria puo' dirlo, e questo
+    riquadro e' il posto dove viene messo a confronto: uno scarto qui si
+    vede in giorni, non in diciotto mesi.
+    """
+    from .fmt import eur, data_it
+    if not verifiche:
+        return ""
+    righe = []
+    nomi = {"personale": "WeBank Personale", "piva": "WeBank P.IVA"}
+    for chiave, v in verifiche.items():
+        if not v:
+            continue
+        ok = v["allineato"]
+        cls = "pos" if ok else "neg"
+        vecchio = (v.get("giorni") or 0) >= 45
+        stato = ("coincide con l'estratto" if ok
+                 else f"scarto di € {eur(abs(v['scarto']))}")
+        quando = data_it(v["data"])
+        eta = (f' · l\'ultimo controllo ha {v["giorni"]} giorni'
+               if vecchio else "")
+        righe.append(
+            f'<div class="row"><span class="t">{nomi.get(chiave, chiave)}'
+            f'<span class="sub">estratto del {quando}: € {eur(v["saldo_banca"])}'
+            f' · l\'app allo stesso giorno: € {eur(v["saldo_app"])}{eta}</span></span>'
+            f'<span class="v tnum {cls}">{"✓" if ok else "€ " + eur(v["scarto"])}</span></div>')
+    if not righe:
+        return ""
+    tutti_ok = all(v["allineato"] for v in verifiche.values() if v)
+    testo = ("Ogni saldo qui sopra e' stato confrontato con l'ultimo estratto "
+             "registrato e coincide. E' l'unico controllo che guarda fuori "
+             "dall'app: i totali interni tornano sempre con i movimenti, ma "
+             "non possono accorgersi di un movimento mai registrato."
+             if tutti_ok else
+             "<strong>Un saldo non torna con l'estratto.</strong> Non e' un "
+             "errore di calcolo: e' un movimento che in banca c'e' e nell'app "
+             "no (o viceversa). Piu' presto si guarda, meno righe ci sono da "
+             "ripercorrere.")
+    return f'''
+    <div class="card mt-4">
+      <div class="card-head">
+        <div class="eyebrow">Controllo contro l'estratto</div>
+        <span class="chip {"pos" if tutti_ok else "neg"}">{"allineato" if tutti_ok else "da guardare"}</span>
+      </div>
+      <div class="rows detail">{"".join(righe)}</div>
+      <p class="small muted mt-3">{testo}</p>
+    </div>'''
+
+
+def render_saldi_page(saldi: dict | None, coerenza_html: str = "",
+                      verifiche: dict | None = None) -> str:
     """
     Pagina dedicata "Saldi": la stessa card che compare in cima alla
     home, ma raggiungibile dal menu senza passare da li' — utile mentre
@@ -1027,6 +1086,8 @@ def render_saldi_page(saldi: dict | None, coerenza_html: str = "") -> str:
         corpo = '<div class="empty">Saldi non disponibili.</div>'
     else:
         blocchi = [_blocco_saldi(saldi)]
+        if verifiche:
+            blocchi.append(_blocco_verifiche(verifiche))
         piva = saldi.get("piva") or {}
         pers = saldi.get("personale") or {}
         rev = saldi.get("revolut") or {}

@@ -215,7 +215,32 @@ def saldi_page():
                 coerenza_html = _riquadro_coerenza(coerenza(sb, saldi["revolut"]))
             except Exception:
                 coerenza_html = ""
-    html = render_saldi_page(saldi, coerenza_html)
+    # Il controllo contro l'estratto. Va fatto **alla data dell'estratto**,
+    # non a oggi: fra quel giorno e adesso ci sono movimenti veri, e la
+    # differenza non sarebbe un errore ma il normale scorrere del conto.
+    verifiche = {}
+    if is_configured() and saldi:
+        from spese import dati as personale
+        from fatture.fiscale import saldo_piva
+        sb2 = get_client()
+        try:
+            v = personale.ultima_verifica(sb2, "personale")
+            if v:
+                al = v["data"]
+                verifiche["personale"] = personale.verifica_saldo(
+                    sb2, "personale", personale.saldo_conto(sb2, al)["saldo"], al)
+        except Exception:
+            pass
+        try:
+            v = personale.ultima_verifica(sb2, "piva")
+            if v:
+                al = v["data"]
+                verifiche["piva"] = personale.verifica_saldo(
+                    sb2, "piva", saldo_piva(sb2, al)["saldo"], al)
+        except Exception:
+            pass
+
+    html = render_saldi_page(saldi, coerenza_html, verifiche)
     return Response(html, mimetype="text/html")
 
 

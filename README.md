@@ -89,7 +89,7 @@ nessun'altra pagina dava — `/spese` mostrava il saldo del mese e
 | Conto | Come si calcola | Chi lo calcola |
 |---|---|---|
 | P.IVA | entrate − uscite − giroconti al personale, su tutti i movimenti fino a oggi | `fatture/fiscale.py::saldo_piva` |
-| Personale | apertura (`impostazioni`, riga con `valido_dal` più vecchia) + entrate − uscite − **risparmio messo via** | `spese/dati.py::saldo_conto` |
+| Personale | apertura (`impostazioni`, riga con `valido_dal` più vecchia) + entrate − uscite, **sui soli movimenti successivi alla data dell'apertura** | `spese/dati.py::saldo_conto` |
 | Revolut | l'ultimo snapshot registrato: liquidità + risparmi + investimenti | `spese/revolut.py::saldo_revolut` |
 
 **Il denaro non si crea né sparisce fra un conto e l'altro**, e i saldi lo
@@ -172,19 +172,35 @@ sempre a quando risale, e da 45 giorni in su lo segnala.
 API JSON: `/spese/api/revolut` (GET, POST), `/spese/api/revolut/leggi`
 (POST multipart, legge e basta).
 
-#### Il risparmio esce dal conto personale
+#### Il risparmio è un movimento come gli altri
 
-`v_risparmi_mese` calcola il saldo corrente così:
+Un bonifico verso i salvadanai è un'uscita dal conto: una riga di `spese`
+con categoria **Risparmi** e la data vera del bonifico. Niente di
+speciale, ed è il punto.
 
-```
-delta = bonifico + altre_entrate − speso − effettivo_risparmio
-```
+Fino ad agosto 2026 non era così: quel denaro usciva dal saldo tramite
+`risparmi_periodo`, un numero digitato a mano al posto del movimento
+bancario. Le due strade convivevano — alcuni bonifici erano registrati
+come uscite, altri solo dichiarati, qualcuno **tutti e due**, qualcuno
+**nessuno dei due** — e niente diceva quale valesse per quale. In
+diciotto mesi lo scarto contro l'estratto era arrivato a **829,78 €**, in
+due direzioni opposte che si mascheravano a vicenda: nessun errore
+visibile, nessuna riga rossa, solo un numero plausibile e sbagliato.
 
-Quel `− effettivo_risparmio` dice una cosa precisa: **il risparmio che
-registri non è una riga di `spese`, è denaro che lascia il conto** e va
-nei salvadanai. `spese/dati.py::saldo_conto` lo sottrae allo stesso modo;
-chi calcolasse il saldo come `apertura + entrate − uscite` conterebbe due
-volte tutto ciò che hai risparmiato dall'inizio.
+La regola che chiude il buco per costruzione:
+
+> **Il saldo di un conto si calcola solo dai movimenti di quel conto.**
+> Ogni euro che esce lascia una riga. Nessuna eccezione, nessun termine
+> correttivo, nessuna dichiarazione a mano.
+
+`risparmi_periodo` resta quello che è davvero — il *quanto volevo mettere
+via* di ogni periodo, che la pagina Risparmi confronta con quanto è
+uscito davvero — e non tocca più nessun saldo. `v_risparmi_mese` legge il
+risparmio effettivo dai movimenti (uscite categoria Risparmi meno i
+rientri), ed esclude quelle uscite da "Totale Speso": mettere da parte
+non è spendere.
+
+Vedi [§ 8.11](#811--i-risparmi-diventano-movimenti-veri-necessaria).
 
 #### I salvadanai sono già le categorie dell'app
 
@@ -1051,6 +1067,231 @@ usa `service_role` (vedi [Sicurezza](#9-sicurezza)).
 È facoltativo: senza, resta il totale.
 
 ---
+
+### 8.11 — I risparmi diventano movimenti veri (**necessaria**)
+
+È la migrazione che chiude per costruzione il buco costato 829,78 € di
+scarto in diciotto mesi. Fino a oggi il denaro che va nei salvadanai
+usciva dal saldo in **due modi diversi e incompatibili**: come normale
+uscita in `spese`, oppure come numero digitato a mano in
+`risparmi_periodo` — e niente diceva quale valesse per quale bonifico.
+Alcuni erano tolti una volta, alcuni due, alcuni mai.
+
+Dopo questa migrazione ce n'è **uno solo**: i bonifici verso Revolut
+sono righe di `spese` come tutte le altre, categoria "Risparmi", con la
+data vera del bonifico. Il saldo del conto torna a essere
+`apertura + entrate − uscite`, la stessa formula della banca.
+
+**È a saldo invariato con qualsiasi versione del codice**, e non per
+caso: le uscite che inserisce (14.912,07 €) sono esattamente pari al
+risparmio dichiarato che azzera. Si può quindi lanciare prima o dopo il
+deploy, senza finestre in cui i numeri saltano.
+
+```sql
+-- 1. la categoria
+insert into cfg_categorie (nome) values ('Risparmi')
+on conflict (nome) do nothing;
+
+insert into cfg_categoria_sottocategoria (categoria_id, sottocategoria_id)
+select c.id, null from cfg_categorie c where c.nome = 'Risparmi'
+on conflict do nothing;
+
+-- 2. i bonifici verso Revolut che non erano mai stati registrati.
+--    Idempotente: il `where not exists` impedisce il doppio inserimento
+--    se la migrazione viene rilanciata.
+do $$
+declare
+  link uuid;
+  r record;
+begin
+  select l.id into link
+    from cfg_categoria_sottocategoria l
+    join cfg_categorie c on c.id = l.categoria_id
+   where c.nome = 'Risparmi' and l.sottocategoria_id is null;
+
+  for r in
+    select * from (values
+      (date '2025-05-20',  412.38, 'uscita',  'Ricarica Revolut con carta'),
+      (date '2025-05-30', 2242.25, 'uscita',  'Bonifico a Revolut'),
+      (date '2025-06-11',  200.00, 'uscita',  'Ricarica Revolut con carta'),
+      (date '2025-06-24',  685.00, 'uscita',  'Bonifico a Revolut'),
+      (date '2025-06-30',  845.00, 'uscita',  'Bonifico a Revolut'),
+      (date '2025-07-30',  770.98, 'uscita',  'Bonifico a Revolut'),
+      (date '2025-08-28',  770.98, 'uscita',  'Bonifico a Revolut'),
+      (date '2025-10-01',  670.00, 'uscita',  'Bonifico a Revolut'),
+      (date '2025-12-01', 1311.00, 'uscita',  'Bonifico a Revolut'),
+      (date '2026-01-07', 1170.00, 'uscita',  'Bonifico a Revolut'),
+      (date '2026-03-13',  737.00, 'uscita',  'Bonifico a Revolut'),
+      (date '2026-04-02', 2040.00, 'uscita',  'Bonifico a Revolut'),
+      (date '2026-05-27',  430.17, 'uscita',  'Bonifico a Revolut'),
+      (date '2026-05-27',  430.17, 'entrata', 'Rientro da Revolut'),
+      (date '2026-06-11',  600.00, 'uscita',  'Bonifico a Revolut'),
+      (date '2026-07-09', 2457.48, 'uscita',  'Bonifico a Revolut')
+    ) as v(d, imp, tp, descr)
+  loop
+    if not exists (select 1 from spese s
+                    where s.data = r.d and s.importo = r.imp
+                      and s.tipo = r.tp and s.categoria_link_id = link) then
+      perform insert_spesa_first_free_id(
+        p_anno := extract(year from r.d)::int,
+        p_mese := extract(month from r.d)::int,
+        p_data := r.d, p_importo := r.imp, p_tipo := r.tp,
+        p_metodo_pagamento := 'Estratto WeBank',
+        p_categoria_link_id := link, p_descrizione := r.descr);
+    end if;
+  end loop;
+
+  -- 3. i bonifici Revolut gia' registrati come normali uscite: cambia
+  --    solo la categoria, il saldo non si muove. Servono a v_risparmi_mese
+  --    per non contarli come spesa.
+  update spese set categoria_link_id = link
+   where categoria_link_id <> link
+     and (data, importo, tipo) in (
+       (date '2025-03-07', 500.00, 'uscita'), (date '2025-03-07', 140.00, 'uscita'),
+       (date '2025-03-13', 250.00, 'uscita'), (date '2025-04-14',  20.00, 'uscita'),
+       (date '2025-05-02', 225.00, 'uscita'), (date '2025-05-05',  67.00, 'uscita'),
+       (date '2026-08-03', 150.00, 'entrata'));
+end $$;
+
+-- 4. `risparmi_periodo` smette di essere una fonte per il saldo: resta
+--    la tabella del "quanto volevo mettere via", che la pagina Risparmi
+--    confronta col risparmiato vero. Azzerarlo qui, nello stesso script
+--    che ha inserito i movimenti, e' cio' che rende la migrazione a
+--    saldo invariato: quello che smette di essere sottratto da un lato
+--    ricompare come uscita dall'altro, allo stesso centesimo.
+update risparmi_periodo set effettivo_risparmio = 0;
+```
+
+Poi la vista, che deve leggere il risparmio effettivo **dai movimenti**
+invece che dalla dichiarazione — e togliere quelle uscite da "Totale
+Speso", altrimenti il risparmio consigliato verrebbe calcolato su una
+base già decurtata di quanto hai messo via:
+
+```sql
+create or replace view v_risparmi_mese as
+with per as (
+  select ps.data_bonifico, ps.importo_bonifico, ps.prossimo_bonifico, ps.fine_periodo
+    from v_periodi_stipendio ps
+), agg as (
+  select per.data_bonifico, per.prossimo_bonifico, per.fine_periodo, per.importo_bonifico,
+         round(coalesce(sum(case when vs.tipo='uscita' and vs.categoria='Fisso'
+                                 then vs.importo else 0 end),0),2) as totale_fisso,
+         round(coalesce(sum(case when vs.tipo='uscita' and vs.categoria='Personale'
+                                 then vs.importo else 0 end),0),2) as totale_personale,
+         round(coalesce(sum(case when vs.tipo='uscita' and vs.categoria='Benzina'
+                                 then vs.importo else 0 end),0),2) as totale_benzina,
+         round(coalesce(sum(case when vs.tipo='uscita' and vs.categoria='Viaggi'
+                                 then vs.importo else 0 end),0),2) as totale_viaggi,
+         -- "Speso" esclude i Risparmi: mettere da parte non e' spendere
+         round(coalesce(sum(case when vs.tipo='uscita'
+                                  and coalesce(vs.categoria,'') <> 'Risparmi'
+                                 then vs.importo else 0 end),0),2) as totale_speso,
+         round(coalesce(sum(case when vs.tipo='entrata'
+                                  and vs.categoria not in ('Stipendio','Giroconto P.IVA','Risparmi')
+                                 then vs.importo else 0 end),0),2) as totale_altre_entrate,
+         -- il risparmio vero: uscite verso i salvadanai meno i rientri
+         round(coalesce(sum(case when coalesce(vs.categoria,'') = 'Risparmi'
+                                 then case when vs.tipo='uscita' then vs.importo
+                                           else -vs.importo end
+                                 else 0 end),0),2) as effettivo_risparmio
+    from per
+    left join v_spese vs on vs.data >= per.data_bonifico and vs.data <= per.fine_periodo
+   group by per.data_bonifico, per.prossimo_bonifico, per.fine_periodo, per.importo_bonifico
+), calc as (
+  select a.*, p.saldo_iniziale, p.percentuale_risparmio, p.perc_fondo_emergenze,
+         p.perc_viaggi, p.perc_fondo_casa, p.perc_regali, p.perc_altro,
+         sum(a.importo_bonifico + a.totale_altre_entrate - a.totale_speso
+             - a.effettivo_risparmio)
+           over (order by a.data_bonifico rows unbounded preceding) as running_delta
+    from agg a
+    cross join lateral (
+      select i.saldo_iniziale, i.percentuale_risparmio, i.perc_fondo_emergenze,
+             i.perc_viaggi, i.perc_fondo_casa, i.perc_regali, i.perc_altro
+        from impostazioni i where i.valido_dal <= a.data_bonifico
+       order by i.valido_dal desc limit 1) p
+), bal as (
+  select c.*, coalesce(lag(c.running_delta) over (order by c.data_bonifico), 0)
+              as running_delta_prev
+    from calc c
+), outt as (
+  select bal.*,
+         round((bal.saldo_iniziale + bal.running_delta_prev)::numeric, 2)
+           as importo_prima_del_bonifico,
+         (bal.saldo_iniziale + bal.running_delta_prev + bal.importo_bonifico
+          + bal.totale_altre_entrate - bal.totale_speso) as base_calcolo
+    from bal
+)
+select importo_prima_del_bonifico as "Importo Prima Del Bonifico",
+       importo_prima_del_bonifico as "Importo Prima Del Bonifico (dup)",
+       data_bonifico              as "Data bonifico",
+       prossimo_bonifico          as "Data prossimo bonifico",
+       to_char(data_bonifico, 'TMmonth') as "Mese",
+       round(importo_bonifico::numeric, 2) as "Importo Bonifico",
+       totale_fisso     as "Totale Fisso",
+       totale_personale as "Totale Personale",
+       totale_benzina   as "Totale Benzina",
+       totale_viaggi    as "Totale Viaggi",
+       totale_speso     as "Totale Speso",
+       totale_altre_entrate as "Totale Altre Entrate",
+       round(importo_bonifico + totale_altre_entrate - totale_speso, 2)
+         as "Totale Rimanente",
+       round(greatest(base_calcolo * percentuale_risparmio, 0)::numeric, 2)
+         as "Risparmio consigliato (€)",
+       effettivo_risparmio as "Risparmio effettivo (€)",
+       round((base_calcolo - effettivo_risparmio)::numeric, 2)
+         as "Totale Rimanente (finale)",
+       round((effettivo_risparmio * perc_fondo_emergenze)::numeric, 2) as "Quota Fondo Emergenze",
+       round((effettivo_risparmio * perc_viaggi)::numeric, 2)          as "Quota Viaggi",
+       round((effettivo_risparmio * perc_fondo_casa)::numeric, 2)      as "Quota Fondo Casa",
+       round((effettivo_risparmio * perc_regali)::numeric, 2)          as "Quota Regali",
+       round((effettivo_risparmio * perc_altro)::numeric, 2)           as "Quota Altro",
+       fine_periodo as "_Fine periodo (debug)"
+  from outt
+ order by data_bonifico;
+```
+
+Verifica — il saldo prima e dopo deve essere identico (3.259,04 al
+25/08/2026), e il totale dichiarato deve essere zero:
+
+```sql
+select (select round(sum(effettivo_risparmio::numeric),2) from risparmi_periodo) as dichiarato_deve_essere_zero,
+       (select round(sum(case when tipo='uscita' then importo else -importo end),2)
+          from v_spese where categoria='Risparmi') as uscito_verso_i_salvadanai;
+```
+
+### 8.12 — Il controllo contro l'estratto (**necessaria**)
+
+La tabella dove si scrive, ogni tanto, il saldo che la banca dichiara.
+È l'unico numero di **fonte esterna** in tutto il sistema: tutto il
+resto è coerente per costruzione — i totali tornano coi movimenti
+perché dai movimenti sono calcolati — e proprio per questo non può
+accorgersi di un movimento mai registrato. `/saldi` confronta i due e
+lo dice a schermo.
+
+```sql
+create table if not exists b2f_saldi_verifica (
+  id          bigserial primary key,
+  conto       text        not null check (conto in ('personale', 'piva')),
+  data        date        not null,
+  saldo_banca numeric(12,2) not null,
+  note        text,
+  created_at  timestamptz not null default now(),
+  unique (conto, data)
+);
+
+alter table b2f_saldi_verifica enable row level security;
+
+-- I due controlli gia' fatti in questa sessione, con gli estratti veri
+insert into b2f_saldi_verifica (conto, data, saldo_banca, note) values
+  ('personale', '2026-08-25', 3259.04, 'Estratto WeBank, riconciliazione riga per riga'),
+  ('piva',      '2026-08-25', 1506.15, 'Verificato sul saldo WeBank del conto P.IVA')
+on conflict (conto, data) do update
+  set saldo_banca = excluded.saldo_banca, note = excluded.note;
+```
+
+**Ogni volta che apri l'estratto**, aggiungi una riga: sono dieci
+secondi, e sono la differenza fra accorgersi di uno scarto in una
+settimana o in un anno e mezzo.
 
 ## 9. Sicurezza
 
