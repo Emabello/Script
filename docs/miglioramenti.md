@@ -72,6 +72,30 @@ Il saldo dell'app passa da 3.763,56 a **2.091,18**, e lo scarto contro la banca 
 
 **Attenzione a come si legge il numero adesso**: la pagina Saldi mostra meno di quello che c'è in banca, non più. Non è un peggioramento, è lo stesso errore di prima con l'altro pezzo tolto di mezzo: restano da correggere le 16 righe mancanti pre-30/06 e le altre voci di quella tabella. Fino ad allora il saldo del conto personale resta indicativo.
 
+**Seconda riconciliazione, 25/08/2026 — periodo 27/02/2026 → 30/06/2026 (estratto WeBank, 281 righe).** Accoppiate **275 su 281**. Le sei righe rimaste, più una di `spese`, spiegano tutto:
+
+| riga di banca | in `spese`? | effetto |
+|---|---|---|
+| 13/03 −737,00 "favore emanuele bellotti **notprovide**" | no | bonifico a Revolut |
+| 02/04 −2.040,00 idem | no | bonifico a Revolut |
+| 27/05 −430,17 idem, e **+430,17 rientrato lo stesso giorno** ("BON.DA EMANUELE BELLOTTI RISPARMI", rif. `PY05Q…` = Revolut) | nessuna delle due | netto zero |
+| 11/06 −600,00 idem | **sì**, id 899 | bonifico a Revolut, ma registrato come uscita |
+| 30/03 due pagamenti da −4,50 | registrati come **una** riga da 9,00 (id 727) | netto zero |
+
+**La discriminante è nella causale**, e vale su tutto lo storico: i bonifici verso Revolut sono `vostra disposizione … favore emanuele bellotti notprovide` (minuscolo, importi grossi, canale diverso); i `VS.DISP. RIF. … FAVORE EMANUELE BELLOTTI . NR. BONIFICO SEPA` (maiuscolo, 50,00 ogni mese) sono il giroconto ricorrente su **HYPE**, e quelli sono sempre registrati come uscite. Nel periodo 27/02 → 25/08 i bonifici Revolut sono esattamente cinque: 737,00 · 2.040,00 · 430,17 (tornato indietro) · 600,00 · 2.457,48. Nessuna ricarica Revolut con carta.
+
+**Correzioni applicate** (stessa regola scelta dall'utente: quello che va su Revolut è risparmio, si dichiara e non si registra come uscita):
+
+| periodo | prima | dopo | perché |
+|---|---|---|---|
+| 2026-02-26 | 680,00 | **737,00** | bonifico del 13/03 |
+| 2026-04-01 | 760,00 | **2.040,00** | bonifico del 02/04 |
+| 2026-04-29 | 696,46 | **0** | l'unico bonifico del periodo è rientrato lo stesso giorno |
+| 2026-06-01 | 978,62 | **600,00** | bonifico dell'11/06 |
+| `spese` id 899 | 600,00 uscita 11/06 (`categoria_link_id` `dfc2a0e0-8fff-4c12-a923-99304a0790f8`, metodo Webank) | **eliminata** | era lo stesso bonifico contato una seconda volta come uscita |
+
+**Risultato: lo scarto è ora costante a −829,78 sia al 30/06 sia al 25/08.** Un residuo che non cambia più fra due date lontane due mesi significa che **da fine febbraio 2026 in poi app e banca si muovono in perfetto passo**: tutto l'errore rimasto è anteriore al 27/02/2026. Previsione verificabile: il saldo WeBank al 26/02/2026 deve essere **3.245,67** (l'app dice 2.415,89). Per chiudere serve l'estratto **27/02/2025 → 26/02/2026**, l'unico anno mai riconciliato riga per riga.
+
 ### [2026-08-14] `risparmi_periodo` è una dichiarazione a mano che sostituisce movimenti veri, e la regola non è applicata in modo uniforme
 **Cosa**: i bonifici verso i conti propri (Revolut) dovrebbero uscire dal saldo non come movimenti ma tramite `risparmio_totale()`, la somma di `risparmi_periodo.effettivo_risparmio` — un movimento bancario certo sostituito da un numero digitato a mano. Sui dati reali, dal 27/02/2025 al 30/06/2026 sono usciti **13.139,38 €** in 29 bonifici, e i due trattamenti convivono: 12 bonifici (11.722,38 €) non sono in `spese` e vengono tolti solo dal risparmio dichiarato; gli altri 17 (1.417,00 € — gli ordini permanenti da 50 € e due bonifici singoli) sono registrati come normali uscite. Tolto dal saldo in tutto: 11.090,86 dichiarati + 1.417,00 registrati = 12.507,86 contro 13.139,38 usciti davvero. **Residuo: 631,52 €** che restano nel saldo senza esistere in banca.
 **Perché si rompe**: ogni euro trasferito su Revolut e non dichiarato come risparmio resta nel saldo WeBank **per sempre**, e nessuno può accorgersene: il movimento bancario che proverebbe l'uscita è stato escluso apposta da `spese`. È il solo punto del sistema in cui un numero di *fonte bancaria* viene rimpiazzato da un numero di *fonte umana* senza un confronto fra i due — e la pagina Risparmi confronta il dichiarato con i salvadanai Revolut, cioè con un'altra dichiarazione, non con i bonifici. Peggio: poiché una parte dei bonifici *è* registrata come uscita, se quegli stessi importi finissero anche dentro un `effettivo_risparmio` verrebbero tolti due volte. Le due strade coesistono e niente dice quale valga per quale bonifico.
