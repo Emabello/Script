@@ -1177,7 +1177,15 @@ Speso", altrimenti il risparmio consigliato verrebbe calcolato su una
 base già decurtata di quanto hai messo via:
 
 ```sql
-create or replace view v_risparmi_mese as
+-- DROP e non "create or replace": PostgreSQL con REPLACE puo' solo
+-- aggiungere colonne in coda, non inserirne una in mezzo — e qui
+-- "Risparmio effettivo (€)" va prima di "Totale Rimanente (finale)".
+-- Con REPLACE si prende un 42P16 ("cannot change name of view column").
+-- Nessuna altra vista dipende da questa, quindi il drop e' sicuro; i
+-- GRANT in fondo rimettono i permessi, che il drop porta via con se'.
+drop view if exists v_risparmi_mese;
+
+create view v_risparmi_mese as
 with per as (
   select ps.data_bonifico, ps.importo_bonifico, ps.prossimo_bonifico, ps.fine_periodo
     from v_periodi_stipendio ps
@@ -1257,6 +1265,9 @@ select importo_prima_del_bonifico as "Importo Prima Del Bonifico",
        fine_periodo as "_Fine periodo (debug)"
   from outt
  order by data_bonifico;
+
+-- Il drop si porta via i permessi: l'app legge con la chiave anon.
+grant select on v_risparmi_mese to anon, authenticated;
 ```
 
 Verifica — il saldo prima e dopo deve essere identico (3.259,04 al
