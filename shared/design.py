@@ -110,6 +110,11 @@ CSS = _FONT_FACES + r"""
   /* --- Tipografia ---------------------------------------------------- */
   --sans:Inter,system-ui,-apple-system,sans-serif;
   --display:'Instrument Serif',Georgia,serif;
+  /* Il monospaziato non e' un carattere nostro: e' quello di sistema, a
+     costo zero di byte. Serve dove il testo fa il verso a un terminale
+     (la tenda di caricamento) e dove le cifre devono incolonnarsi in
+     uno spazio stretto. */
+  --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace;
 
   /* --- Layout -------------------------------------------------------- */
   --rail-w:248px;

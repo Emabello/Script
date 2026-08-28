@@ -7,6 +7,9 @@ Route:
   /fatture, /spese        -> Blueprint delle sotto-app
   /api/kpi/fatture        -> KPI async per la launchpad
   /api/kpi/spese          -> KPI async per la launchpad
+  /attesa                 -> tenda mosaico, servita dal service worker
+                             mentre Render risveglia il container
+  /ping                   -> "sono sveglio", per la pagina d'attesa
   /health                 -> stato tabelle Supabase
 
 La radice / mostra la launchpad. Il timesheet e' stato spostato su /ore
@@ -26,6 +29,7 @@ from fatture.costanti import STATI_EMESSE
 from spese import spese_bp
 from shared.webauthn import webauthn_bp
 
+from shared.caricamento import render_attesa
 from shared.theme import render_launchpad, render_saldi_page
 from shared.supabase_client import get_client, is_configured
 
@@ -58,7 +62,46 @@ xs_server.ALLOW_NO_PIN.update({
     "webauthn.webauthn_auth_begin",
     "webauthn.webauthn_auth_complete",
     "webauthn.webauthn_status",
+    # La tenda d'attesa non mostra dati: deve caricarsi anche a sessione
+    # bloccata, ed e' quella che il service worker si mette in cache.
+    "attesa",
+    "ping",
 })
+
+
+@app.after_request
+def _firma_risposta(resp):
+    """
+    Ogni risposta dell'app porta questa firma.
+
+    Serve al service worker (shared/caricamento.py): quando il container
+    dorme, a rispondere e' il proxy di Render con la sua schermata di
+    caricamento — stesso URL, stesso 200, HTML loro. L'header e' il solo
+    modo onesto di distinguere "ha risposto l'app" da "ha risposto
+    qualcun altro al posto suo": se manca, il worker serve la nostra
+    pagina d'attesa dalla cache.
+    """
+    resp.headers["X-B2F"] = "hub"
+    return resp
+
+
+@app.get("/ping")
+def ping():
+    """Battito per la pagina d'attesa: nessuna query, solo "ci sono"."""
+    return jsonify({"b2f": "sveglio"})
+
+
+@app.get("/attesa")
+def attesa():
+    """
+    La tenda mosaico da sola, senza app intorno.
+
+    Non ci si arriva navigando: la serve il service worker dalla cache
+    quando la richiesta non trova l'app. La rotta esiste perche' il
+    worker possa metterla in cache all'installazione.
+    """
+    return Response(render_attesa(), mimetype="text/html",
+                    headers={"Cache-Control": "no-store"})
 
 
 def _greet_name() -> str:

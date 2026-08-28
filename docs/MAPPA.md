@@ -30,6 +30,7 @@ Ultimo aggiornamento: 2026-08-14 · 35 file di codice e configurazione.
 | Ordinare le voci di un menù | `shared/ordina.py` — alfabetico per descrizione |
 | Il PDF facsimile | `shared/pdfgen.py` |
 | Guardare le schermate senza DB | `tools/preview.py` |
+| La schermata d'attesa, il service worker | `shared/caricamento.py` |
 
 ---
 
@@ -441,6 +442,38 @@ client desktop.
   shell senza toccarne la logica (sostituisce `<div class="wrap">`).
 - `_PIN_GATE`: overlay di sblocco, iniettato in ogni pagina. Intercetta
   anche le `fetch` che rispondono 401 e si riapre.
+
+### `shared/caricamento.py` — 997 righe · la tenda mosaico
+
+La schermata di caricamento che prende il posto di quella di Render
+quando il container si sveglia dal letargo. Tre pezzi:
+
+- `SERVICE_WORKER` / `service_worker_js()` — servito su `/sw.js` (la rotta
+  vive in `xs_server.py`). Intercetta le navigazioni: se la risposta non
+  porta l'header `X-B2F` non è l'app che ha risposto, e allora serve
+  `/attesa` dalla cache. Tiene in cache anche i due font, se no a server
+  spento la tenda resterebbe senza caratteri.
+- `render_attesa()` — la pagina d'attesa (rotta `/attesa` in `app.py`).
+  Compone il mosaico mentre bussa a `/ping`; quando l'app risponde lascia
+  in `sessionStorage` il flag e il **seme**, e ricarica.
+- `tenda_html()` + `TENDA_CSS` + `TENDA_JS` + `TENDA_BOOT` — la stessa
+  tenda dentro l'app. Il markup sta in ogni pagina ma si accende solo
+  dove serve: la home (`tenda=True`) e il ritorno dall'attesa.
+
+Il mosaico lo costruisce il JS, non il server: fino a 4.000 tessere, la
+griglia calcolata sullo schermo vero. Colori e disegno nascono da un seme
+(mulberry32): cinque generatori — onde, raggi, blocchi, intreccio, dune —
+e una rampa di venti tinte che va da un colore appena diverso dal
+secondario del tema fino, al massimo, all'accento. Quadro diverso a ogni
+avvio; identico fra attesa e app, perché il seme passa di mano.
+
+> **Trappola**: `TENDA_BOOT` non va incluso nella pagina d'attesa —
+> alzerebbe la tenda appena la pagina è pronta, cioè subito, mentre il
+> server sta ancora dormendo. Lo esclude `page_head(attesa=True)`.
+
+> **Trappola**: in tema chiaro la regola della tessera spenta ha un
+> attributo in più di quella della tessera accesa. Senza `:not(.on)`
+> vincerebbe per specificità e il quadro resterebbe grigio.
 
 ### `shared/ordina.py` — 53 righe · l'ordine dei menù
 

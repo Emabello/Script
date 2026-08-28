@@ -82,6 +82,9 @@ come), **Stato**.
 
 ## Fatti (storico — per non riproporli)
 
+### ~~La tenda d'attesa dipendeva da due nomi di endpoint scritti in un altro file~~ → chiusa il 28/08/2026
+**Cosa è cambiato**: la schermata d'attesa (`shared/caricamento.py`) vive in cache e serve proprio quando il server non risponde, quindi non poteva reggersi su `xs_server.ALLOW_NO_PIN`, che è un insieme di *nomi di funzione*: bastava rinominare `attesa()` o `ping()` perché il gate ricominciasse a proteggerle, senza che niente lo segnalasse. Due danni concreti, tutti e due invisibili finché l'app resta sveglia: in cache sarebbe finita la shell del PIN al posto della tenda (e a servizio spento quel gate non si può nemmeno aprire — schermo vuoto, nessun risveglio), e il battito avrebbe visto `401` invece del risveglio, restando ad aspettare un'app già in piedi. Ora il service worker mette in cache `/attesa` **solo se dentro c'è davvero la tenda** (`id="tendaMetro"`, che esiste solo lì — il mosaico invece sta in ogni pagina), e il battito considera sveglia qualunque risposta che porti l'header `X-B2F` — `401` compreso, lasciando che sia il gate della pagina vera a chiedere il codice. Il segnale non dipende più da un nome scritto altrove.
+
 ### ~~`docs/schema_supabase.md` non riflette le migrazioni 8.7-8.9, né `b2f_revolut`~~ → chiusa il 25/08/2026
 **Cosa è cambiato**: snapshot riverificato campo per campo contro il database vivo con il connettore MCP di Supabase (non più l'export testuale di §8.5): allineate `v_risparmi_mese` e `v_periodi_stipendio`, aggiunte `b2f_revolut` e `b2f_saldi_verifica` che mancavano, promossa a vincolo la nota su `b2f_fatture_spesa_piva_id_fkey` (§8.6, ora esiste), corretti i due nomi di FK troncati dal vecchio export su `cfg_categoria_sottocategoria`. Colonne, vincoli, indici, funzioni, trigger e RLS di tutte le tabelle coincidono con il database.
 
