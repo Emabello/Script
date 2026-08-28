@@ -58,6 +58,7 @@ spese/                 area conto personale
 shared/                pezzi comuni
   design.py              design system: token, CSS, icone
   theme.py               scheletro di pagina, navigazione, tema chiaro/scuro
+  caricamento.py         la tenda mosaico: schermata d'attesa e service worker
   fmt.py                 formattatori italiani (euro, percentuali, date)
   pdfgen.py              generazione del facsimile PDF (jsPDF nel browser)
   supabase_client.py     client Supabase
@@ -1359,6 +1360,45 @@ WebAuthn resta `http://` e la verifica fallisce.
 avvio `gunicorn -w 1 app:app`.
 
 **Un solo worker è voluto:** la sessione sta in memoria.
+
+### La tenda d'attesa (il risveglio di Render)
+
+Il piano gratuito manda il container in letargo dopo un quarto d'ora
+senza richieste. La prima richiesta dopo il letargo paga il risveglio —
+una ventina di secondi buoni — e in quella finestra a rispondere è il
+proxy di Render, con la **sua** schermata di caricamento: marchio loro,
+log del loro deploy, invito a costruire su Render. Era l'unica schermata
+dell'app che non era dell'app.
+
+Non si può sostituirla dal server (quando risponde Render il nostro
+processo non c'è ancora), ma si può rispondere **prima** di Render:
+
+1. Ogni risposta dell'app porta l'header **`X-B2F: hub`** (`app.py`,
+   `_firma_risposta`). È l'unico modo onesto di distinguere "ha risposto
+   l'app" da "ha risposto qualcun altro al posto suo": si riconosce il
+   nostro, non l'HTML altrui — quello cambia quando vogliono loro.
+2. Il **service worker** (`/sw.js`, generato da
+   `shared/caricamento.py`) intercetta le navigazioni. Se la risposta non
+   ha quell'header — interstiziale di Render, 502, rete assente — serve
+   dalla cache **`/attesa`**, la nostra tenda.
+3. La tenda bussa a **`/ping`** ogni due secondi. Quando risponde
+   davvero l'app, ricarica la pagina: il mosaico resta giù, e si alza da
+   dentro l'app un attimo dopo. Un movimento solo, non due schermate.
+
+Cosa serve saperne:
+
+- **Vale dalla seconda visita.** Il worker si installa mentre l'app è
+  viva; la primissima apertura su un dispositivo nuovo vede ancora Render.
+- **`/attesa` e `/ping` restano fuori dal PIN** (`ALLOW_NO_PIN`): la tenda
+  non mostra dati, e deve poter essere messa in cache anche a sessione
+  bloccata. Se un giorno si rinominano quelle funzioni, il gate ricomincia
+  a proteggerle e in cache finisce la schermata del PIN al posto della
+  tenda.
+- **La cache si chiama con l'impronta della tenda** (`_versione()`):
+  cambiando il disegno cambia `/sw.js`, il browser reinstalla il worker e
+  la vecchia cache viene buttata. Nessun ricordo da svuotare a mano.
+- **Funziona anche offline**: senza rete la tenda compare lo stesso, e
+  quando la rete torna entra da sola.
 
 ### In locale
 

@@ -272,8 +272,14 @@ def appleicon():
 
 @app.get("/sw.js")
 def sw():
-    js = "self.addEventListener('fetch', e => {});"
-    return Response(js, mimetype="application/javascript")
+    """
+    Il service worker vero (era un guscio vuoto): serve la tenda mosaico
+    quando l'app non risponde, invece della schermata di Render. Il
+    codice sta in shared/caricamento.py, insieme alla tenda.
+    """
+    from shared.caricamento import service_worker_js
+    return Response(service_worker_js(), mimetype="application/javascript",
+                    headers={"Cache-Control": "no-cache"})
 
 
 # ===================== Integrazione Google Calendar =====================

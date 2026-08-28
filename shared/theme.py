@@ -18,6 +18,7 @@ Aggiunte:
     app_shell(...)               -> shell completa attorno a un contenuto
 """
 from .design import CSS, FONT_FILES, ACCENTI, icon
+from .caricamento import TENDA_CSS, TENDA_JS, TENDA_BOOT, tenda_html
 
 # ---------------------------------------------------------------------------
 # Navigazione: unica sorgente di verita' per sidebar e tab bar.
@@ -61,11 +62,12 @@ _THEME_BOOTSTRAP = """<script>
 
 
 _HEAD = """<!DOCTYPE html>
-<html lang="it">
+<html lang="it"__HTMLATTR__>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 __BOOTSTRAP__
+__TENDA__
 <title>__TITLE__</title>
 <meta name="theme-color" content="#0c0d10" id="metaThemeColor">
 <meta name="color-scheme" content="dark light">
@@ -78,6 +80,7 @@ __BOOTSTRAP__
 __FONTS__
 __PREFETCH__
 <style>__CSS__</style>
+<style>__TENDACSS__</style>
 </head>"""
 
 
@@ -87,15 +90,32 @@ _FONT_PRELOAD = "".join(
 )
 
 
-def page_head(title: str, prefetch: list[str] | None = None) -> str:
-    """<head> completo con token, componenti e bootstrap del tema."""
+def page_head(title: str, prefetch: list[str] | None = None,
+              tenda: bool = False, attesa: bool = False) -> str:
+    """
+    <head> completo con token, componenti e bootstrap del tema.
+
+    `tenda=True` accende la tenda mosaico gia' nel markup (data-tenda su
+    <html>): serve alle pagine che partono coperte — la home, che e' la
+    porta d'ingresso. Ovunque altro la tenda resta nel markup ma spenta,
+    e si accende solo al ritorno dall'attesa (lo decide TENDA_BOOT
+    leggendo sessionStorage).
+
+    `attesa=True` e' la pagina d'attesa: tenda accesa ma senza
+    TENDA_BOOT, che li' farebbe il danno esatto — alzare la tenda appena
+    la pagina e' pronta, cioe' subito, mentre il server sta ancora
+    dormendo. Quella pagina la sua tenda se la governa da sola.
+    """
     pf = "".join(f'<link rel="prefetch" href="{u}">' for u in (prefetch or []))
     return (_HEAD
+            .replace("__HTMLATTR__", ' data-tenda="1"' if (tenda or attesa) else "")
             .replace("__BOOTSTRAP__", _THEME_BOOTSTRAP)
+            .replace("__TENDA__", TENDA_JS + ("" if attesa else TENDA_BOOT))
             .replace("__TITLE__", title)
             .replace("__FONTS__", _FONT_PRELOAD)
             .replace("__PREFETCH__", pf)
-            .replace("__CSS__", CSS))
+            .replace("__CSS__", CSS)
+            .replace("__TENDACSS__", TENDA_CSS))
 
 
 # Alias storico, usato internamente
@@ -325,14 +345,21 @@ def app_shell(section: str, eyebrow: str, title_html: str, content: str,
               title: str | None = None,
               breadcrumb=None, fab=None, actions_html: str = "",
               back: str | None = None, prefetch=None,
-              extra_body: str = "") -> str:
+              extra_body: str = "", tenda: bool = False,
+              tenda_saluto: str = "") -> str:
     """
     Compone una pagina completa: head + sidebar + topbar + contenuto +
     tab bar + pannello aspetto + gate PIN.
+
+    La tenda mosaico sta in ogni pagina — e' il primo elemento del body,
+    cosi' copre gia' il primo paint — ma si vede solo dove serve:
+    `tenda=True` (la home) o al ritorno dalla pagina d'attesa.
     """
-    head = page_head(title or f"{eyebrow or 'B2F'} — B2F", prefetch=prefetch)
+    head = page_head(title or f"{eyebrow or 'B2F'} — B2F", prefetch=prefetch,
+                     tenda=tenda)
     html = f"""{head}
 <body>
+  {tenda_html(saluto=tenda_saluto)}
   <div class="app">
     {_rail(section)}
     <div class="main">
@@ -581,7 +608,8 @@ def locked_shell() -> str:
     redirect ne' pagina dedicata da tenere allineata: e' la stessa shell
     di sempre, semplicemente senza `content`.
     """
-    return page_head("B2F Hub") + f"<body>{_PIN_GATE}</body></html>"
+    return (page_head("B2F Hub")
+            + f"<body>{tenda_html()}{_PIN_GATE}</body></html>")
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +647,7 @@ def inject_app_header(page_html: str, eyebrow: str = "Timesheet",
   </div>
 </div>
 {_tabbar("ore")}
+{tenda_html()}
 {_APPEARANCE_SHEET}"""
 
     html = page_html.replace(open_marker, shell_open, 1)
@@ -821,9 +850,18 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
     """
     from .fmt import eur, eur_segno, data_it, data_breve
 
+    import json
+
     d = dati or {}
     who = (greet_name or "").strip()
     saluto = f'Ciao <em>{who}</em>' if who else 'Ciao <em>tu</em>'
+
+    # Il nome resta nel browser. Serve alla tenda d'attesa
+    # (shared/caricamento.py), che vive in cache e non puo' chiedere
+    # niente al server proprio perche' il server non c'e': se non se lo
+    # ricorda da qui, quando conta non sa chi sta salutando.
+    ricorda_nome = (f'<script>try{{localStorage.setItem("b2f-nome",'
+                    f'{json.dumps(who)})}}catch(e){{}}</script>') if who else ""
 
     blocchi = [_BIO_BANNER]
 
@@ -950,7 +988,11 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
         title="B2F — Home",
         content="\n".join(blocchi),
         prefetch=["/ore", "/fatture", "/spese"],
-        extra_body=_BIO_SCRIPT,
+        extra_body=ricorda_nome + _BIO_SCRIPT,
+        tenda=True,
+        # La tenda saluta come saluta la home: alzandosi scopre la
+        # stessa frase, non un'altra.
+        tenda_saluto=f"Ciao {_esc(who)}" if who else "",
     )
 
 
