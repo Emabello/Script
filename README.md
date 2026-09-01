@@ -1479,17 +1479,24 @@ comment on column b2f_parametri_fiscali.tariffa_giornaliera is
   'Tariffa per giornata da 8 ore, usata per precompilare la fattura dalle ore';
 ```
 
-### 8.15 — Il nuovo percorso della fattura (**necessaria**)
+### 8.15 — Il nuovo percorso della fattura
 
 Aggiunge lo stato `inviata_nadia` e la sua data, e rimette in ordine il
 percorso: l'incasso non è più l'ultimo passo ma il terzo
 ([§ 6](#6-il-ciclo-di-vita-della-fattura)).
 
-**Va lanciata prima del deploy**, non dopo: il `CHECK` attuale su
-`b2f_fatture.stato` non conosce `inviata_nadia`, quindi finché resta com'è
-ogni tentativo di segnare una fattura "inviata a Nadia" fallisce con un
-errore del database. Il contrario — migrazione senza codice nuovo — non
-rompe niente: nessuna riga usa ancora il nuovo stato.
+> **Passi 1-3: ✅ applicati il 01/09/2026** sul database vivo, con il
+> connettore MCP di Supabase. Colonna, vincolo e vista sono già a posto —
+> `docs/schema_supabase.md` è stato rigenerato di conseguenza. Il
+> **passo 4 è volutamente rimasto fuori**: vedi il riquadro dopo lo script.
+
+Andava lanciata prima del deploy, non dopo: il `CHECK` su
+`b2f_fatture.stato` non conosceva `inviata_nadia`, quindi finché restava
+com'era ogni tentativo di segnare una fattura "inviata a Nadia" sarebbe
+fallito con un errore del database. Il contrario — migrazione senza codice
+nuovo — non rompe niente, ed è esattamente la finestra in cui siamo:
+nessuna riga usa ancora il nuovo stato, e i passi 1-3 lasciano invariato
+tutto quello che il codice in produzione legge oggi.
 
 Il `CHECK` viene riscritto in forma **aperta** (`not in ('bozza', ...)` non
 si può, quindi resta un elenco): se un giorno si aggiunge un altro passo,
@@ -1571,11 +1578,30 @@ update b2f_fatture
    and data_invio_studio is not null;
 ```
 
-Il passo 4 è idempotente e, sui dati di oggi, tocca **una riga sola** (la
-2026/001: incassata il 30/06, già mandata allo studio). Le fatture vecchie
-ferme in `inviata_studio` senza incasso **non si toccano**: restano dove
-sono, la linea temporale mostra i due passi scavalcati come saltati, e
-`ha_incassato()` continua a leggerle correttamente come da incassare.
+> ### ⏸ Il passo 4 aspetta il deploy, e non è pignoleria
+>
+> È l'unico pezzo che **muove un dato invece di allargare lo schema**, e va
+> lanciato solo quando su Render gira il codice di questa PR. Motivo, in
+> concreto: sui dati di oggi tocca una riga sola, la 2026/001 — 5.000 €,
+> incassata l'08/07 e già mandata allo studio — e la sposta da `incassata`
+> a `inviata_studio`. Il codice **nuovo** continua a contarla come
+> incassata, perché guarda `data_incasso`. Il codice **vecchio**, quello
+> in produzione fino al merge, guarda lo stato: nella finestra fra la
+> migrazione e il deploy vedrebbe *zero* incassato, con l'accantonamento e
+> i numeri per cassa che crollano di 5.000 € per poi tornare da soli. Un
+> saldo che sballa e si ripara da sé è peggio di uno che sballa e basta:
+> la volta dopo non ci credi più.
+>
+> Lanciarlo è comunque facoltativo. Se non lo si lancia, quella riga resta
+> in `incassata` — che è vero — e l'unico effetto è che la linea temporale
+> non segna come fatto il passaggio allo studio, pur avendone la data.
+> `ha_incassato()` la legge correttamente in entrambi i casi.
+
+Il passo 4 è idempotente e, sui dati di oggi, tocca **una riga sola**. Le
+fatture vecchie ferme in `inviata_studio` senza incasso **non si toccano**:
+restano dove sono, la linea temporale mostra i due passi scavalcati come
+saltati, e `ha_incassato()` continua a leggerle correttamente come da
+incassare.
 
 ## 9. Sicurezza
 
