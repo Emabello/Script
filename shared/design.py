@@ -822,6 +822,28 @@ html[data-theme="light"] .sheet-ov{background:rgba(30,34,44,.34)}
 .acc-main{display:flex;align-items:flex-end;justify-content:space-between;
   gap:var(--sp-4);flex-wrap:wrap}
 .acc-netto{text-align:right}
+
+/* La quota acconti, nella barra e nella legenda: righe invece che tinta
+   piena. Le altre voci sono debiti di quest'anno, questa e' un debito
+   dell'anno prossimo — a colpo d'occhio si deve vedere che non e' la
+   stessa cosa, senza doverla leggere. */
+.seg-acconti,.legend .dot.acconti{
+  background:repeating-linear-gradient(135deg,
+    var(--accent-hi) 0 3px,
+    color-mix(in srgb,var(--accent-hi) 30%,transparent) 3px 6px)}
+
+/* La riga che risponde a «e per l'anno prossimo?». Il bordo colorato e'
+   il semaforo: rosso se lo scenario non tiene niente per gli acconti,
+   giallo se ne tiene una parte, verde se li copre tutti. */
+.acc-acconti{display:flex;align-items:flex-start;gap:8px;
+  margin-top:var(--sp-3);padding:10px 12px;border-radius:var(--r-sm);
+  font-size:12.5px;line-height:1.45;color:var(--ink-2);
+  background:var(--surface-3);border-left:3px solid var(--ink-4)}
+.acc-acconti .dot{width:9px;height:9px;border-radius:3px;flex:none;margin-top:4px}
+.acc-acconti strong{color:var(--ink);font-weight:600}
+.acc-acconti.neg{border-left-color:var(--neg)}
+.acc-acconti.warn{border-left-color:var(--warn)}
+.acc-acconti.pos{border-left-color:var(--pos)}
 .acc-netto .lbl{margin-bottom:1px}
 .stat-hint{margin-top:var(--sp-3)}
 

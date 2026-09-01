@@ -485,8 +485,12 @@ def fattura_dettaglio(fid):
                             "Le tasse del forfettario maturano all'incasso, non "
                             "all'emissione.")
                 titolo = "Da accantonare all'incasso"
+            # L'anno degli acconti e' quello DOPO la fattura: il saldo
+            # del suo anno si paga a giugno dell'anno dopo, e insieme al
+            # saldo si versano gli acconti di quell'anno li'.
             acc_card = acc.card_html(scomposizione, titolo=titolo,
-                                     contesto=contesto, uid="accFatt")
+                                     contesto=contesto, uid="accFatt",
+                                     anno_acconto=anno_f + 1)
     except Exception:
         acc_card = ""
 
@@ -542,9 +546,27 @@ def fattura_dettaglio(fid):
         # onesto di quattro etichette astratte da interpretare.
         righe_scelte = []
         pref = scomposizione["scenario_preferito"]
+        # L'anno degli acconti: quello dopo la fattura. Qui serve piu' che
+        # nella card, perche' e' il foglio in cui i soldi si spostano
+        # davvero — scegliere "consigliato" vuol dire mandare sul conto
+        # personale anche quello che a giugno servira' per gli acconti.
+        anno_acc = anno_f + 1
         for k in acc.SCENARI:
             quota = scomposizione["importi"][k]
             resta = scomposizione["netti"][k]
+            messo_acc = scomposizione["componenti"][k]["acconti"]
+            scoperto_acc = scomposizione["acconti_scoperti"][k]
+            if scomposizione["acconti_dovuti"] <= 0:
+                riga_acc = ""
+            elif messo_acc <= 0:
+                riga_acc = (f'<span class="sg-acc neg">Niente per gli acconti '
+                            f'{anno_acc}: scoperti € {_fmt_eur(scoperto_acc)}</span>')
+            elif scoperto_acc <= 0:
+                riga_acc = (f'<span class="sg-acc pos">Acconti {anno_acc} coperti '
+                            f'per intero: € {_fmt_eur(messo_acc)}</span>')
+            else:
+                riga_acc = (f'<span class="sg-acc warn">Di cui € {_fmt_eur(messo_acc)} '
+                            f'di acconti {anno_acc} · scoperti € {_fmt_eur(scoperto_acc)}</span>')
             titolo_s, spiega = acc.ETICHETTE[k]
             righe_scelte.append(f'''
             <label class="scelta-giro">
@@ -560,6 +582,7 @@ def fattura_dettaglio(fid):
                   Accantoni <strong class="tnum">€ {_fmt_eur(quota)}</strong>
                   · sposti <strong class="tnum pos">€ {_fmt_eur(resta)}</strong>
                 </span>
+                {riga_acc}
               </span>
             </label>''')
         scelte_giro_html = "".join(righe_scelte)
@@ -833,6 +856,14 @@ def fattura_dettaglio(fid):
       .sg-pct{{font-size:13px;color:var(--accent-text)}}
       .sg-descr{{font-size:12px;color:var(--ink-3);line-height:1.4}}
       .sg-num{{font-size:12.5px;color:var(--ink-2);margin-top:3px}}
+      /* Quanto di questa scelta e' acconto dell'anno prossimo. Sta qui e
+         non solo nella card perche' questo e' il foglio in cui i soldi si
+         spostano davvero: "sposti 3.900 €" e "di quei 3.900 ce ne sono
+         820 che a giugno ti servono" sono la stessa riga letta due volte. */
+      .sg-acc{{font-size:11.5px;margin-top:3px;display:block}}
+      .sg-acc.neg{{color:var(--neg)}}
+      .sg-acc.warn{{color:var(--warn)}}
+      .sg-acc.pos{{color:var(--pos)}}
     </style>
 
     <!-- ===== Foglio registra entrata ===== -->

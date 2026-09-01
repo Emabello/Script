@@ -260,18 +260,31 @@ Nessuna query: prende i parametri, restituisce numeri e HTML.
 - `aliquote(param)`: le quote **sul lordo incassato** (INPS 17,47 %,
   imposta 2,48 %, dovuto 19,94 %, picco di cassa 36,39 %).
 - `scomponi(lordo, param, …)`: la scomposizione completa più i quattro
-  scenari — `minimo`, `consigliato`, `prudente`, `sicuro`.
-- `card_html(s, …)`: la card con selettore di scenario, barra a segmenti e
-  il `<details>` “Come esce questo numero”, dove compaiono le righe
-  “di cui rivalsa INPS” e “di cui bollo addebitato”.
+  scenari — `minimo`, `consigliato`, `prudente`, `sicuro`. Ogni scenario è
+  un **dizionario di voci** in `componenti[scenario]` (`inps`, `imposta`,
+  `acconti`, `costi`, `margine`), e `importi[scenario]` è la loro somma:
+  il totale non può contenere niente che non sia nominato.
+- `acconti_dovuti` e `acconti_scoperti[scenario]`: quanto di acconti
+  l'incasso si porta dietro, e quanto ne resta scoperto scegliendo quello
+  scenario. `minimo` e `consigliato` non ne coprono niente.
+- `card_html(s, …, anno_acconto=None)`: la card con selettore di scenario,
+  barra a segmenti e il `<details>` “Come esce questo numero”.
+  `anno_acconto` serve solo alle etichette (“Acconti del 2027”); su una
+  fattura è l'anno **successivo** a quello della fattura.
 - `rivalsa` e `bollo_addebitato` **non entrano in nessun calcolo**: sono
   già dentro il lordo (concorrono al reddito — per il bollo vedi la
   Risposta AdE 428/2022). Servono solo a mostrarne la quota.
 
-> L'ultimo segmento della barra (“Costi e margine”) è calcolato come
-> `importi[scenario] − INPS − imposta`, non come `costi + margine`: per
-> `prudente`/`sicuro` comprende anche la quota acconti, ed è esattamente
-> così che lo ricalcola il JS quando si cambia scenario.
+> **La quota acconti ha un segmento suo, ed è il motivo per cui la card è
+> fatta così.** Un accantonamento sono due debiti con due scadenze: il
+> saldo dell'anno e gli acconti dell'anno dopo, che si versano lo stesso
+> giorno. Prima l'ultimo segmento si chiamava “Costi e margine” ed era
+> calcolato come `importi[scenario] − INPS − imposta`: per
+> `prudente`/`sicuro` conteneva soprattutto gli acconti, cioè proprio il
+> numero che serviva sapere. Ora sono due segmenti distinti — quello degli
+> acconti è **a righe**, non a tinta piena — e la riga sotto la barra dice
+> quanto resta scoperto, con il bordo rosso/giallo/verde a seconda della
+> copertura.
 
 ### `fatture/giroconto.py` — 352 righe · dall'incasso ai due conti
 

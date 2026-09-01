@@ -376,12 +376,19 @@ Il conto matematico (19,94 %) però non è una buona guida, per due motivi:
 
 ### I quattro scenari
 
-| Scenario | Formula | Quota | Su 5.000 € |
-|---|---|---|---|
-| Minimo | `C + T` | 19,9 % | € 997,17 |
-| Consigliato | `minimo × (1+margine) + costi` | 21,9 % | € 1.096,89 |
-| Prudente | `dovuto + metà acconti + costi + margine` | 30,2 % | € 1.508,15 |
-| Sicuro | `1,8C + 2T + costi` | 36,4 % | € 1.819,69 |
+Ogni scenario è la **somma di voci dichiarate**, non un numero a sé: INPS,
+imposta, quota acconti, costi fissi, margine. Su 5.000 € incassati, con i
+parametri di default e costi fissi a zero:
+
+| Scenario | Cosa mette dentro | Totale | Quota | Di cui acconti | Acconti scoperti |
+|---|---|---|---|---|---|
+| Minimo | `C + T` | € 997,17 | 19,9 % | € 0,00 | **€ 822,51** |
+| Consigliato | `C + T + costi + margine` | € 1.096,89 | 21,9 % | € 0,00 | **€ 822,51** |
+| Prudente | `C + T + ½ acconti + costi + margine` | € 1.508,14 | 30,2 % | € 411,25 | € 411,26 |
+| Sicuro | `C + T + acconti + costi` | € 1.819,68 | 36,4 % | € 822,51 | € 0,00 |
+
+*Sicuro* non ha margine di sicurezza, e non è una dimenticanza: il margine
+ce l'ha già, ed è l'anno intero di acconti che sta mettendo da parte.
 
 *Prudente* esiste perché fra Consigliato e Sicuro c'era un salto troppo grande:
 copre il dovuto più metà degli acconti, così al fabbisogno dell'anno-picco ci
@@ -389,6 +396,34 @@ si arriva in due anni invece che in uno.
 
 Margine di sicurezza, costi fissi annui e fatturato atteso si cambiano in
 `/fatture/parametri`.
+
+### Le due colonne di destra sono il punto
+
+Un accantonamento è **due debiti con due scadenze diverse**: il saldo
+dell'anno in corso, che si paga a giugno dell'anno dopo, e gli acconti
+dell'anno dopo, che si versano nello **stesso** giorno. Il numero grande da
+solo non distingue i due, e il default — *Consigliato* — del secondo non
+tiene niente: su ogni fattura da 5.000 € lascia scoperti 822,51 € che
+serviranno comunque.
+
+Prima questa cosa non si vedeva. La card mostrava quattro totali e una barra
+il cui ultimo segmento si chiamava "Costi e margine" — mentre per *Prudente*
+e *Sicuro* quel segmento conteneva soprattutto la quota acconti, cioè
+esattamente l'informazione che mancava. Chi guardava una singola fattura non
+aveva modo di sapere quanto di quei soldi era per l'anno prossimo.
+
+Ora la card lo dice in tre posti, e tutti e tre seguono lo scenario scelto:
+
+- un **segmento a righe** nella barra, distinto dalle tinte piene delle voci
+  di quest'anno — a colpo d'occhio si vede che non è lo stesso tipo di debito;
+- una **riga con il bordo colorato** sotto la barra: rossa se lo scenario non
+  tiene niente per gli acconti, gialla se ne tiene una parte, verde se li
+  copre tutti, con l'importo scoperto scritto in chiaro;
+- tre righe in *Come esce questo numero*: acconti dovuti, **di cui coperti da
+  questo scenario**, **ancora scoperti**.
+
+L'anno degli acconti è scritto per esteso ("Acconti del 2027"), e su una
+fattura è l'anno **successivo** a quello della fattura, non l'anno corrente.
 
 ### La ripartizione
 
@@ -419,8 +454,9 @@ id dei due movimenti.
 - il movimento personale nato da un giroconto non si può cancellare da
   `/spese`: va annullata la ripartizione dalla fattura, così spariscono
   entrambe le righe;
-- una fattura già ripartita non può uscire dallo stato *incassata* senza prima
-  annullare la ripartizione.
+- una fattura già ripartita non può tornare **prima** dell'incasso senza aver
+  annullato la ripartizione (andare avanti verso lo studio e lo SDI sì: i
+  soldi restano arrivati, vedi [§ 6](#6-il-ciclo-di-vita-della-fattura)).
 
 Il giroconto **non è una spesa deducibile né un ricavo**: è denaro che cambia
 conto. Per questo sul lato P.IVA usa `tipo=giroconto`, che i calcoli fiscali

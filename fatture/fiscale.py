@@ -545,6 +545,7 @@ def situazione_dashboard():
                  "esatto; il sicuro copre anche l'anno in cui saldo e acconti "
                  "cadono insieme.",
         uid="accAnno",
+        anno_acconto=anno + 1,
     ) if t["incasso"] > 0 else ""
 
     # --- Limite forfettario --------------------------------------------------

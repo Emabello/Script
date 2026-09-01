@@ -185,6 +185,7 @@ def _dashboard_data() -> dict:
                          f"Le tasse del forfettario si pagano per cassa: conta quando "
                          f"il denaro arriva, non quando emetti.",
                 uid="accHome",
+                anno_acconto=today.year + 1,
             )
     except Exception as e:
         out["errore"] = f"Situazione fiscale non disponibile: {str(e)[:160]}"
