@@ -814,6 +814,14 @@ html[data-theme="light"] .sheet-ov{background:rgba(30,34,44,.34)}
 .acc-card .card-head{flex-direction:column;align-items:stretch;gap:var(--sp-3)}
 .acc-seg{display:flex;width:100%}
 .acc-seg button{flex:1;padding:7px var(--sp-2)}
+/* Sotto i 360px i quattro nomi non ci stanno in fila — "Copertura",
+   "Consigliato", "Prudente", "Blindato" sono piu' lunghi dei precedenti e
+   sforavano il viewport di 27px. Vanno a capo in due righe da due invece
+   di stringersi fino a diventare illeggibili. */
+@media (max-width:359px){
+  .acc-seg{flex-wrap:wrap}
+  .acc-seg button{flex:1 1 45%;font-size:12px;padding:6px 4px}
+}
 @media (min-width:560px){
   .acc-card .card-head{flex-direction:row;align-items:center}
   .acc-seg{width:auto}
@@ -822,6 +830,30 @@ html[data-theme="light"] .sheet-ov{background:rgba(30,34,44,.34)}
 .acc-main{display:flex;align-items:flex-end;justify-content:space-between;
   gap:var(--sp-4);flex-wrap:wrap}
 .acc-netto{text-align:right}
+
+/* La quota acconti, nella barra e nella legenda: righe invece che tinta
+   piena, ma della stessa famiglia di colore del saldo — sono soldi che
+   escono entrambi, solo che questi escono per l'anno dopo. Le righe
+   dicono "non e' un debito di quest'anno" senza cambiare famiglia, ed e'
+   esattamente il codice che usa l'albero della fattura: stessa cosa,
+   stesso segno. */
+.seg-acconti,.legend .dot.acconti{
+  background:repeating-linear-gradient(135deg,
+    color-mix(in srgb,var(--neg) 85%,transparent) 0 3px,
+    color-mix(in srgb,var(--neg) 28%,transparent) 3px 6px)}
+
+/* La riga che risponde a «e per l'anno prossimo?». Il bordo colorato e'
+   il semaforo: rosso se lo scenario non tiene niente per gli acconti,
+   giallo se ne tiene una parte, verde se li copre tutti. */
+.acc-acconti{display:flex;align-items:flex-start;gap:8px;
+  margin-top:var(--sp-3);padding:10px 12px;border-radius:var(--r-sm);
+  font-size:12.5px;line-height:1.45;color:var(--ink-2);
+  background:var(--surface-3);border-left:3px solid var(--ink-4)}
+.acc-acconti .dot{width:9px;height:9px;border-radius:3px;flex:none;margin-top:4px}
+.acc-acconti strong{color:var(--ink);font-weight:600}
+.acc-acconti.neg{border-left-color:var(--neg)}
+.acc-acconti.warn{border-left-color:var(--warn)}
+.acc-acconti.pos{border-left-color:var(--pos)}
 .acc-netto .lbl{margin-bottom:1px}
 .stat-hint{margin-top:var(--sp-3)}
 

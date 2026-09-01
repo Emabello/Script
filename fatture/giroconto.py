@@ -87,9 +87,16 @@ def calcola(f: dict, param: dict, scenario: str,
     """
     lordo = float(f.get("totale") or 0)
     rivalsa = round(float(f.get("cassa_importo") or 0), 2)
+    # L'anno della fattura, non quello di oggi: e' quello che decide se
+    # i contributi erano gia' stati versati (e quindi deducibili).
+    try:
+        anno_f = int(str(f.get("data") or "")[:4])
+    except (TypeError, ValueError):
+        anno_f = None
     s = acc.scomponi(
         lordo, param, fatturato_riferimento=incassato_anno, rivalsa=rivalsa,
-        bollo_addebitato=(f.get("bollo") or 0) if f.get("bollo_addebitato") else 0)
+        bollo_addebitato=(f.get("bollo") or 0) if f.get("bollo_addebitato") else 0,
+        anno=anno_f)
 
     if importo_personalizzato is not None:
         accantonato = float(importo_personalizzato)
@@ -152,6 +159,7 @@ def api_giroconto_esegui(fid):
 
     body = request.get_json(silent=True) or {}
     scenario = body.get("scenario") or "consigliato"
+    scenario = acc.normalizza_scenario(scenario)
     if scenario not in acc.SCENARI:
         return jsonify({"error": f"scenario non valido: {scenario}"}), 400
 
