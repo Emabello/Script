@@ -1278,6 +1278,49 @@ function blockClients(md){
     ${body}</section>`;
 }
 
+// ----- Blocco 2b: la fattura di questo mese -----
+// Il timesheet sa quante giornate hai fatto; la fattura le vuole. Il ponte
+// e' questo bottone: apre l'editor gia' pieno (una riga, giornate x
+// tariffa) invece di farti ricopiare un numero da una pagina all'altra.
+// Il controllo "ne esiste gia' una" arriva dopo, in asincrono: aspettarlo
+// prima di disegnare il blocco vorrebbe dire una pagina che non si apre
+// finche' Supabase non risponde.
+function blockFattura(md){
+  const per=md.y+"-"+String(md.m+1).padStart(2,"0");
+  return `<section class="block">
+    <div class="block-head"><span class="eyebrow">Fattura</span><span class="l"></span>
+      <span class="bh-val">${fullDays(md.totalMin)} giornate</span></div>
+    <p class="hint" style="margin:0 0 14px">
+      ${fmtMin(md.totalMin)} nel mese = <b>${fullDays(md.totalMin)} giornate</b>
+      da 8h. Il bottone apre una fattura nuova con una riga sola, giornate ×
+      tariffa: cliente, data e importi restano da confermare.</p>
+    <div id="fatt-esistente"></div>
+    <a class="btn" id="btn-precompila" style="display:block;text-align:center;
+       border:1px solid var(--line);color:var(--ink);border-radius:999px;
+       padding:11px 16px;text-decoration:none"
+       href="/fatture/nuova?ore=${per}">Precompila la fattura di ${capitalize(new Date(md.y,md.m,1).toLocaleDateString("it-IT",{month:"long"}))}</a>
+  </section>`;
+}
+
+// Se una fattura di quel mese c'e' gia', dirlo: due fatture per lo stesso
+// periodo si accorgono tardi, e la seconda va cancellata a mano.
+async function controllaFatturaEsistente(md){
+  const per=md.y+"-"+String(md.m+1).padStart(2,"0");
+  const box=document.getElementById("fatt-esistente");
+  if(!box) return;
+  try{
+    const r=await fetch("/fatture/api/fatture-per-ore?periodo="+per);
+    if(!r.ok) return;
+    const j=await r.json();
+    if(!j.fatture || !j.fatture.length) return;
+    box.innerHTML=j.fatture.map(f=>`<div class="mrow" style="margin-bottom:10px">
+      <span class="nm">Già fatturato: <a href="/fatture/${f.id}"
+        style="color:var(--gold);text-decoration:none">${f.numero||("#"+f.id)}</a>
+        · ${f.stato}</span>
+      <span class="h tnum">€ ${Number(f.totale||0).toLocaleString("it-IT",{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>`).join("");
+  }catch(_){}
+}
+
 // ----- Blocco 3: grafici (SVG inline, nessuna libreria esterna) -----
 function blockCharts(md){
   return `<section class="block">
@@ -1403,8 +1446,9 @@ async function renderMonth(){
   await ensureMonth(isoLocal(currentMonth));
   const md=monthData(currentMonth);
   if(!md.totalMin){body.innerHTML='<div class="mempty">Nessuna ora registrata in questo mese.</div>';return;}
-  body.innerHTML=blockSummary(md)+blockClients(md)+blockCharts(md);
+  body.innerHTML=blockSummary(md)+blockClients(md)+blockFattura(md)+blockCharts(md);
   afterMonthRender();
+  controllaFatturaEsistente(md);
 }
 
 function openMonthView(){
@@ -1428,7 +1472,17 @@ document.getElementById("m-now").onclick=()=>{currentMonth=firstOfMonth(new Date
 
 /* pin + boot */
 if('serviceWorker' in navigator){try{navigator.serviceWorker.register('/sw.js').catch(()=>{});}catch(e){}}
-async function start(){await loadMe();await loadCatalog();gStatus();await showWeek(isoLocal(weekMonday(new Date())),0);}
+async function start(){await loadMe();await loadCatalog();gStatus();
+  await showWeek(isoLocal(weekMonday(new Date())),0);
+  // ?mese=AAAA-MM: e' il link che arriva dal dettaglio di una fattura —
+  // "queste sono le ore che hai fatturato" deve atterrare sul mese giusto,
+  // non sulla settimana corrente.
+  const mm=new URLSearchParams(location.search).get('mese');
+  if(mm && /^\d{4}-\d{2}$/.test(mm)){
+    currentMonth=new Date(Number(mm.slice(0,4)),Number(mm.slice(5,7))-1,1);
+    openMonthView();
+  }
+}
 function showPin(){document.getElementById('pin-overlay').classList.add('open');setTimeout(()=>document.getElementById('pin-input').focus(),60);}
 async function unlock(){const pin=document.getElementById('pin-input').value;
   const r=await fetch('/api/unlock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});

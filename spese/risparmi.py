@@ -28,6 +28,9 @@ Rotte JSON:
   GET   /spese/api/risparmi
   PATCH /spese/api/risparmi        {data_bonifico, effettivo_risparmio}
 """
+import json as _json
+from datetime import date
+
 from flask import Response, request, jsonify
 
 from . import spese_bp
@@ -43,6 +46,124 @@ def _n(v):
         return float(v or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _fatture_da_girocontare(client) -> list[dict]:
+    """
+    Le fatture gia' incassate il cui denaro sta ancora sul conto P.IVA.
+
+    Legge `b2f_fatture` da qui, che e' l'area Spese, e lo fa apposta: il
+    passo 1 della procedura non ha senso senza sapere se c'e' qualcosa da
+    spostare. La query e' in sola lettura e sotto `try` — se l'area
+    Fatture non e' raggiungibile la procedura perde un riquadro, non la
+    pagina.
+
+    Il filtro su `data_giroconto` e' in Python e non nella query: il
+    "non ancora fatto" e' un NULL, e PostgREST vuole `is.null` mentre
+    l'harness di anteprima non lo implementa. Le fatture incassate sono
+    poche decine l'anno: filtrarle qui non costa niente.
+    """
+    try:
+        r = (client.table("b2f_fatture")
+             .select("id,numero,totale,data_incasso,data_giroconto,stato")
+             .eq("stato", "incassata")
+             .order("data_incasso", desc=True).execute())
+        righe = getattr(r, "data", None) or []
+    except Exception:
+        return []
+    return [f for f in righe if not f.get("data_giroconto")]
+
+
+def _card_procedura(client, periodo_label: str, consigliato: float,
+                    gia_messo: float, anteprima: str, dal: str = "") -> str:
+    """
+    La procedura di fine periodo: dall'incasso ai salvadanai, un passo
+    alla volta e con la conferma di chi la esegue.
+
+    Sostituisce il campo "Risparmio effettivo" che stava qui prima. Non
+    e' un cambio di interfaccia: quel campo scriveva un numero su
+    `risparmi_periodo` **al posto** del movimento bancario, ed e' la
+    seconda strada che la migrazione §8.11 ha chiuso — dopo di lei
+    nessuno legge piu' quella colonna. Qui invece si registra l'uscita
+    vera dal conto, con la sua data, come la vede la banca.
+
+    Il denaro non lo muove l'app: il bonifico lo fai tu. Questa pagina
+    dice **quanto** (la percentuale di `impostazioni` su quel che resta),
+    **come si divide** fra i cinque salvadanai, e tiene il conto che e'
+    stato fatto.
+    """
+    oggi = date.today().isoformat()
+
+    if gia_messo > 0:
+        return f'''
+        <div class="card">
+          <div class="card-head">
+            <div class="eyebrow">Procedura — {periodo_label or "periodo corrente"}</div>
+            <span class="chip pos">fatta</span>
+          </div>
+          <div class="stat">
+            <div class="val tnum pos">€ {eur(gia_messo)}</div>
+            <div class="lbl">già messi via in questo periodo</div>
+          </div>
+          <p class="small muted mt-3">
+            Sono le uscite di categoria "Risparmi" registrate
+            {"dal " + data_it(dal) if dal else "in questo periodo"} a oggi,
+            meno gli eventuali rientri. Il consigliato era € {eur(consigliato)}.
+          </p>
+          <a class="btn ghost block mt-4"
+             href="/spese/movimenti?categoria=Risparmi">Vedi i movimenti</a>
+        </div>'''
+
+    da_girocontare = _fatture_da_girocontare(client)
+    passo1 = ""
+    if da_girocontare:
+        righe = "".join(
+            f'<div class="row"><span class="t">'
+            f'<a href="/fatture/{f.get("id")}">{f.get("numero") or ("#" + str(f.get("id")))}</a>'
+            f'<span class="sub">incassata il {data_it(f.get("data_incasso"))}</span></span>'
+            f'<span class="v tnum">€ {eur(f.get("totale"))}</span></div>'
+            for f in da_girocontare[:5])
+        passo1 = f'''
+          <div class="notice warn">
+            <strong>Prima:</strong> {len(da_girocontare)} fattur{"a" if len(da_girocontare) == 1 else "e"}
+            incassat{"a" if len(da_girocontare) == 1 else "e"} con il denaro ancora
+            sul conto P.IVA. Ripartiscil{"a" if len(da_girocontare) == 1 else "e"}
+            prima di calcolare il risparmio: la quota si applica a quel che
+            resta sul conto personale, e finché l'incasso non è arrivato lì
+            quel numero è più basso del vero.
+          </div>
+          <div class="rows detail mb-4">{righe}</div>'''
+
+    return f'''
+    <div class="card">
+      <div class="card-head">
+        <div class="eyebrow">Procedura — {periodo_label or "periodo corrente"}</div>
+        <span class="chip warn">da fare</span>
+      </div>
+      {passo1}
+      <p class="small muted">Il bonifico ai salvadanai lo fai tu dalla banca:
+        qui si registra che è successo, come uscita vera dal conto. È quello
+        che tiene il saldo dell'app uguale a quello di WeBank.</p>
+      <div class="field-group mt-4">
+        <div class="field">
+          <label>Quanto metti via (€)</label>
+          <input type="number" step="0.01" min="0" inputmode="decimal" id="f_imp"
+                 value="{consigliato:.2f}" oninput="aggiornaQuote()">
+        </div>
+        <div class="field">
+          <label>Data del bonifico</label>
+          <input type="date" id="f_data" value="{oggi}">
+        </div>
+      </div>
+      <div class="rows detail mt-3">{anteprima}</div>
+      <div class="actions mt-4">
+        <button type="button" class="btn block" id="btnEsegui"
+                onclick="onEsegui()">Registra il bonifico ai salvadanai</button>
+      </div>
+      <p class="hint mt-2">Il consigliato è € {eur(consigliato)}. Cambialo se
+        hai spostato una cifra diversa: quello che conta è che qui ci sia il
+        numero che è uscito davvero dal conto.</p>
+    </div>'''
 
 
 @spese_bp.get("/risparmi")
@@ -150,7 +271,6 @@ def risparmi_pagina():
     # ancora fatto" — nella pratica nessuno registra zero di proposito.
     effettivo_reg = n(corrente.get("risparmio_effettivo"))
     gia_registrato = effettivo_reg > 0
-    valore_default = effettivo_reg if gia_registrato else consigliato
 
     voci = [
         ("Stipendio",             bonifico,                              "pos"),
@@ -193,17 +313,32 @@ def risparmi_pagina():
 
     storico = "".join(_riga_storico(p) for p in periodi[:12])
 
+    # --- La procedura di fine periodo -----------------------------------
+    # Due passi, nell'ordine in cui il denaro si muove davvero:
+    #   1. l'incasso della fattura sta ancora sul conto P.IVA -> spostalo
+    #      sul conto personale (lo fa fatture/giroconto.py: qui si dice
+    #      solo che c'e' da farlo, con il link per andarci);
+    #   2. la quota di risparmio esce dal personale verso i salvadanai.
+    # Il passo 2 senza il passo 1 non e' sbagliato, e' prematuro: si
+    # risparmierebbe su un conto dove quei soldi non sono ancora arrivati.
+    dal = str(corrente.get("data_bonifico") or "")[:10]
+    gia_messo = D.risparmio_del_periodo(client, dal) if dal else 0.0
+    quote_js = _json.dumps(
+        [{"chiave": k, "perc": n(p)} for k, _nome, _col, p in quote if n(p) > 0],
+        ensure_ascii=False)
+    anteprima = "".join(
+        f'<div class="row"><span class="t">{nome}'
+        f'<span class="sub">{pct(n(p))}</span></span>'
+        f'<span class="v tnum" id="q_{k}">€ {eur(consigliato * n(p))}</span></div>'
+        for k, nome, _col, p in quote if n(p) > 0)
+    procedura_html = _card_procedura(
+        client, mese_anno(corrente.get("data_bonifico")),
+        consigliato=consigliato, gia_messo=gia_messo, anteprima=anteprima,
+        dal=dal)
+
     periodo_label = mese_anno(corrente.get("data_bonifico"))
     fine_label = (data_it(corrente.get("prossimo_bonifico"))
                  if corrente.get("prossimo_bonifico") else "oggi, ancora aperto")
-
-    registrazione_hint = (
-        f'Già registrato per questo periodo: <strong>€ {eur(effettivo_reg)}</strong>. '
-        f'Modifica e registra di nuovo per correggerlo.'
-        if gia_registrato else
-        f'Non ancora registrato: il campo qui sotto parte dal consigliato '
-        f'(€ {eur(consigliato)}), cambialo con quanto hai messo via davvero.'
-    )
 
     body = f'''
     <div class="grid kpi lead mb-3">
@@ -246,18 +381,7 @@ def risparmi_pagina():
       </div>
 
       <div class="stack">
-        <div class="card">
-          <div class="card-head"><div class="eyebrow">Quanto hai messo via — {periodo_label or "periodo corrente"}</div></div>
-          <p class="small muted">{registrazione_hint}</p>
-          <div class="field mt-4">
-            <label>Risparmio effettivo (€)</label>
-            <input type="number" step="0.01" min="0" inputmode="decimal" id="f_eff"
-                   value="{valore_default:.2f}">
-          </div>
-          <div class="actions">
-            <button type="button" class="btn block" onclick="onSalva()">Registra</button>
-          </div>
-        </div>
+        {procedura_html}
 
         {f"""<div class="card">
           <div class="card-head"><div class="eyebrow">Come si divide</div></div>
@@ -270,25 +394,48 @@ def risparmi_pagina():
 
     <div id="toast" class="toast"></div>
     <script>
-      const DATA_BONIFICO = {corrente.get("data_bonifico")!r};
       function toast(msg, cls) {{
         const t = document.getElementById('toast');
         t.textContent = msg; t.className = 'toast show ' + (cls || '');
         setTimeout(()=>{{ t.className = 'toast ' + (cls || ''); }}, 2600);
       }}
-      async function onSalva() {{
-        const v = Number(document.getElementById('f_eff').value || 0);
-        if (!(v >= 0)) {{ toast('Importo non valido', 'err'); return; }}
+      const QUOTE = {quote_js};
+
+      // L'anteprima si aggiorna mentre scrivi: la domanda vera non e'
+      // "quanto metto via" ma "quanto finisce in ciascun secchiello", e
+      // vederla dopo aver confermato e' troppo tardi.
+      function aggiornaQuote() {{
+        const v = Number(document.getElementById('f_imp').value || 0);
+        QUOTE.forEach(q => {{
+          const el = document.getElementById('q_' + q.chiave);
+          if (el) el.textContent = '€ ' + (v * q.perc).toLocaleString('it-IT',
+            {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+        }});
+      }}
+
+      async function onEsegui() {{
+        const v = Number(document.getElementById('f_imp').value || 0);
+        const quando = document.getElementById('f_data').value;
+        if (!(v > 0)) {{ toast('Importo non valido', 'err'); return; }}
+        if (!confirm('Registro un\'uscita di € ' + v.toLocaleString('it-IT',
+            {{minimumFractionDigits: 2, maximumFractionDigits: 2}}) +
+            ' dal conto personale verso i salvadanai, con data ' + quando +
+            '.\n\nIl bonifico vero lo fai tu dalla banca: qui si registra che '
+            + 'e\' successo.')) return;
+        const btn = document.getElementById('btnEsegui');
+        btn.disabled = true;
         try {{
-          const r = await fetch('/spese/api/risparmi', {{
-            method: 'PATCH', headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{data_bonifico: DATA_BONIFICO, effettivo_risparmio: v}}),
+          const r = await fetch('/spese/api/risparmi/esegui', {{
+            method: 'POST', headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{importo: v, data: quando}}),
           }});
           const j = await r.json();
-          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
-          toast('Risparmio registrato', 'ok');
-          setTimeout(()=>location.reload(), 700);
-        }} catch (e) {{ toast('Errore rete: ' + e.message, 'err'); }}
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); btn.disabled = false; return; }}
+          toast('Bonifico registrato', 'ok');
+          setTimeout(()=>location.reload(), 800);
+        }} catch (e) {{
+          toast('Errore rete: ' + e.message, 'err'); btn.disabled = false;
+        }}
       }}
     </script>'''
 
@@ -303,17 +450,56 @@ def api_risparmi():
     return jsonify(D.periodi_risparmio(client))
 
 
-@spese_bp.patch("/api/risparmi")
-def api_risparmi_aggiorna():
+@spese_bp.post("/api/risparmi/esegui")
+def api_risparmi_esegui():
+    """
+    Il passo 2 della procedura: registra il bonifico ai salvadanai.
+
+    Body: {"importo": 812.40, "data": "2026-08-31"}
+
+    Scrive **un'uscita vera** sul conto personale, categoria "Risparmi",
+    passando da `spese/dati.py` come ogni altra scrittura. Non divide il
+    movimento in cinque righe: la banca vede un bonifico, e la
+    ripartizione fra i secchielli la ricalcola `v_risparmi_mese` dalle
+    percentuali di `impostazioni`.
+    """
     client = D.sb()
     if client is None:
         return jsonify({"error": "supabase not configured"}), 503
     body = request.get_json(silent=True) or {}
-    quando = body.get("data_bonifico")
-    if not quando:
-        return jsonify({"error": "data_bonifico mancante"}), 400
-    esito = D.risparmio_effettivo(client, quando, body.get("effettivo_risparmio"))
-    return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
+    quando = (body.get("data") or "").strip() or None
+    esito = D.registra_bonifico_risparmio(
+        client, body.get("importo"), quando,
+        descrizione="Bonifico ai salvadanai (Revolut)")
+    if esito.get("error"):
+        return jsonify(esito), 400
+    return jsonify({"ok": True, **esito})
+
+
+@spese_bp.patch("/api/risparmi")
+def api_risparmi_aggiorna():
+    """
+    Chiuso: scriveva su una colonna che non legge piu' nessuno.
+
+    Fino alla migrazione README §8.11 questo endpoint dichiarava il
+    risparmio del periodo su `risparmi_periodo.effettivo_risparmio`, e
+    quel numero *sostituiva* il movimento bancario nel calcolo del
+    saldo. Da quando il risparmio e' un'uscita vera di `spese`,
+    `v_risparmi_mese` calcola l'effettivo dai movimenti e quella colonna
+    non entra piu' in nessun conto: continuare ad accettarlo vorrebbe
+    dire scrivere in un posto dove nessuno guarda, che e' peggio di un
+    errore — sembra funzionare.
+
+    Risponde 409 invece di sparire perche' una scheda rimasta aperta da
+    prima del deploy lo chiamerebbe comunque, e deve sapere perche' non
+    ha funzionato.
+    """
+    return jsonify({
+        "error": "Il risparmio non si dichiara più: si registra come "
+                 "movimento vero. Usa la procedura di fine periodo su "
+                 "/spese/risparmi (o POST /spese/api/risparmi/esegui).",
+        "sostituito_da": "/spese/api/risparmi/esegui",
+    }), 409
 
 
 def _render(content: str, breadcrumb=None) -> Response:

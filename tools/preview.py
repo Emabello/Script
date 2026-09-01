@@ -36,7 +36,7 @@ DB = {
         "anno_fine_regime_agevolato": 2031,
         "margine_sicurezza": 0.10, "costi_fissi_annui": 1200.0,
         "fatturato_atteso_anno": 40000.0, "acconto_imposta_perc": 1.00,
-        "scenario_preferito": "consigliato",
+        "scenario_preferito": "consigliato", "tariffa_giornaliera": 250.00,
     }],
     "b2f_clienti": [
         {"id": 1, "tipo": "azienda", "denominazione": "B2FORGE SRL",
@@ -164,6 +164,9 @@ DB["cfg_categorie"] = [
     {"id": 6, "nome": "Altre entrate",   "ordine": 6, "attiva": True},
     {"id": 7, "nome": "Giroconto P.IVA", "ordine": 7, "attiva": True},
     {"id": 8, "nome": "Salute",          "ordine": 8, "attiva": True},
+    # Nata con la migrazione §8.11: i bonifici verso i salvadanai Revolut
+    # sono uscite vere del conto, non un numero dichiarato a parte.
+    {"id": 10, "nome": "Risparmi",       "ordine": 10, "attiva": True},
     {"id": 9, "nome": "Èlite (disattiva)", "ordine": 9, "attiva": False},
 ]
 DB["cfg_sottocategorie"] = [
@@ -187,6 +190,7 @@ _COPPIE = [
     ("Stipendio", []),
     ("Altre entrate", []),
     ("Giroconto P.IVA", []),
+    ("Risparmi", []),
     ("Èlite (disattiva)", []),
 ]
 DB["cfg_categoria_sottocategoria"] = []
@@ -221,12 +225,32 @@ def _link_id(categoria, sottocategoria):
     return None
 
 
-DB["v_spese"] = [
-    {**r, "mese": int(r["data"][5:7]), "anno": int(r["data"][:4]),
-     "metodo_pagamento": None,
-     "categoria_link_id": _link_id(r.get("categoria"), r.get("sottocategoria"))}
-    for r in DB["spese"]
-]
+def _nomi_link(link_id):
+    """Dal link_id ai due nomi, come fa la join della vista vera."""
+    for riga in DB["cfg_categoria_sottocategoria"]:
+        if riga["id"] == link_id:
+            return ((riga.get("cfg_categorie") or {}).get("nome"),
+                    (riga.get("cfg_sottocategorie") or {}).get("nome"))
+    return None, None
+
+
+def _riga_v_spese(r):
+    """Una riga di `spese` come la vede `v_spese`."""
+    link = r.get("categoria_link_id")
+    if link is None:
+        link = _link_id(r.get("categoria"), r.get("sottocategoria"))
+        cat, sub = r.get("categoria"), r.get("sottocategoria")
+    else:
+        cat, sub = _nomi_link(link)
+    data = str(r.get("data") or "")
+    return {**r, "categoria": cat, "sottocategoria": sub,
+            "categoria_link_id": link,
+            "mese": r.get("mese") or (int(data[5:7]) if len(data) >= 7 else None),
+            "anno": r.get("anno") or (int(data[:4]) if len(data) >= 4 else None),
+            "metodo_pagamento": r.get("metodo_pagamento")}
+
+
+DB["v_spese"] = [_riga_v_spese(r) for r in DB["spese"]]
 
 # v_risparmi_mese: i nomi delle colonne hanno spazi e maiuscole come nella
 # vista vera (spese/dati.py::periodi_risparmio li traduce).
@@ -259,6 +283,7 @@ def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
     totale = round(imponibile + (bollo if bollo_dovuto else 0), 2)
     return {
         "id": fid, "anno": 2026, "progressivo": prog,
+        "ore_periodo": None, "ore_snapshot": None, "ore_lette_il": None,
         "numero": f"2026/{prog:03d}", "data": data, "tipo_doc": "TD01",
         "natura_iva": "N2.2", "cliente_id": cliente_id, "cliente_snapshot": snap,
         "righe": [{**r, "tot": round(r["qta"] * r["prezzo"], 2)} for r in righe],
@@ -276,10 +301,29 @@ def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
     }
 
 
+def _ore(f):
+    """Attacca alla fattura la foto delle ore di maggio 2026 (README §8.13)."""
+    return {**f,
+            "ore_periodo": "2026-05-01",
+            "ore_lette_il": "2026-06-05T09:12:00",
+            "ore_snapshot": {
+                "anno": 2026, "mese": 5, "periodo": "2026-05-01",
+                "minuti": 9600, "ore": 160.0, "giornate": 20.0,
+                "giorni_lavorati": 21, "giorni_mese": 31,
+                "voci_illeggibili": 0,
+                "clienti": [
+                    {"nome": "ACME Sistemi", "minuti": 5760, "ore": 96.0, "giornate": 12.0},
+                    {"nome": "Nordest Logistica", "minuti": 2880, "ore": 48.0, "giornate": 6.0},
+                    {"nome": "Interno / formazione", "minuti": 960, "ore": 16.0, "giornate": 2.0},
+                ],
+                "letto_il": "2026-06-05T09:12:00", "errore": None}}
+
+
 DB["b2f_fatture"] = [
-    _fattura(1, 1, "2026-06-05", 1,
-             [{"descrizione": "Attività di consulenza SAP / sviluppo ABAP", "qta": 20, "um": "", "prezzo": 250.00}],
-             "incassata", "2026-06-30", spesa_piva_id=3),
+    _ore(_fattura(1, 1, "2026-06-05", 1,
+                  [{"descrizione": "Attività di consulenza SAP / sviluppo ABAP",
+                    "qta": 20, "um": "gg", "prezzo": 250.00}],
+                  "incassata", "2026-06-30", spesa_piva_id=3)),
     _fattura(2, 2, "2026-06-20", 2,
              [{"descrizione": "Consulenza infrastruttura di rete", "qta": 9, "um": "h", "prezzo": 195.00}],
              "incassata", "2026-07-10", spesa_piva_id=5),
@@ -422,6 +466,12 @@ class _Query:
                 new = deepcopy(it)
                 new.setdefault("id", max([r.get("id", 0) for r in rows], default=0) + 1)
                 rows.append(new)
+                # L'app scrive su `spese` ma rilegge sempre da `v_spese`.
+                # Senza questa proiezione un movimento appena registrato
+                # sparirebbe dall'anteprima, e la schermata "l'ho appena
+                # fatto" sembrerebbe rotta quando invece funziona.
+                if self.table == "spese":
+                    DB.setdefault("v_spese", []).append(_riga_v_spese(new))
                 out.append(new)
             return _Res(out)
 

@@ -689,6 +689,123 @@ def risparmio_effettivo(client, data_bonifico: str, importo: float) -> dict:
         return {"error": str(e)[:200]}
 
 
+def registra_bonifico_risparmio(client, importo, quando: str | None = None,
+                                descrizione: str | None = None,
+                                metodo: str = "Bonifico") -> dict:
+    """
+    Il bonifico verso i salvadanai, come movimento vero.
+
+    E' l'unica scrittura che chiude il cerchio della migrazione §8.11:
+    prima il risparmio era un numero digitato su `risparmi_periodo` che
+    *sostituiva* il movimento bancario, e per diciotto mesi il saldo
+    calcolato e quello della banca sono scivolati via l'uno dall'altro
+    di 829,78 €. Adesso mettere via denaro e' un'uscita dal conto come
+    comprare la benzina — perche' e' esattamente quello che succede sul
+    conto — e il saldo torna a essere `apertura + entrate − uscite`.
+
+    Non spostiamo denaro noi: il bonifico lo fai tu dalla banca. Questa
+    funzione registra che e' successo. La ripartizione fra i cinque
+    secchielli non e' scritta qui riga per riga (sarebbero cinque
+    movimenti dove la banca ne vede uno): sta nelle percentuali di
+    `impostazioni`, e `v_risparmi_mese` la ricalcola per ogni periodo.
+    """
+    try:
+        val = round(abs(float(importo or 0)), 2)
+    except (TypeError, ValueError):
+        return {"error": "importo non valido"}
+    if val <= 0:
+        return {"error": "importo mancante"}
+
+    quando = quando or date.today().isoformat()
+    link = link_categoria(client, CATEGORIA_RISPARMIO)
+    if not link:
+        return {"error": f'La categoria "{CATEGORIA_RISPARMIO}" non esiste: '
+                         f'esegui la migrazione README §8.11 nell\'SQL Editor '
+                         f'di Supabase.'}
+
+    return crea(client, {
+        "data": quando,
+        "importo": val,
+        # Uscita, non "giroconto": dal conto personale quel denaro esce
+        # davvero, e la banca lo vede come un bonifico qualunque.
+        "tipo": "uscita",
+        "metodo_pagamento": metodo,
+        "categoria_link_id": link,
+        "descrizione": descrizione or "Bonifico ai salvadanai",
+    })
+
+
+def risparmio_del_periodo(client, dal: str, al: str | None = None) -> float:
+    """
+    Quanto e' gia' stato messo via **dentro un periodo**, al netto dei
+    rientri. Serve a sapere se la procedura di fine periodo e' gia' stata
+    fatta: `v_risparmi_mese` lo espone gia', ma solo per i periodi che la
+    vista conosce — e il periodo aperto in questo momento e' l'unico che
+    conta per decidere se mostrare l'avviso.
+
+    **Senza `al` non c'e' tetto superiore, nemmeno oggi**, ed e' voluto:
+    la domanda qui non e' "quanto e' gia' uscito dal conto" (quella la
+    fa `saldo_conto`, che i movimenti futuri li esclude apposta) ma "il
+    bonifico di questo periodo l'ho gia' registrato?". Un bonifico
+    datato domani e' registrato: fermarsi a oggi direbbe di no, e la
+    procedura lo farebbe registrare una seconda volta.
+    """
+    tot = 0.0
+    try:
+        q = (client.table("v_spese").select("importo,tipo,data,categoria")
+             .eq("categoria", CATEGORIA_RISPARMIO).gte("data", dal))
+        if al:
+            q = q.lte("data", al)
+        righe = _righe(q.execute())
+    except Exception:
+        return 0.0
+    for riga in righe:
+        try:
+            imp = abs(float(riga.get("importo") or 0))
+        except (TypeError, ValueError):
+            continue
+        tot += imp if TIPI_SEGNO.get(riga.get("tipo"), 0) < 0 else -imp
+    return round(tot, 2)
+
+
+def avviso_risparmio(client) -> dict | None:
+    """
+    "E' arrivato lo stipendio e non hai ancora messo via niente."
+
+    Ritorna None quando non c'e' niente da dire — ed e' la maggior parte
+    delle volte: solo un periodo **aperto**, con un consigliato sopra
+    zero e nessuna uscita verso i salvadanai, merita di comparire in
+    home. Un avviso che c'e' sempre non lo legge piu' nessuno.
+
+    Il periodo si apre con il bonifico dello stipendio o il giroconto
+    dalla P.IVA (v_periodi_stipendio, README §8.7): e' quello il momento
+    in cui la domanda "quanto ne metto via?" ha una risposta, perche'
+    prima non si sa ancora quanto e' entrato.
+    """
+    try:
+        periodi = periodi_risparmio(client, limite=1)
+    except Exception:
+        return None
+    if not periodi:
+        return None
+
+    corrente = periodi[0]
+    dal = str(corrente.get("data_bonifico") or "")[:10]
+    if not dal:
+        return None
+    try:
+        consigliato = round(float(corrente.get("risparmio_consigliato") or 0), 2)
+    except (TypeError, ValueError):
+        return None
+    if consigliato <= 0:
+        return None
+    if risparmio_del_periodo(client, dal) > 0:
+        return None
+
+    return {"dal": dal, "consigliato": consigliato,
+            "speso": corrente.get("speso"), "rimanente": corrente.get("rimanente")}
+
+
 def impostazioni(client) -> dict:
     """Le impostazioni in vigore piu' recenti."""
     try:
