@@ -474,7 +474,8 @@ def fattura_dettaglio(fid):
             scomposizione = acc.scomponi(
                 f.get("totale"), param, fatturato_riferimento=incassato_anno,
                 rivalsa=f.get("cassa_importo") or 0,
-                bollo_addebitato=(f.get("bollo") or 0) if f.get("bollo_addebitato") else 0)
+                bollo_addebitato=(f.get("bollo") or 0) if f.get("bollo_addebitato") else 0,
+                anno=anno_f)
             if ha_incassato(f):
                 contesto = (f"Fattura incassata il {_fmt_date(f.get('data_incasso'))}. "
                             f"Metti da parte questa quota prima di considerare "
@@ -488,9 +489,14 @@ def fattura_dettaglio(fid):
             # L'anno degli acconti e' quello DOPO la fattura: il saldo
             # del suo anno si paga a giugno dell'anno dopo, e insieme al
             # saldo si versano gli acconti di quell'anno li'.
+            # L'albero sta aperto qui e solo qui: e' la pagina in cui
+            # uno guarda *quella* fattura e vuole sapere dove finisce.
+            # Sulla home e sulla situazione resta chiuso, se no la pagina
+            # diventa un muro di righe.
             acc_card = acc.card_html(scomposizione, titolo=titolo,
                                      contesto=contesto, uid="accFatt",
-                                     anno_acconto=anno_f + 1)
+                                     anno_saldo=anno_f, anno_acconto=anno_f + 1,
+                                     albero_aperto=True)
     except Exception:
         acc_card = ""
 
@@ -548,25 +554,22 @@ def fattura_dettaglio(fid):
         pref = scomposizione["scenario_preferito"]
         # L'anno degli acconti: quello dopo la fattura. Qui serve piu' che
         # nella card, perche' e' il foglio in cui i soldi si spostano
-        # davvero — scegliere "consigliato" vuol dire mandare sul conto
-        # personale anche quello che a giugno servira' per gli acconti.
+        # davvero: il numero che uno guarda e' "sposti", e quel numero non
+        # deve contenere niente che a giugno servira'.
         anno_acc = anno_f + 1
         for k in acc.SCENARI:
             quota = scomposizione["importi"][k]
             resta = scomposizione["netti"][k]
-            messo_acc = scomposizione["componenti"][k]["acconti"]
-            scoperto_acc = scomposizione["acconti_scoperti"][k]
-            if scomposizione["acconti_dovuti"] <= 0:
-                riga_acc = ""
-            elif messo_acc <= 0:
-                riga_acc = (f'<span class="sg-acc neg">Niente per gli acconti '
-                            f'{anno_acc}: scoperti € {_fmt_eur(scoperto_acc)}</span>')
-            elif scoperto_acc <= 0:
-                riga_acc = (f'<span class="sg-acc pos">Acconti {anno_acc} coperti '
-                            f'per intero: € {_fmt_eur(messo_acc)}</span>')
+            g_k = acc.gruppi(scomposizione, k)
+            # Tutti gli scenari coprono saldo, acconti e costi: la riga
+            # non dice piu' se sei coperto — lo sei — ma quanto di quello
+            # che lasci fermo e' cuscinetto, cioe' bonus se l'anno regge.
+            if g_k["fermo"] <= 0:
+                riga_acc = ('<span class="sg-acc warn">Copre esatto: nessun '
+                            'cuscinetto per gli imprevisti</span>')
             else:
-                riga_acc = (f'<span class="sg-acc warn">Di cui € {_fmt_eur(messo_acc)} '
-                            f'di acconti {anno_acc} · scoperti € {_fmt_eur(scoperto_acc)}</span>')
+                riga_acc = (f'<span class="sg-acc pos">Di cui € {_fmt_eur(g_k["fermo"])} '
+                            f'di cuscinetto: bonus se l\'anno va come previsto</span>')
             titolo_s, spiega = acc.ETICHETTE[k]
             righe_scelte.append(f'''
             <label class="scelta-giro">
@@ -593,9 +596,10 @@ def fattura_dettaglio(fid):
         <div class="card">
           <div class="card-head"><div class="eyebrow">Ripartizione dell'incasso</div></div>
           <p class="small muted">
-            L'incasso è tutto sul conto P.IVA, ma non è tutto tuo. Scegli quanto
-            lasciare da parte: il resto viene spostato sul conto personale con un
-            giroconto registrato su entrambi i conti.
+            L'incasso è tutto sul conto P.IVA, ma non è tutto tuo. Tutti e quattro
+            gli scenari coprono saldo, acconti {anno_acc} e costi fissi: cambia
+            solo il cuscinetto che lasci sopra. Il resto si sposta sul conto
+            personale con un giroconto registrato su entrambi i conti.
           </p>
           {nota_rivalsa_card}
           <button type="button" class="btn block mt-4" onclick="openModal('modalGiro')">

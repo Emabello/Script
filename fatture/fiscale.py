@@ -325,7 +325,8 @@ def _situazione_data(sb, anno: int) -> dict:
     # dall'API cosi' le altre pagine non devono rifare il calcolo.
     scomposizione = acc.scomponi(tot["incasso"], param,
                                  fatturato_riferimento=tot["incasso"],
-                                 rivalsa=tot["rivalsa"], bollo_addebitato=tot["bollo"])
+                                 rivalsa=tot["rivalsa"], bollo_addebitato=tot["bollo"],
+                                 anno=anno)
 
     return {
         "anno": anno,
@@ -461,6 +462,138 @@ def situazione_data(sb, anno: int) -> dict:
 # Dashboard /fatture/situazione
 # ---------------------------------------------------------------------------
 
+def _fondo_tasse(sb, anno: int, fabbisogno: float) -> dict:
+    """
+    Il fondo tasse dell'anno: quanto servira', quanto c'e' davvero.
+
+    E' la domanda che nessuna pagina faceva. La card della fattura dice
+    quanto accantonare *su quella fattura*; nessuno sommava le decisioni
+    e le confrontava con i soldi veri. Dieci fatture ripartite ciascuna
+    in modo difendibile possono lasciare un buco che si scopre a giugno,
+    perche' il conto P.IVA si svuota un giroconto alla volta e ogni
+    singolo giroconto sembra piccolo.
+
+    Tre numeri, e il terzo e' l'unico che non si puo' raccontare:
+      serve       il fabbisogno sull'incassato dell'anno (tasse + costi)
+      deciso      la somma degli accantonamenti sulle fatture ripartite
+      sul conto   il saldo P.IVA reale, oggi
+
+    "deciso" e' un'intenzione, "sul conto" e' un fatto: se divergono, il
+    denaro e' uscito da qualche altra parte.
+    """
+    dati = {
+        "serve": round(float(fabbisogno or 0), 2),
+        "deciso": 0.0, "da_ripartire": 0.0,
+        "n_ripartite": 0, "n_da_ripartire": 0,
+        "saldo_piva": None, "disponibile": False,
+    }
+    try:
+        r = (sb.table("b2f_fatture")
+               .select("totale,accantonamento_importo,data_giroconto,data_incasso,stato")
+               .neq("stato", "annullata")
+               .gte("data_incasso", f"{anno}-01-01")
+               .lte("data_incasso", f"{anno}-12-31").execute())
+        righe = r.data or []
+    except Exception:
+        return dati
+
+    for f in righe:
+        if not f.get("data_incasso"):
+            continue
+        if f.get("data_giroconto"):
+            dati["deciso"] += float(f.get("accantonamento_importo") or 0)
+            dati["n_ripartite"] += 1
+        else:
+            # Non ripartita: l'incasso e' ancora tutto sul conto P.IVA.
+            # Non e' "accantonato" — e' solo denaro non ancora diviso.
+            dati["da_ripartire"] += float(f.get("totale") or 0)
+            dati["n_da_ripartire"] += 1
+
+    dati["deciso"] = round(dati["deciso"], 2)
+    dati["da_ripartire"] = round(dati["da_ripartire"], 2)
+    try:
+        dati["saldo_piva"] = float(saldo_piva(sb).get("saldo") or 0)
+        dati["disponibile"] = True
+    except Exception:
+        pass
+    return dati
+
+
+def _card_fondo_tasse(d: dict, anno: int) -> str:
+    """
+    La card del fondo. Il numero grande e' la copertura, non un importo:
+    la domanda e' "ci sono?", e la risposta e' una percentuale.
+    """
+    if not d.get("disponibile") or d["serve"] <= 0:
+        return ""
+
+    saldo = d["saldo_piva"] or 0.0
+    serve = d["serve"]
+    copertura = saldo / serve if serve > 0 else 0.0
+    manca = round(max(serve - saldo, 0.0), 2)
+    avanza = round(max(saldo - serve, 0.0), 2)
+
+    if copertura >= 1.0:
+        cls, chip = "pos", "Coperto"
+    elif copertura >= 0.7:
+        cls, chip = "warn", "Quasi"
+    else:
+        cls, chip = "neg", "Scoperto"
+
+    pct_barra = min(copertura * 100, 100)
+    pct_txt = f"{copertura * 100:.0f}".replace(".", ",")
+
+    if manca > 0:
+        verdetto = (f'<strong class="neg">Mancano &euro; {_fmt_eur(manca)}.</strong> '
+                    f'Sono soldi che a giugno serviranno comunque: se non sono '
+                    f'sul conto P.IVA, arriveranno da quello personale.')
+    else:
+        verdetto = (f'<strong class="pos">Ci sono tutti, e avanzano '
+                    f'&euro; {_fmt_eur(avanza)}.</strong> Quella parte &egrave; '
+                    f'davvero tua: &egrave; il cuscinetto che hai accumulato '
+                    f'scegliendo gli scenari.')
+
+    righe_dettaglio = f'''
+      <div class="row"><span class="t">Ti serviranno
+        <span class="sub">saldo {anno}, acconti {anno + 1} e costi fissi,
+        calcolati sull'incassato dell'anno</span></span>
+        <span class="v tnum">&euro; {_fmt_eur(serve)}</span></div>
+      <div class="row"><span class="t">Sul conto P.IVA, oggi
+        <span class="sub">entrate meno uscite meno giroconti, dall'apertura</span></span>
+        <span class="v tnum {cls}">&euro; {_fmt_eur(saldo)}</span></div>
+      <div class="row"><span class="t">Di cui deciso di tenere
+        <span class="sub">{d["n_ripartite"]} fattur{"a" if d["n_ripartite"] == 1 else "e"}
+        gi&agrave; ripartit{"a" if d["n_ripartite"] == 1 else "e"}: la quota rimasta
+        sul conto</span></span>
+        <span class="v tnum">&euro; {_fmt_eur(d["deciso"])}</span></div>
+      <div class="row"><span class="t">Incassato non ancora ripartito
+        <span class="sub">{d["n_da_ripartire"]} fattur{"a" if d["n_da_ripartire"] == 1 else "e"}:
+        i soldi sono tutti l&igrave;, la quota tua non &egrave; ancora uscita</span></span>
+        <span class="v tnum">&euro; {_fmt_eur(d["da_ripartire"])}</span></div>'''
+
+    return f'''
+    <div class="card">
+      <div class="card-head">
+        <div class="eyebrow">Fondo tasse {anno}</div>
+        <span class="chip {cls}">{chip}</span>
+      </div>
+      <div class="stat">
+        <div class="val tnum {cls}">{pct_txt} %</div>
+        <div class="lbl">di quello che ti servir&agrave; &egrave; sul conto P.IVA</div>
+      </div>
+      <div class="meter mt-3"><i class="{cls}" style="width:{pct_barra:.1f}%"></i></div>
+      <div class="small mt-3">{verdetto}</div>
+      <div class="rows detail mt-3">{righe_dettaglio}</div>
+      <div class="small muted mt-3">
+        Il conto P.IVA porta anche il fondo degli anni prima. Se il saldo
+        dell'anno scorso non l'hai ancora versato, una parte di quel denaro
+        &egrave; gi&agrave; impegnata e la copertura qui sopra &egrave; pi&ugrave;
+        ottimista del vero.
+      </div>
+    </div>'''
+
+
+
 @fatture_bp.get("/situazione")
 def situazione_dashboard():
     sb, err = _supabase_or_error()
@@ -537,7 +670,8 @@ def situazione_dashboard():
     scomposizione = acc.scomponi(t["incasso"], s["parametri"],
                                  fatturato_riferimento=t["incasso"],
                                  rivalsa=t.get("rivalsa_totale", 0),
-                                 bollo_addebitato=t.get("bollo_totale", 0))
+                                 bollo_addebitato=t.get("bollo_totale", 0),
+                                 anno=anno)
     acc_card = acc.card_html(
         scomposizione,
         titolo=f"Da accantonare sul {anno}",
@@ -545,8 +679,16 @@ def situazione_dashboard():
                  "esatto; il sicuro copre anche l'anno in cui saldo e acconti "
                  "cadono insieme.",
         uid="accAnno",
-        anno_acconto=anno + 1,
+        anno_saldo=anno, anno_acconto=anno + 1,
     ) if t["incasso"] > 0 else ""
+
+    # --- Il fondo tasse: quanto servira', quanto c'e' davvero ---------------
+    # La card sopra dice quanto accantonare. Questa dice se i soldi ci
+    # sono. Sono due domande diverse, e finora si rispondeva solo alla
+    # prima — una per fattura, senza che nessuno le sommasse mai.
+    fondo_card = _card_fondo_tasse(
+        _fondo_tasse(sb, anno, scomposizione.get("fabbisogno_con_costi", 0)),
+        anno) if t["incasso"] > 0 else ""
 
     # --- Limite forfettario --------------------------------------------------
     residuo = max(s["limite_ragguagliato"] - t["incasso"], 0)
@@ -645,6 +787,7 @@ def situazione_dashboard():
     {toolbar_anno}
     {kpi}
     {acc_card}
+    {fondo_card}
     <div class="grid split mt-4">
       <div class="stack">{mensile}</div>
       <div class="stack">{limite}{scadenze}{azioni}</div>
@@ -847,7 +990,17 @@ def parametri_editor():
     p = _get_parametri(sb)
 
     # Anteprima dal vivo: mostra subito l'effetto dei parametri su 1.000 €
-    anteprima = acc.scomponi(1000.0, p, fatturato_riferimento=0.0)
+    anteprima = acc.scomponi(1000.0, p, fatturato_riferimento=0.0,
+                             anno=date.today().year)
+    # Le righe dell'anteprima si generano da SCENARI: aggiungerne uno non
+    # deve lasciare qui tre nomi scritti a mano che invecchiano in
+    # silenzio (e' quello che era successo con "minimo" e "sicuro").
+    righe_anteprima = "".join(
+        f'''<div class="row"><span class="t">{acc.ETICHETTE[k][0]}
+             <span class="sub">{acc.ETICHETTE[k][1]}</span></span>
+           <span class="v tnum{" accent" if k == p.get("scenario_preferito") else ""}">
+             € {_fmt_eur(anteprima["importi"][k])}</span></div>'''
+        for k in acc.SCENARI)
     scen_opts = "".join(
         f'<option value="{k}"{" selected" if p.get("scenario_preferito") == k else ""}>'
         f'{acc.ETICHETTE[k][0]}</option>' for k in acc.SCENARI
@@ -951,12 +1104,7 @@ def parametri_editor():
         <div class="card">
           <div class="card-head"><div class="eyebrow">Effetto su 1.000 € incassati</div></div>
           <div class="rows detail">
-            <div class="row"><span class="t">Minimo <span class="sub">{acc.ETICHETTE["minimo"][1]}</span></span>
-              <span class="v tnum">€ {_fmt_eur(anteprima["importi"]["minimo"])}</span></div>
-            <div class="row"><span class="t">Consigliato <span class="sub">{acc.ETICHETTE["consigliato"][1]}</span></span>
-              <span class="v tnum accent">€ {_fmt_eur(anteprima["importi"]["consigliato"])}</span></div>
-            <div class="row"><span class="t">Sicuro <span class="sub">{acc.ETICHETTE["sicuro"][1]}</span></span>
-              <span class="v tnum">€ {_fmt_eur(anteprima["importi"]["sicuro"])}</span></div>
+            {righe_anteprima}
           </div>
           <div class="small muted mt-3">
             Salva per aggiornare l'anteprima.

@@ -175,6 +175,7 @@ def _dashboard_data() -> dict:
             incassato_mese, s["parametri"],
             fatturato_riferimento=s["totali"]["incasso"],
             rivalsa=mese.get("rivalsa", 0), bollo_addebitato=mese.get("bollo", 0),
+            anno=today.year,
         )
         out["accantonamento"] = scomposizione
         if incassato_mese > 0:
@@ -185,7 +186,7 @@ def _dashboard_data() -> dict:
                          f"Le tasse del forfettario si pagano per cassa: conta quando "
                          f"il denaro arriva, non quando emetti.",
                 uid="accHome",
-                anno_acconto=today.year + 1,
+                anno_saldo=today.year, anno_acconto=today.year + 1,
             )
     except Exception as e:
         out["errore"] = f"Situazione fiscale non disponibile: {str(e)[:160]}"

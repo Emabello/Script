@@ -5,8 +5,7 @@ IL PROBLEMA
 -----------
 Nel forfettario le tasse si pagano per cassa: quando incassi una fattura,
 una parte di quei soldi non e' tua. Il conto matematico e' semplice, ma
-il conto matematico da solo e' una pessima guida all'accantonamento,
-per due motivi che qui vengono resi espliciti.
+il conto matematico da solo e' una pessima guida all'accantonamento.
 
 LA MATEMATICA
 -------------
@@ -20,41 +19,69 @@ inclusi: entrambi concorrono al reddito):
 I contributi previdenziali sono deducibili, per questo l'imposta si
 calcola su (I - C) e non su I.
 
-    Dovuto = C + T
+    Saldo dell'anno = C + T                                (19,94 % di L)
 
-In percentuale sul lordo, con i parametri di default:
-    C/L = 0,67 x 0,2607                = 17,47 %
-    T/L = 0,67 x (1-0,2607) x 0,05     =  2,48 %
-    ------------------------------------------------
-    Dovuto                             = 19,94 %
+IL PRIMO ANNO NON HA CONTRIBUTI DA DEDURRE
+------------------------------------------
+La deduzione vale per i contributi **versati**, per cassa (art. 1 c. 64
+L. 190/2014). Nell'anno in cui apri la partita IVA non versi niente —
+il primo versamento cade a giugno dell'anno dopo — quindi in quell'anno
+non c'e' niente da dedurre e l'imposta si calcola sull'imponibile pieno:
 
-PERCHE' 19,94 % NON E' LA CIFRA DA METTERE DA PARTE
----------------------------------------------------
-1. Gli acconti. Il saldo dell'anno N si paga a giugno N+1, ma nello
-   stesso anno solare si versano anche gli acconti per l'anno N+1
-   (INPS all'80 % col metodo storico, imposta sostitutiva al 100 %).
-   A regime gli acconti si scomputano dal saldo successivo e l'uscita
-   annua torna a essere una sola annualita' — ma nell'anno di
-   transizione le due cose cadono insieme e il fabbisogno di cassa e':
+    anno di apertura   T = I x aliquota_imposta            (3,35 % di L)
+    dagli anni dopo    T = (I - C) x aliquota_imposta      (2,48 % di L)
 
-       1,8 x C + 2 x T  =  36,39 % del lordo
+Sono 0,87 punti di L sul saldo e altrettanti sull'acconto imposta: in
+totale il primo anno costa **1,75 punti in piu'** di quanto direbbe la
+formula a regime. Calcolarlo con la deduzione anche il primo anno
+sottostima il fabbisogno, ed e' l'unica direzione dell'errore che fa
+male. Serve `anno` e `data_apertura_piva` per saperlo: senza, si assume
+il caso a regime.
 
-2. I costi fissi. Commercialista, PEC, bolli, commissioni: non sono
-   tasse, ma sono uscite certe che escono dagli stessi soldi.
+Dal secondo anno il modello resta a una annualita' di contributi dedotti,
+mentre nella realta' nel secondo anno se ne versano circa 1,8 (saldo del
+primo piu' acconti del secondo). L'errore in quel caso e' **verso
+l'alto** — accantoni un po' piu' del dovuto — e va bene cosi'.
 
-I QUATTRO SCENARI
------------------
-    minimo       C + T                          il puro dovuto, margine zero
-    consigliato  minimo x (1+margine) + costi   quello che l'app evidenzia
-    prudente     minimo + meta' acconti
-                 + costi + margine              la via di mezzo
-    sicuro       1,8C + 2T + costi              copre l'anno degli acconti
+GLI ACCONTI, CHE SONO IL VERO MOTIVO PER CUI SERVE UN MODELLO
+-------------------------------------------------------------
+Il saldo dell'anno N si paga a giugno N+1, ma nello stesso anno solare si
+versano anche gli acconti per l'anno N+1 (INPS all'80 % col metodo
+storico, imposta sostitutiva al 100 %). Il fabbisogno di cassa e' quindi:
 
-Perche' esiste "prudente": fra consigliato (~22 %) e sicuro (~36 %) c'e'
-un salto grosso, e immobilizzare il 36 % di ogni incasso e' pesante se
-l'anno degli acconti non e' imminente. "Prudente" mette da parte il
-dovuto pieno piu' meta' degli acconti: ci arrivi in due anni invece che
-in uno, senza scoprirti del tutto.
+    Fabbisogno fiscale = saldo + acconti = C + T + 0,8C + T
+
+       a regime          36,39 % di L
+       anno di apertura  38,14 % di L
+
+A regime gli acconti si scomputano dal saldo successivo, e a fatturato
+costante l'uscita annua torna a essere una annualita' sola. Ma quel
+fondo, la prima volta, va costituito — e finche' non c'e' il fabbisogno
+e' quello pieno.
+
+I QUATTRO SCENARI: TUTTI COPRONO, CAMBIA SOLO IL CUSCINETTO
+------------------------------------------------------------
+Prima gli scenari erano quattro gradi di copertura, e i primi due
+lasciavano scoperti gli acconti: sceglierli voleva dire trovarsi corti
+a giugno, senza che niente lo dicesse. Ora **tutti e quattro coprono
+saldo, acconti e costi fissi**. Quello che cambia e' il margine sul
+fabbisogno fiscale, cioe' il cuscinetto per la crescita e gli imprevisti
+— e il cuscinetto, se l'anno va come previsto, e' il bonus che resta.
+
+    copertura    fabbisogno + costi                      margine x 0
+    consigliato  fabbisogno x (1 + margine) + costi       margine x 1
+    prudente     fabbisogno x (1 + 2 margine) + costi     margine x 2
+    blindato     fabbisogno x (1 + 3,5 margine) + costi   margine x 3,5
+
+Con `margine_sicurezza` al 10 % (il default) diventano 0 / +10 / +20 /
++35 % sul fabbisogno:
+
+    anno di apertura   38,1 %   42,0 %   45,8 %   51,5 %
+    a regime           36,4 %   40,0 %   43,7 %   49,1 %
+
+"Prudente" a +20 % regge una crescita del fatturato del 20 % senza dover
+recuperare: gli acconti versati sono calcolati sull'anno prima, e se
+cresci il saldo dopo e' piu' alto di quanto avevi accantonato.
 
 Il margine di sicurezza, i costi fissi annui e il fatturato atteso sono
 parametri modificabili in /fatture/parametri.
@@ -63,7 +90,7 @@ parametri modificabili in /fatture/parametri.
 # Parametri specifici dell'accantonamento, con i loro default. Vengono
 # uniti a quelli fiscali generali (coefficiente, aliquote, ...).
 PARAMETRI_DEFAULT = {
-    "margine_sicurezza": 0.10,       # cuscinetto relativo sul dovuto
+    "margine_sicurezza": 0.10,       # cuscinetto relativo sul fabbisogno
     "costi_fissi_annui": 0.0,        # commercialista + PEC + varie
     "fatturato_atteso_anno": 0.0,    # 0 = stimalo dai dati dell'anno
     "acconto_imposta_perc": 1.00,    # acconto imposta sostitutiva (100 %)
@@ -72,18 +99,42 @@ PARAMETRI_DEFAULT = {
 
 PARAMETRI_CAMPI = tuple(PARAMETRI_DEFAULT.keys())
 
-SCENARI = ("minimo", "consigliato", "prudente", "sicuro")
+SCENARI = ("copertura", "consigliato", "prudente", "blindato")
 
-ETICHETTE = {
-    "minimo":      ("Minimo", "Il puro dovuto: nessun margine, nessun costo fisso coperto."),
-    "consigliato": ("Consigliato", "Dovuto + costi fissi pro-quota + margine di sicurezza."),
-    "prudente":    ("Prudente", "Dovuto + metà degli acconti + costi + margine: ci arrivi in due anni."),
-    "sicuro":      ("Sicuro", "Copre anche l'anno in cui saldo e acconti cadono insieme."),
+# Quante volte il margine di sicurezza entra in ciascuno scenario. Il
+# margine resta UN parametro solo (`margine_sicurezza`): cambiando quello
+# si muovono tutti e quattro mantenendo le distanze. Con il default al
+# 10 % escono 0 / +10 / +20 / +35 % sul fabbisogno fiscale.
+MOLTIPLICATORI_MARGINE = {
+    "copertura":   0.0,
+    "consigliato": 1.0,
+    "prudente":    2.0,
+    "blindato":    3.5,
 }
 
-# Quota degli acconti coperta dallo scenario "prudente". A 0,5 il
-# fabbisogno dell'anno-picco si accumula in due anni invece che in uno.
-PRUDENTE_QUOTA_ACCONTI = 0.5
+ETICHETTE = {
+    "copertura":   ("Copertura",
+                    "Saldo, acconti e costi fissi. Coperto esatto, senza cuscinetto."),
+    "consigliato": ("Consigliato",
+                    "Copertura piu' un margine per gli imprevisti. E' quello che l'app propone."),
+    "prudente":    ("Prudente",
+                    "Regge una crescita del fatturato del 20 % senza doverla recuperare."),
+    "blindato":    ("Blindato",
+                    "Circa meta' dell'incasso resta ferma: a giugno non ci pensi."),
+}
+
+# Gli scenari di prima. Restano scritti sulle fatture gia' ripartite, e
+# vanno letti senza rompersi: "minimo" copriva solo il saldo, quindi il
+# suo erede naturale e' "copertura" (il minimo che oggi e' ancora sicuro);
+# "sicuro" copriva saldo e acconti senza margine, cioe' la stessa cosa.
+SCENARI_LEGACY = {"minimo": "copertura", "sicuro": "copertura"}
+
+
+def normalizza_scenario(scenario: str | None) -> str:
+    """Riporta gli scenari storici sulla nomenclatura attuale."""
+    s = scenario or "consigliato"
+    s = SCENARI_LEGACY.get(s, s)
+    return s if s in SCENARI else "consigliato"
 
 
 def _f(param: dict, chiave: str, default: float) -> float:
@@ -97,30 +148,64 @@ def _f(param: dict, chiave: str, default: float) -> float:
         return float(default)
 
 
-def aliquote(param: dict) -> dict:
+def primo_anno_attivita(param: dict, anno: int | None) -> bool:
+    """
+    L'anno indicato e' quello in cui la partita IVA e' stata aperta?
+
+    E' l'unico anno in cui non si versa un euro di contributi, quindi
+    l'unico in cui non c'e' niente da dedurre dall'imponibile. Senza
+    `anno` o senza `data_apertura_piva` si risponde no: si assume il caso
+    a regime, che e' quello che vale per tutti gli anni tranne uno.
+    """
+    if anno is None:
+        return False
+    apertura = param.get("data_apertura_piva")
+    try:
+        return int(anno) == int(str(apertura)[:4])
+    except (TypeError, ValueError):
+        return False
+
+
+def aliquote(param: dict, anno: int | None = None) -> dict:
     """
     Aliquote effettive **sul lordo incassato**, non sull'imponibile.
     Sono i numeri che servono per dire "di 100 euro incassati, X sono
     del fisco" senza rifare ogni volta la catena di moltiplicazioni.
+
+    `anno` serve solo a sapere se e' l'anno di apertura della partita
+    IVA: in quell'anno i contributi non sono ancora stati versati e
+    quindi non si deducono (vedi il modulo).
     """
     coeff     = _f(param, "coeff_ateco", 0.67)
     aliq_inps = _f(param, "aliquota_inps", 0.2607)
     aliq_imp  = _f(param, "aliquota_imposta", 0.05)
     acc_inps  = _f(param, "aliquota_acconto", 0.80)
     acc_imp   = _f(param, "acconto_imposta_perc", 1.00)
+    primo     = primo_anno_attivita(param, anno)
 
     q_inps    = coeff * aliq_inps
-    q_imposta = coeff * (1.0 - aliq_inps) * aliq_imp
-    dovuto    = q_inps + q_imposta
-    picco     = q_inps * (1.0 + acc_inps) + q_imposta * (1.0 + acc_imp)
+    base_imposta = coeff if primo else coeff * (1.0 - aliq_inps)
+    q_imposta = base_imposta * aliq_imp
+    saldo     = q_inps + q_imposta
+    q_acc_inps = q_inps * acc_inps
+    q_acc_imp  = q_imposta * acc_imp
+    acconti   = q_acc_inps + q_acc_imp
 
     return {
         "inps": q_inps,
         "imposta": q_imposta,
-        "dovuto": dovuto,
-        "picco_cassa": picco,
-        "acconto_inps": q_inps * acc_inps,
-        "acconto_imposta": q_imposta * acc_imp,
+        # "dovuto" e' il vecchio nome del saldo dell'anno: resta come
+        # alias perche' fuori di qui qualcuno potrebbe leggerlo.
+        "dovuto": saldo,
+        "saldo": saldo,
+        "acconto_inps": q_acc_inps,
+        "acconto_imposta": q_acc_imp,
+        "acconti": acconti,
+        # Quello che serve avere in mano l'anno in cui saldo e acconti
+        # cadono insieme. E' il pavimento di tutti e quattro gli scenari.
+        "fabbisogno": saldo + acconti,
+        "picco_cassa": saldo + acconti,
+        "primo_anno": primo,
     }
 
 
@@ -143,9 +228,10 @@ def quota_costi_fissi(param: dict, fatturato_riferimento: float = 0.0) -> float:
 
 
 def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0,
-            rivalsa: float = 0.0, bollo_addebitato: float = 0.0) -> dict:
+            rivalsa: float = 0.0, bollo_addebitato: float = 0.0,
+            anno: int | None = None) -> dict:
     """
-    Scompone un incasso lordo e calcola i tre scenari di accantonamento.
+    Scompone un incasso lordo e calcola i quattro scenari.
 
     Args:
       lordo: importo incassato (totale fattura).
@@ -155,14 +241,22 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0,
       rivalsa, bollo_addebitato: gia' inclusi in `lordo` (concorrono al
         reddito, vedi il modulo — Risposta Agenzia Entrate 428/2022 per
         il bollo). Non entrano in nessun calcolo qui: servono solo a
-        `card_html()` per mostrarne la quota, a scopo di trasparenza.
+        mostrarne la quota, a scopo di trasparenza.
+      anno: l'anno dell'incasso. Serve a sapere se e' l'anno di apertura
+        della partita IVA, l'unico senza contributi da dedurre. Senza, si
+        assume il caso a regime.
+
+    OGNI SCENARIO E' UNA SOMMA DI VOCI DICHIARATE, non un numero a se'.
+    `importi[k]` e' esattamente `sum(componenti[k].values())`: il totale
+    non puo' contenere niente che non sia nominato, e le righe mostrate
+    a schermo sommano al numero grande.
     """
     try:
         lordo = float(lordo or 0)
     except (TypeError, ValueError):
         lordo = 0.0
 
-    a = aliquote(param)
+    a = aliquote(param, anno)
     margine_perc = _f(param, "margine_sicurezza", 0.10)
     costi_perc = quota_costi_fissi(param, fatturato_riferimento)
 
@@ -170,65 +264,59 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0,
     imponibile = round(lordo * coeff, 2)
     inps       = round(lordo * a["inps"], 2)
     imposta    = round(lordo * a["imposta"], 2)
-
-    costi  = round(lordo * costi_perc, 2)
-    margine = round(round(inps + imposta, 2) * margine_perc, 2)
-
-    # Gli acconti dell'anno successivo che questo incasso si tira dietro:
-    # e' la quota per cui, l'anno in cui saldo e acconti cadono insieme,
-    # servono due annualita' invece di una.
-    acconto_inps = round(lordo * a["acconto_inps"], 2)
+    acconto_inps    = round(lordo * a["acconto_inps"], 2)
     acconto_imposta = round(lordo * a["acconto_imposta"], 2)
-    acconti_pieni = round(acconto_inps + acconto_imposta, 2)
-    acconti_meta = round(acconti_pieni * PRUDENTE_QUOTA_ACCONTI, 2)
+    costi      = round(lordo * costi_perc, 2)
 
-    # OGNI SCENARIO E' UNA SOMMA DI VOCI DICHIARATE, non un numero a se'.
-    # Prima gli importi si calcolavano ciascuno per conto suo e la card
-    # mostrava il resto sotto un'unica etichetta "Costi e margine" — che
-    # per "prudente" e "sicuro" conteneva in realta' la quota acconti,
-    # cioe' l'unica voce che dice quanto stai tenendo per l'anno dopo.
-    # Tenendo le voci esplicite, il totale non puo' piu' contenere niente
-    # che non sia nominato, e la card puo' dirlo riga per riga.
-    componenti = {
-        "minimo":      {"inps": inps, "imposta": imposta,
-                        "acconti": 0.0, "costi": 0.0, "margine": 0.0},
-        "consigliato": {"inps": inps, "imposta": imposta,
-                        "acconti": 0.0, "costi": costi, "margine": margine},
-        "prudente":    {"inps": inps, "imposta": imposta,
-                        "acconti": acconti_meta, "costi": costi, "margine": margine},
-        # "sicuro" non ha margine: il margine c'e' gia', ed e' l'anno
-        # intero di acconti che sta mettendo da parte.
-        "sicuro":      {"inps": inps, "imposta": imposta,
-                        "acconti": acconti_pieni, "costi": costi, "margine": 0.0},
-    }
+    # Il fabbisogno fiscale e' il pavimento: sotto non scende nessuno
+    # scenario. Il margine si applica a quello, non al solo saldo — e'
+    # il numero che deve reggere, non una sua parte.
+    fabbisogno = round(inps + imposta + acconto_inps + acconto_imposta, 2)
+
+    componenti = {}
+    for k in SCENARI:
+        componenti[k] = {
+            "inps": inps,
+            "imposta": imposta,
+            "acconto_inps": acconto_inps,
+            "acconto_imposta": acconto_imposta,
+            "costi": costi,
+            "margine": round(fabbisogno * margine_perc
+                             * MOLTIPLICATORI_MARGINE[k], 2),
+        }
     importi = {k: round(sum(v.values()), 2) for k, v in componenti.items()}
 
     return {
         "lordo": round(lordo, 2),
+        "anno": anno,
+        "primo_anno": a["primo_anno"],
         "rivalsa": round(float(rivalsa or 0), 2),
         "bollo_addebitato": round(float(bollo_addebitato or 0), 2),
         "coeff": coeff,
         "imponibile": imponibile,
         "inps": inps,
         "imposta": imposta,
+        "saldo": round(inps + imposta, 2),
         "acconto_inps": acconto_inps,
         "acconto_imposta": acconto_imposta,
-        # Quanto di acconti questo incasso porta con se', in totale: e' il
-        # metro su cui si misura la copertura di ogni scenario.
-        "acconti_dovuti": acconti_pieni,
-        # Le due percentuali con cui si calcolano gli acconti (INPS 80 %,
-        # imposta 100 % di default). Servono all'etichetta della card:
-        # sono parametri, non costanti, e scritte a mano invecchierebbero.
+        "acconti_dovuti": round(acconto_inps + acconto_imposta, 2),
+        # Quanto serve avere in mano, tasse e costi, senza cuscinetto.
+        # E' il pavimento di ogni scenario: `acconti_scoperti` e' zero
+        # ovunque per costruzione, e resta esposto perche' le pagine lo
+        # leggono e perche' un domani un margine negativo lo romperebbe.
+        "fabbisogno": fabbisogno,
+        "fabbisogno_con_costi": round(fabbisogno + costi, 2),
+        "acconti_scoperti": {k: 0.0 for k in SCENARI},
         "aliquote_acconto": {
             "inps": _f(param, "aliquota_acconto", 0.80),
             "imposta": _f(param, "acconto_imposta_perc", 1.00),
         },
         "costi_fissi": costi,
-        "margine": margine,
+        # Il margine dello scenario preferito, per chi vuole un numero
+        # solo; quello per scenario sta in `componenti`.
+        "margine": componenti[normalizza_scenario(
+            param.get("scenario_preferito"))]["margine"],
         "componenti": componenti,
-        # Quanto resta scoperto degli acconti, scenario per scenario.
-        "acconti_scoperti": {k: round(acconti_pieni - v["acconti"], 2)
-                             for k, v in componenti.items()},
         "importi": importi,
         "netti": {k: round(lordo - v, 2) for k, v in importi.items()},
         # Le aliquote effettive escono dagli importi, non da una seconda
@@ -238,17 +326,17 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0,
             **{k: ((importi[k] / lordo) if lordo else 0.0) for k in SCENARI},
             "inps": a["inps"],
             "imposta": a["imposta"],
+            "fabbisogno": a["fabbisogno"],
         },
-        "scenario_preferito": (param.get("scenario_preferito")
-                               if param.get("scenario_preferito") in SCENARI
-                               else "consigliato"),
+        "scenario_preferito": normalizza_scenario(param.get("scenario_preferito")),
     }
 
 
 def totali_periodo(incassato: float, param: dict,
-                   fatturato_riferimento: float = 0.0) -> dict:
+                   fatturato_riferimento: float = 0.0,
+                   anno: int | None = None) -> dict:
     """Stessa scomposizione applicata a un aggregato (mese, anno)."""
-    return scomponi(incassato, param, fatturato_riferimento)
+    return scomponi(incassato, param, fatturato_riferimento, anno=anno)
 
 
 # ---------------------------------------------------------------------------
@@ -279,71 +367,255 @@ def _riga_rivalsa_bollo(s: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# L'albero della fattura
+# ---------------------------------------------------------------------------
+# Il numero grande dice quanto accantoni. L'albero dice DOVE VA, e lo dice
+# in una forma sola: ogni riga e' un ramo di quella sopra, le foglie
+# sommano al ramo, i tre rami grossi sommano al lordo. Se il conto non
+# torna si vede, perche' le barre sono tutte in scala sullo stesso lordo.
+#
+# Tre gruppi, tre colori, e il colore e' il significato:
+#   rosso   uscira' davvero — tasse e costi certi, non sono tuoi
+#   giallo  resta fermo ma e' tuo — il margine: se l'anno va come previsto
+#           e' il bonus che ti prendi alla fine
+#   verde   tuo subito — va sul conto personale stasera
+
+ALBERO_CSS = """
+<style>
+  .alb{margin-top:var(--sp-3)}
+  .alb-ramo{margin-left:9px;padding-left:14px;
+    border-left:1px solid var(--line-strong)}
+  .alb-riga{position:relative;display:grid;
+    grid-template-columns:minmax(0,1fr) 72px auto 54px;
+    gap:10px;align-items:center;padding:7px 0;font-size:13px}
+  .alb-riga::before{content:"";position:absolute;left:-14px;top:50%;
+    width:10px;height:1px;background:var(--line-strong)}
+  .alb-riga.radice::before{display:none}
+  .alb-nome{min-width:0;color:var(--ink-2);line-height:1.35}
+  .alb-sub{display:block;font-size:11px;color:var(--ink-3);margin-top:1px}
+  .alb-eur{text-align:right;color:var(--ink-2);white-space:nowrap}
+  .alb-pct{text-align:right;font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+  .alb-barra{height:7px;border-radius:var(--r-full);background:var(--surface-3);
+    overflow:hidden}
+  .alb-barra i{display:block;height:100%;border-radius:var(--r-full);
+    background:var(--ink-4);transition:width .25s ease}
+
+  /* La radice: il lordo, in grande. Tutto il resto e' una sua parte. */
+  .alb-riga.radice{padding:4px 0 10px;border-bottom:1px solid var(--line);
+    margin-bottom:4px}
+  .alb-riga.radice .alb-nome{color:var(--ink);font-weight:600;font-size:13.5px}
+  .alb-riga.radice .alb-eur{color:var(--ink);font-weight:600;font-size:14px}
+
+  /* I tre rami grossi. */
+  .alb-riga.gruppo .alb-nome{font-weight:600;color:var(--ink);font-size:13.5px}
+  .alb-riga.gruppo .alb-eur{font-weight:600}
+  .alb-riga.g-esce .alb-barra i{background:var(--neg)}
+  .alb-riga.g-fermo .alb-barra i{background:var(--warn)}
+  .alb-riga.g-tuo  .alb-barra i{background:var(--pos)}
+  .alb-riga.g-esce .alb-eur{color:var(--neg)}
+  .alb-riga.g-fermo .alb-eur{color:var(--warn)}
+  .alb-riga.g-tuo  .alb-eur{color:var(--pos)}
+
+  /* Le voci dentro "uscira' davvero": stessa famiglia, tinta piu' bassa. */
+  .ramo-esce .alb-riga:not(.gruppo) .alb-barra i{
+    background:color-mix(in srgb,var(--neg) 55%,transparent)}
+  /* Gli acconti a righe: sono un debito dell'anno prossimo, non di questo. */
+  .alb-riga.acconto .alb-barra i{
+    background:repeating-linear-gradient(135deg,
+      color-mix(in srgb,var(--neg) 55%,transparent) 0 3px,
+      color-mix(in srgb,var(--neg) 16%,transparent) 3px 6px)}
+  .ramo-fermo .alb-riga:not(.gruppo) .alb-barra i{
+    background:color-mix(in srgb,var(--warn) 55%,transparent)}
+
+  /* Il totale accantonato: la somma dei primi due rami, staccata. */
+  .alb-totale{display:grid;grid-template-columns:minmax(0,1fr) auto 54px;
+    gap:10px;align-items:baseline;margin-top:var(--sp-3);
+    padding-top:var(--sp-3);border-top:1px solid var(--line)}
+  .alb-totale .t{font-weight:600;color:var(--ink);font-size:13.5px}
+  .alb-totale .t span{display:block;font-size:11px;font-weight:400;
+    color:var(--ink-3);margin-top:1px}
+  .alb-totale .v{text-align:right;font-weight:600;color:var(--accent-text);
+    font-size:15px;white-space:nowrap}
+  .alb-totale .p{text-align:right;font-size:11.5px;color:var(--ink-3)}
+
+  @media (max-width:420px){
+    .alb-riga{grid-template-columns:minmax(0,1fr) auto 48px}
+    .alb-riga .alb-barra{display:none}
+  }
+</style>
+"""
+
+
+def gruppi(s: dict, k: str) -> dict:
+    """
+    I tre rami dell'albero per uno scenario, piu' i sotto-rami del primo.
+    Ogni chiave qui e' una somma di voci di `componenti[k]`: e' l'unico
+    posto dove si decide cosa sta con cosa.
+    """
+    c = s["componenti"][k]
+    saldo = round(c["inps"] + c["imposta"], 2)
+    acconti = round(c["acconto_inps"] + c["acconto_imposta"], 2)
+    return {
+        "saldo": saldo,
+        "acconti": acconti,
+        "costi": c["costi"],
+        # Rosso: uscira' davvero. I costi fissi non sono tasse, ma sono
+        # uscite certe, e da qui in poi si comportano allo stesso modo.
+        "esce": round(saldo + acconti + c["costi"], 2),
+        # Giallo: fermo, ma tuo.
+        "fermo": c["margine"],
+        # Verde: va sul conto personale.
+        "tuo": s["netti"][k],
+        "accantoni": s["importi"][k],
+    }
+
+
+def albero_html(s: dict, uid: str, anno_acconto=None, anno_saldo=None,
+                aperto: bool = False) -> str:
+    """
+    La scomposizione del lordo ad albero, reattiva allo scenario.
+
+    Le voci fisse (INPS, imposta, acconti, costi) non cambiano con lo
+    scenario: cambiano solo il margine e, di conseguenza, i tre totali di
+    ramo, quanto resta tuo e il totale accantonato. Quelle sono le uniche
+    celle marcate con `data-alb`; il resto e' scritto una volta e sta
+    fermo.
+    """
+    from shared.fmt import eur, pct
+
+    lordo = s["lordo"] or 0.0
+    pref = s["scenario_preferito"]
+    g = gruppi(s, pref)
+    a_acc = f"{anno_acconto}" if anno_acconto else "dell'anno prossimo"
+    a_sal = f"{anno_saldo}" if anno_saldo else "di quest'anno"
+    scad = (f"lo paghi a giugno {anno_acconto}" if anno_acconto
+            else "lo paghi a giugno dell'anno dopo")
+    scad_acc = (f"giugno e novembre {anno_acconto}" if anno_acconto
+                else "giugno e novembre dell'anno dopo")
+
+    def q(v):
+        return (v / lordo * 100) if lordo else 0.0
+
+    def riga(nome, sub, valore, classi="", chiave=None):
+        """Una riga dell'albero. `chiave` la rende aggiornabile dal JS."""
+        attr = f' data-alb="{chiave}" data-alb-uid="{uid}"' if chiave else ""
+        sub_html = f'<span class="alb-sub">{sub}</span>' if sub else ""
+        return (f'<div class="alb-riga {classi}"{attr}>'
+                f'<span class="alb-nome">{nome}{sub_html}</span>'
+                f'<span class="alb-barra"><i style="width:{q(valore):.2f}%"></i></span>'
+                f'<span class="alb-eur tnum">&euro; {eur(valore)}</span>'
+                f'<span class="alb-pct tnum">{pct(q(valore) / 100, 1)}</span>'
+                f'</div>')
+
+    perc_acc_inps = pct(s["aliquote_acconto"]["inps"], 0)
+    perc_acc_imp = pct(s["aliquote_acconto"]["imposta"], 0)
+    sub_imposta = ("sull'imponibile pieno: primo anno, nessun contributo ancora "
+                   "versato e quindi niente da dedurre" if s.get("primo_anno")
+                   else "al netto dei contributi, che sono deducibili")
+
+    righe_esce = "".join([
+        riga(f"Saldo {a_sal}", scad, g["saldo"]),
+        '<div class="alb-ramo">',
+        riga("INPS gestione separata", "", s["inps"]),
+        riga("Imposta sostitutiva", sub_imposta, s["imposta"]),
+        "</div>",
+        riga(f"Acconti {a_acc}", scad_acc, g["acconti"], "acconto"),
+        '<div class="alb-ramo">',
+        riga("Acconto INPS", f"{perc_acc_inps} del saldo INPS",
+             s["acconto_inps"], "acconto"),
+        riga("Acconto imposta", f"{perc_acc_imp} del saldo imposta",
+             s["acconto_imposta"], "acconto"),
+        "</div>",
+        riga("Costi fissi pro-quota",
+             "commercialista, PEC, bolli: la quota di questa fattura", g["costi"]),
+    ])
+
+    rivalsa_html = _riga_rivalsa_bollo(s)
+    testata = f'<div class="rows">{rivalsa_html}</div>' if rivalsa_html else ""
+
+    corpo = (
+        ALBERO_CSS
+        + '<div class="alb">'
+        + riga("Incasso lordo", "quello che il cliente ti versa", lordo, "radice")
+        + '<div class="alb-ramo ramo-esce">'
+        + riga("Uscir&agrave; davvero", "tasse e costi certi: non sono tuoi",
+               g["esce"], "gruppo g-esce", "esce")
+        + f'<div class="alb-ramo">{righe_esce}</div>'
+        + "</div>"
+        + '<div class="alb-ramo ramo-fermo">'
+        + riga("Resta fermo, ma &egrave; tuo",
+               "se l'anno va come previsto, alla fine te lo prendi",
+               g["fermo"], "gruppo g-fermo", "fermo")
+        + '<div class="alb-ramo">'
+        + riga("Margine di sicurezza", "il cuscinetto dello scenario scelto",
+               g["fermo"], "", "margine")
+        + "</div></div>"
+        + '<div class="alb-ramo">'
+        + riga("Tuo subito", "si sposta sul conto personale",
+               g["tuo"], "gruppo g-tuo", "tuo")
+        + "</div>"
+        + '<div class="alb-totale">'
+        + '<span class="t">Accantoni in tutto<span>resta sul conto P.IVA: '
+          'quello che esce pi&ugrave; il cuscinetto</span></span>'
+        + f'<span class="v tnum" data-alb="accantoni" data-alb-uid="{uid}">'
+          f'&euro; {eur(g["accantoni"])}</span>'
+        + f'<span class="p tnum" data-alb-pcttot="{uid}">'
+          f'{pct(s["aliquote"][pref], 1)}</span>'
+        + "</div></div>"
+    )
+
+    apri = " open" if aperto else ""
+    return (f'<details class="explain mt-4"{apri}>'
+            f"<summary>Dove vanno questi soldi</summary>"
+            f"{testata}{corpo}</details>")
+
+
+# ---------------------------------------------------------------------------
 
 def card_html(s: dict, titolo: str = "Da accantonare",
               contesto: str = "", uid: str = "acc",
-              anno_acconto: int | None = None) -> str:
+              anno_acconto=None, anno_saldo=None,
+              albero_aperto: bool = False) -> str:
     """
-    Card con il numero da mettere da parte, il selettore di scenario e la
-    scomposizione visiva dell'incasso.
+    La card: quanto accantoni, il selettore di scenario, la barra a
+    segmenti e l'albero di dove vanno i soldi.
 
-    `s` e' il dizionario restituito da scomponi(). `uid` distingue piu'
-    card nella stessa pagina. `anno_acconto` e' l'anno a cui si riferiscono
-    gli acconti (quello dopo l'incasso): serve solo alle etichette — senza,
-    si dice "anno prossimo".
-
-    LA RIGA DEGLI ACCONTI E' IL MOTIVO PER CUI QUESTA CARD ESISTE COSI'.
-    Il numero grande da solo non dice la cosa piu' importante: di quello
-    che stai mettendo da parte, quanto e' saldo di quest'anno e quanto e'
-    acconto per l'anno prossimo. Sono due debiti diversi, con due
-    scadenze diverse, e "consigliato" — lo scenario di default — del
-    secondo non tiene NIENTE. Finche' restava dentro un segmento
-    chiamato "Costi e margine", quella scoperta la si faceva a giugno.
+    TUTTI E QUATTRO GLI SCENARI COPRONO. La domanda a cui la card
+    risponde non e' piu' "sono coperto?" — lo sei sempre — ma "quanto
+    cuscinetto mi tengo, e quanto di quello che accantono e' bonus".
+    Per questo il numero grande e' accompagnato dal numero verde di
+    quanto resta tuo, e dalla riga gialla del bonus.
     """
     from shared.fmt import eur, pct
 
     lordo = s["lordo"] or 0.0
     pref = s["scenario_preferito"]
     comp = s["componenti"]
-    dovuti = s["acconti_dovuti"]
-    etichetta_anno = f"del {anno_acconto}" if anno_acconto else "dell'anno prossimo"
+    a_acc = f"del {anno_acconto}" if anno_acconto else "dell'anno prossimo"
 
     seg = "".join(
         f'<button type="button" data-acc="{uid}" data-scen="{k}"'
-        f'{" class=\"is-active\"" if k == pref else ""}>{ETICHETTE[k][0]}</button>'
+        + (' class="is-active"' if k == pref else "")
+        + f">{ETICHETTE[k][0]}</button>"
         for k in SCENARI
     )
 
-    # Percentuali per la barra: quote del lordo. Il resto e' "tuo".
     def q(v):
         return (v / lordo * 100) if lordo else 0.0
 
-    def extra(k):
-        """Costi fissi + margine: quello che non e' tassa ne' acconto."""
-        return round(comp[k]["costi"] + comp[k]["margine"], 2)
+    def frase(k):
+        """La riga gialla: cosa ci guadagni a scegliere questo scenario."""
+        g = gruppi(s, k)
+        if g["fermo"] <= 0:
+            return ("<strong>Copri esatto, senza cuscinetto.</strong> "
+                    "Tasse e costi ci sono tutti, ma un imprevisto o una "
+                    "crescita del fatturato ti trovano scoperto.")
+        return (f"<strong>&euro; {eur(g['fermo'])} sono cuscinetto, non tasse.</strong> "
+                f"Se l'anno va come previsto restano l&aacute;: &egrave; il bonus "
+                f"che ti prendi quando hai pagato tutto.")
 
-    def frase_acconti(k):
-        """La riga che risponde a «e per l'anno prossimo?»."""
-        messo = comp[k]["acconti"]
-        scoperto = s["acconti_scoperti"][k]
-        if dovuti <= 0:
-            return ""
-        if messo <= 0:
-            return (f'<strong>Per gli acconti {etichetta_anno} non tiene niente.</strong> '
-                    f'Restano scoperti € {eur(scoperto)}, che serviranno '
-                    f'nell\'anno in cui saldo e acconti cadono insieme.')
-        if scoperto <= 0:
-            return (f'<strong>Gli acconti {etichetta_anno} sono dentro per intero:</strong> '
-                    f'€ {eur(messo)} di questa cifra non sono per quest\'anno.')
-        return (f'<strong>Di questi, € {eur(messo)} sono acconti {etichetta_anno}.</strong> '
-                f'Ne restano scoperti € {eur(scoperto)}.')
-
-    def copertura(k):
-        return (comp[k]["acconti"] / dovuti) if dovuti > 0 else 0.0
-
-    def classe_acconti(k):
-        c = copertura(k)
-        return "neg" if c <= 0 else ("pos" if c >= 0.999 else "warn")
+    def classe(k):
+        return "neg" if gruppi(s, k)["fermo"] <= 0 else "pos"
 
     ctx = f'<div class="stat-hint muted small">{contesto}</div>' if contesto else ""
 
@@ -353,28 +625,57 @@ def card_html(s: dict, titolo: str = "Da accantonare",
         "importi": s["importi"],
         "netti": s["netti"],
         "aliquote": {k: s["aliquote"][k] for k in SCENARI},
-        "inps": s["inps"],
-        "imposta": s["imposta"],
-        "dovuti": dovuti,
-        "acconti": {k: comp[k]["acconti"] for k in SCENARI},
-        "scoperti": {k: s["acconti_scoperti"][k] for k in SCENARI},
-        "extra": {k: extra(k) for k in SCENARI},
-        "extraCosti": {k: comp[k]["costi"] for k in SCENARI},
-        "extraMargine": {k: comp[k]["margine"] for k in SCENARI},
-        "copertura": {k: copertura(k) for k in SCENARI},
-        "frasi": {k: frase_acconti(k) for k in SCENARI},
-        "classi": {k: classe_acconti(k) for k in SCENARI},
+        "gruppi": {k: gruppi(s, k) for k in SCENARI},
+        "frasi": {k: frase(k) for k in SCENARI},
+        "classi": {k: classe(k) for k in SCENARI},
     }, ensure_ascii=False)
 
-    riga_acconti = ""
-    if dovuti > 0:
-        riga_acconti = f'''
-  <div class="acc-acconti {classe_acconti(pref)}" data-acc-acconti="{uid}">
-    <i class="dot acconti" aria-hidden="true"></i>
-    <span data-acc-frase="{uid}">{frase_acconti(pref)}</span>
-  </div>'''
+    g = gruppi(s, pref)
 
-    return f'''
+    # La barra: le quattro quote del lordo, nell'ordine in cui l'albero le
+    # racconta. Chi guarda solo la barra deve vedere la stessa storia.
+    barra = (
+        '<div class="bar-split mt-4" aria-hidden="true">'
+        f'<span data-acc-bar-tuo="{uid}" style="background:var(--pos);'
+        f'width:{q(g["tuo"]):.2f}%"></span>'
+        f'<span style="background:var(--neg);width:{q(g["saldo"]):.2f}%"></span>'
+        f'<span class="seg-acconti" style="width:{q(g["acconti"]):.2f}%"></span>'
+        f'<span style="background:var(--ink-4);width:{q(g["costi"]):.2f}%"></span>'
+        f'<span data-acc-bar-fermo="{uid}" style="background:var(--warn);'
+        f'width:{q(g["fermo"]):.2f}%"></span>'
+        "</div>"
+    )
+
+    voci_legenda = [
+        f'<div><i class="dot" style="background:var(--pos)"></i>Tuoi '
+        f'<span data-acc-leg-tuo="{uid}" class="tnum">&euro; {eur(g["tuo"])}</span></div>',
+        f'<div><i class="dot" style="background:var(--neg)"></i>Saldo '
+        f'<span class="tnum">&euro; {eur(g["saldo"])}</span></div>',
+        f'<div><i class="dot acconti"></i>Acconti {a_acc} '
+        f'<span class="tnum">&euro; {eur(g["acconti"])}</span></div>',
+    ]
+    if g["costi"] > 0:
+        voci_legenda.append(
+            f'<div><i class="dot" style="background:var(--ink-4)"></i>Costi fissi '
+            f'<span class="tnum">&euro; {eur(g["costi"])}</span></div>')
+    voci_legenda.append(
+        f'<div><i class="dot" style="background:var(--warn)"></i>Cuscinetto '
+        f'<span data-acc-leg-fermo="{uid}" class="tnum">&euro; {eur(g["fermo"])}</span></div>')
+
+    albero = albero_html(s, uid, anno_acconto=anno_acconto,
+                         anno_saldo=anno_saldo, aperto=albero_aperto)
+
+    nota_primo = ""
+    if s.get("primo_anno"):
+        nota_primo = (
+            '<div class="notice info small mt-3">'
+            "<strong>Primo anno di attivit&agrave;.</strong> Non hai ancora versato "
+            "contributi, quindi non c'&egrave; niente da dedurre: l'imposta si calcola "
+            "sull'imponibile pieno e il fabbisogno &egrave; pi&ugrave; alto di quello "
+            "degli anni a regime. Dall'anno prossimo scende da s&eacute;."
+            "</div>")
+
+    return f"""
 <div class="card acc-card" id="{uid}">
   <div class="card-head">
     <div class="eyebrow">{titolo}</div>
@@ -383,58 +684,27 @@ def card_html(s: dict, titolo: str = "Da accantonare",
 
   <div class="acc-main">
     <div class="stat">
-      <div class="val accent tnum" data-acc-val="{uid}">€ {eur(s["importi"][pref])}</div>
+      <div class="val accent tnum" data-acc-val="{uid}">&euro; {eur(s["importi"][pref])}</div>
       <div class="lbl">
-        <span data-acc-pct="{uid}">{pct(s["aliquote"][pref])}</span> di € {eur(lordo)} incassati
+        <span data-acc-pct="{uid}">{pct(s["aliquote"][pref])}</span> di &euro; {eur(lordo)} incassati
       </div>
     </div>
     <div class="acc-netto">
       <div class="lbl muted small">Restano tuoi</div>
-      <div class="tnum h2" data-acc-netto="{uid}">€ {eur(s["netti"][pref])}</div>
+      <div class="tnum h2 pos" data-acc-netto="{uid}">&euro; {eur(s["netti"][pref])}</div>
     </div>
   </div>
 
-  <div class="bar-split mt-4" aria-hidden="true">
-    <span data-acc-bar-netto="{uid}" style="background:var(--pos);width:{q(s['netti'][pref]):.2f}%"></span>
-    <span style="background:var(--accent);width:{q(s['inps']):.2f}%"></span>
-    <span style="background:var(--warn);width:{q(s['imposta']):.2f}%"></span>
-    <span class="seg-acconti" data-acc-bar-acconti="{uid}" style="width:{q(comp[pref]['acconti']):.2f}%"></span>
-    <span data-acc-bar-extra="{uid}" style="background:var(--ink-4);width:{q(extra(pref)):.2f}%"></span>
+  {barra}
+  <div class="legend">{"".join(voci_legenda)}</div>
+
+  <div class="acc-acconti {classe(pref)}" data-acc-acconti="{uid}">
+    <i class="dot" style="background:var(--warn)" aria-hidden="true"></i>
+    <span data-acc-frase="{uid}">{frase(pref)}</span>
   </div>
-  <div class="legend">
-    <div><i class="dot" style="background:var(--pos)"></i>Tuoi</div>
-    <div><i class="dot" style="background:var(--accent)"></i>INPS € {eur(s["inps"])}</div>
-    <div><i class="dot" style="background:var(--warn)"></i>Imposta € {eur(s["imposta"])}</div>
-    <div data-acc-leg-acconti="{uid}"><i class="dot acconti"></i>Acconti {etichetta_anno} € {eur(comp[pref]["acconti"])}</div>
-    <div data-acc-leg-extra="{uid}"><i class="dot" style="background:var(--ink-4)"></i>Costi e margine € {eur(extra(pref))}</div>
-  </div>
-{riga_acconti}
+  {nota_primo}
   {ctx}
-
-  <details class="explain mt-4">
-    <summary>Come esce questo numero</summary>
-    <div class="rows">
-      {_riga_rivalsa_bollo(s)}
-      <div class="row"><span class="t">Imponibile <span class="sub">lordo × coefficiente {pct(s.get("coeff", 0.67), 0)}</span></span>
-        <span class="v tnum">€ {eur(s["imponibile"])}</span></div>
-      <div class="row"><span class="t">INPS gestione separata</span>
-        <span class="v tnum">€ {eur(s["inps"])}</span></div>
-      <div class="row"><span class="t">Imposta sostitutiva <span class="sub">calcolata al netto dei contributi, che sono deducibili</span></span>
-        <span class="v tnum">€ {eur(s["imposta"])}</span></div>
-      <div class="row"><span class="t"><strong>Saldo di quest'anno</strong> <span class="sub">quello che si paga a giugno prossimo</span></span>
-        <span class="v tnum"><strong>€ {eur(s["importi"]["minimo"])}</strong></span></div>
-      <div class="row"><span class="t">Acconti {etichetta_anno} <span class="sub">INPS {pct(s["aliquote_acconto"]["inps"], 0)}, imposta {pct(s["aliquote_acconto"]["imposta"], 0)} del dovuto: si versano nello stesso anno del saldo qui sopra</span></span>
-        <span class="v tnum">€ {eur(dovuti)}</span></div>
-      <div class="row"><span class="t">— di cui coperti da questo scenario</span>
-        <span class="v tnum" data-acc-row-acconti="{uid}">€ {eur(comp[pref]["acconti"])}</span></div>
-      <div class="row"><span class="t">— ancora scoperti <span class="sub">da trovare altrove, o con uno scenario più alto</span></span>
-        <span class="v tnum" data-acc-row-scoperti="{uid}">€ {eur(s["acconti_scoperti"][pref])}</span></div>
-      <div class="row"><span class="t">Costi fissi pro-quota</span>
-        <span class="v tnum" data-acc-row-costi="{uid}">€ {eur(comp[pref]["costi"])}</span></div>
-      <div class="row"><span class="t">Margine di sicurezza</span>
-        <span class="v tnum" data-acc-row-margine="{uid}">€ {eur(comp[pref]["margine"])}</span></div>
-    </div>
-  </details>
+  {albero}
 </div>
 
 <script>
@@ -446,37 +716,51 @@ def card_html(s: dict, titolo: str = "Da accantonare",
   var pctFmt = function(v){{ return (v*100).toFixed(1).replace('.',',') + '%'; }};
   var q = function(v){{ return D.lordo ? (v / D.lordo * 100) : 0; }};
   var el = function(sel){{ return document.querySelector('[' + sel + '="' + uid + '"]'); }};
+  var alb = function(k){{
+    return document.querySelector('[data-alb="' + k + '"][data-alb-uid="' + uid + '"]');
+  }};
+
+  // Aggiorna una riga dell'albero: importo, larghezza della barra e
+  // percentuale. Le righe non marcate non cambiano con lo scenario.
+  function riga(k, v){{
+    var r = alb(k);
+    if (!r) return;
+    var eur = r.querySelector('.alb-eur'), barra = r.querySelector('.alb-barra i'),
+        p = r.querySelector('.alb-pct');
+    if (r.classList.contains('alb-totale') || !eur) {{
+      r.textContent = '\\u20ac ' + fmt(v);
+      return;
+    }}
+    eur.textContent = '\\u20ac ' + fmt(v);
+    if (barra) barra.style.width = q(v).toFixed(2) + '%';
+    // q() torna gia' una percentuale 0-100, pctFmt vuole una frazione.
+    if (p) p.textContent = pctFmt(q(v) / 100);
+  }}
 
   function pick(scen){{
-    el('data-acc-val').textContent   = '\u20ac ' + fmt(D.importi[scen]);
+    var g = D.gruppi[scen];
+    el('data-acc-val').textContent   = '\\u20ac ' + fmt(D.importi[scen]);
     el('data-acc-pct').textContent   = pctFmt(D.aliquote[scen]);
-    el('data-acc-netto').textContent = '\u20ac ' + fmt(D.netti[scen]);
-    el('data-acc-bar-netto').style.width = q(D.netti[scen]).toFixed(2) + '%';
-    el('data-acc-bar-acconti').style.width = q(D.acconti[scen]).toFixed(2) + '%';
-    el('data-acc-bar-extra').style.width = q(D.extra[scen]).toFixed(2) + '%';
-
-    // Le due legende reattive: il testo dice l'importo dello scenario
-    // scelto, non quello con cui la pagina e' nata.
-    el('data-acc-leg-acconti').lastChild.textContent =
-      ' Acconti {etichetta_anno} \u20ac ' + fmt(D.acconti[scen]);
-    el('data-acc-leg-extra').lastChild.textContent =
-      ' Costi e margine \u20ac ' + fmt(D.extra[scen]);
-
-    ['acconti', 'scoperti', 'costi', 'margine'].forEach(function(k){{
-      var r = el('data-acc-row-' + k);
-      if (!r) return;
-      var v = (k === 'scoperti') ? D.scoperti[scen]
-            : (k === 'acconti')  ? D.acconti[scen]
-            : (k === 'costi')    ? D.extraCosti[scen]
-            :                      D.extraMargine[scen];
-      r.textContent = '\u20ac ' + fmt(v);
-    }});
+    el('data-acc-netto').textContent = '\\u20ac ' + fmt(D.netti[scen]);
+    el('data-acc-bar-tuo').style.width   = q(g.tuo).toFixed(2) + '%';
+    el('data-acc-bar-fermo').style.width = q(g.fermo).toFixed(2) + '%';
+    el('data-acc-leg-tuo').textContent   = '\\u20ac ' + fmt(g.tuo);
+    el('data-acc-leg-fermo').textContent = '\\u20ac ' + fmt(g.fermo);
 
     var box = el('data-acc-acconti');
     if (box) {{
       box.className = 'acc-acconti ' + D.classi[scen];
       el('data-acc-frase').innerHTML = D.frasi[scen];
     }}
+
+    riga('esce', g.esce);
+    riga('fermo', g.fermo);
+    riga('margine', g.fermo);
+    riga('tuo', g.tuo);
+    var tot = alb('accantoni');
+    if (tot) tot.textContent = '\\u20ac ' + fmt(g.accantoni);
+    var pt = document.querySelector('[data-alb-pcttot="' + uid + '"]');
+    if (pt) pt.textContent = pctFmt(D.aliquote[scen]);
 
     document.querySelectorAll('[data-acc="' + uid + '"]').forEach(function(b){{
       b.classList.toggle('is-active', b.dataset.scen === scen);
@@ -488,4 +772,4 @@ def card_html(s: dict, titolo: str = "Da accantonare",
   }});
 }})();
 </script>
-'''
+"""

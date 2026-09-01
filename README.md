@@ -368,62 +368,115 @@ Quando incassi, i soldi arrivano tutti sul conto P.IVA ma non sono tutti tuoi.
 Il conto matematico (19,94 %) però non è una buona guida, per due motivi:
 
 1. **Gli acconti.** Il saldo dell'anno N si paga a giugno N+1, ma nello stesso
-   anno si versano anche gli acconti per N+1. A regime si scomputano, ma
-   nell'anno in cui le due cose cadono insieme il fabbisogno è
-   `1,8 C + 2 T = 36,39 %` del lordo.
+   anno si versano anche gli acconti per N+1. A regime si scomputano e
+   l'uscita annua torna a essere una annualità sola — ma quel fondo, la prima
+   volta, va costituito, e finché non c'è il fabbisogno è
+   `1,8 C + 2 T = 36,39 %` del lordo (38,14 % nell'anno di apertura).
 2. **I costi fissi.** Commercialista, PEC, bolli, commissioni: non sono tasse,
    ma escono dagli stessi soldi.
 
-### I quattro scenari
+### I quattro scenari: tutti coprono, cambia il cuscinetto
 
-Ogni scenario è la **somma di voci dichiarate**, non un numero a sé: INPS,
-imposta, quota acconti, costi fissi, margine. Su 5.000 € incassati, con i
-parametri di default e costi fissi a zero:
+Prima gli scenari erano quattro **gradi di copertura**, e i primi due lasciavano
+scoperti gli acconti: sceglierli voleva dire trovarsi corti a giugno, senza che
+niente lo dicesse. Ora **tutti e quattro coprono saldo, acconti e costi fissi**.
+Quello che cambia è il margine sul fabbisogno — il cuscinetto per la crescita e
+gli imprevisti — e il cuscinetto, se l'anno va come previsto, è il bonus che
+resta.
 
-| Scenario | Cosa mette dentro | Totale | Quota | Di cui acconti | Acconti scoperti |
-|---|---|---|---|---|---|
-| Minimo | `C + T` | € 997,17 | 19,9 % | € 0,00 | **€ 822,51** |
-| Consigliato | `C + T + costi + margine` | € 1.096,89 | 21,9 % | € 0,00 | **€ 822,51** |
-| Prudente | `C + T + ½ acconti + costi + margine` | € 1.508,14 | 30,2 % | € 411,25 | € 411,26 |
-| Sicuro | `C + T + acconti + costi` | € 1.819,68 | 36,4 % | € 822,51 | € 0,00 |
+| Scenario | Formula | Anno di apertura | A regime |
+|---|---|---|---|
+| **Copertura** | `fabbisogno + costi` | 38,1 % | 36,4 % |
+| **Consigliato** | `fabbisogno × (1 + m) + costi` | 42,0 % | 40,0 % |
+| **Prudente** | `fabbisogno × (1 + 2m) + costi` | 45,8 % | 43,7 % |
+| **Blindato** | `fabbisogno × (1 + 3,5m) + costi` | 51,5 % | 49,1 % |
 
-*Sicuro* non ha margine di sicurezza, e non è una dimenticanza: il margine
-ce l'ha già, ed è l'anno intero di acconti che sta mettendo da parte.
+`m` è `margine_sicurezza`, un parametro solo (default 10 %): cambiarlo muove
+tutti e quattro mantenendo le distanze. Su 5.000 € incassati nell'anno di
+apertura restano tuoi 3.093 / 2.902 / 2.712 / 2.425 €.
 
-*Prudente* esiste perché fra Consigliato e Sicuro c'era un salto troppo grande:
-copre il dovuto più metà degli acconti, così al fabbisogno dell'anno-picco ci
-si arriva in due anni invece che in uno.
+*Blindato* non ha un nome più cauto di *Prudente* per caso: a +35 % circa metà
+dell'incasso resta ferma. *Prudente* a +20 % regge una crescita del fatturato
+del 20 % senza doverla recuperare — gli acconti versati sono calcolati
+sull'anno prima, e se cresci il saldo dopo è più alto di quanto avevi messo via.
 
-Margine di sicurezza, costi fissi annui e fatturato atteso si cambiano in
-`/fatture/parametri`.
+> **Gli scenari vecchi restano scritti sulle fatture già ripartite.**
+> `minimo` e `sicuro` non esistono più fra le scelte, ma le righe che li
+> portano si leggono ancora — [§ 8.16](#816--i-quattro-scenari-di-accantonamento-cambiano-nome).
+> Attenzione a un punto: `prudente` esiste in entrambi i mondi ma vale numeri
+> diversi (30,2 % prima, 45,8 % ora). Su una fattura già ripartita fa fede
+> **l'importo salvato**, non l'etichetta, ed è quello che la card mostra.
 
-### Le due colonne di destra sono il punto
+### Il primo anno costa di più, e il modello ora lo sa
 
-Un accantonamento è **due debiti con due scadenze diverse**: il saldo
-dell'anno in corso, che si paga a giugno dell'anno dopo, e gli acconti
-dell'anno dopo, che si versano nello **stesso** giorno. Il numero grande da
-solo non distingue i due, e il default — *Consigliato* — del secondo non
-tiene niente: su ogni fattura da 5.000 € lascia scoperti 822,51 € che
-serviranno comunque.
+La deduzione vale per i contributi **versati**, per cassa (art. 1 c. 64
+L. 190/2014). Nell'anno in cui apri la partita IVA non versi niente — il primo
+versamento cade a giugno dell'anno dopo — quindi non c'è nulla da dedurre e
+l'imposta si calcola sull'imponibile pieno.
 
-Prima questa cosa non si vedeva. La card mostrava quattro totali e una barra
-il cui ultimo segmento si chiamava "Costi e margine" — mentre per *Prudente*
-e *Sicuro* quel segmento conteneva soprattutto la quota acconti, cioè
-esattamente l'informazione che mancava. Chi guardava una singola fattura non
-aveva modo di sapere quanto di quei soldi era per l'anno prossimo.
+| | a regime | anno di apertura |
+|---|---|---|
+| Imposta sostitutiva | 2,48 % del lordo | **3,35 %** |
+| Saldo (INPS + imposta) | 19,94 % | **20,82 %** |
+| Acconti dell'anno dopo | 16,45 % | **17,32 %** |
+| **Fabbisogno** | 36,39 % | **38,14 %** |
 
-Ora la card lo dice in tre posti, e tutti e tre seguono lo scenario scelto:
+Sono **1,75 punti** di differenza, e vanno tutti nella direzione che fa male:
+calcolare il primo anno con la deduzione sottostima quello che servirà. Lo
+decide `data_apertura_piva`; senza quel dato si assume il caso a regime, che
+vale per tutti gli anni tranne uno.
 
-- un **segmento a righe** nella barra, distinto dalle tinte piene delle voci
-  di quest'anno — a colpo d'occhio si vede che non è lo stesso tipo di debito;
-- una **riga con il bordo colorato** sotto la barra: rossa se lo scenario non
-  tiene niente per gli acconti, gialla se ne tiene una parte, verde se li
-  copre tutti, con l'importo scoperto scritto in chiaro;
-- tre righe in *Come esce questo numero*: acconti dovuti, **di cui coperti da
-  questo scenario**, **ancora scoperti**.
+Dal secondo anno il modello resta su **una** annualità di contributi dedotti,
+mentre nella realtà nel secondo anno se ne versano circa 1,8 (saldo del primo
+più acconti del secondo). Lì l'errore è verso l'alto — accantoni un po' più del
+dovuto — e va bene così.
 
-L'anno degli acconti è scritto per esteso ("Acconti del 2027"), e su una
-fattura è l'anno **successivo** a quello della fattura, non l'anno corrente.
+### L'albero: dove finiscono quei soldi
+
+La card mostra quanto accantonare. L'**albero** mostra dove va, e lo fa in una
+forma sola: ogni riga è un ramo di quella sopra, le foglie sommano al ramo, i
+tre rami grossi sommano al lordo. Le barre sono tutte in scala sullo stesso
+lordo, quindi se un conto non torna si vede.
+
+Tre gruppi, e il colore è il significato:
+
+- 🔴 **Uscirà davvero** — saldo dell'anno, acconti dell'anno dopo, costi fissi.
+  Non sono tuoi. Gli acconti hanno la barra **a righe**: stessa famiglia di
+  colore (escono anche loro) ma per l'anno dopo, non per questo.
+- 🟡 **Resta fermo, ma è tuo** — il margine dello scenario scelto. È il bonus
+  che ti prendi quando hai pagato tutto, se l'anno va come previsto.
+- 🟢 **Tuo subito** — si sposta sul conto personale.
+
+In fondo, *Accantoni in tutto* = rosso + giallo, cioè quello che resta sul conto
+P.IVA. Le voci fisse non cambiano con lo scenario; cambiano il margine, i tre
+totali di ramo e quanto resta tuo.
+
+### Il fondo tasse: i soldi ci sono davvero?
+
+Sulla [situazione fiscale](#5-accantonamento-e-ripartizione) c'è la card
+**Fondo tasse**, e risponde a una domanda diversa da tutte le altre. Le card
+dell'accantonamento dicono *quanto mettere da parte*; questa dice **se c'è**.
+
+| Riga | Cos'è |
+|---|---|
+| Ti serviranno | il fabbisogno sull'incassato dell'anno: saldo, acconti, costi |
+| Sul conto P.IVA, oggi | il saldo reale, entrate − uscite − giroconti dall'apertura |
+| Di cui deciso di tenere | somma di `accantonamento_importo` sulle fatture già ripartite |
+| Incassato non ancora ripartito | fatture incassate senza giroconto: i soldi sono tutti lì |
+
+Il numero grande è la **copertura in percentuale**, non un importo, perché la
+domanda è "ci sono?" e la risposta è sì o no. Verde sopra il 100 %, giallo dal
+70, rosso sotto.
+
+*Deciso di tenere* è un'intenzione, *sul conto* è un fatto: se divergono, il
+denaro è uscito da qualche altra parte. Ed è l'unico modo di accorgersi di un
+buco che nasce da dieci decisioni ciascuna difendibile — il conto P.IVA si
+svuota un giroconto alla volta, e ogni singolo giroconto sembra piccolo.
+
+> **Un limite dichiarato**: il conto P.IVA porta anche il fondo degli anni
+> prima. Se il saldo dell'anno scorso non è ancora stato versato, una parte di
+> quel denaro è già impegnata e la copertura è più ottimista del vero. La card
+> lo scrive sotto.
 
 ### La ripartizione
 
@@ -1500,12 +1553,18 @@ comment on column b2f_fatture.ore_lette_il is
   'Quando è stata scattata ore_snapshot';
 ```
 
-### 8.14 — La tariffa giornaliera è un parametro, non una costante (**necessaria**)
+### 8.14 — La tariffa giornaliera è un parametro, non una costante ✅ applicata il 01/09/2026
 
 Serve alla precompilazione della fattura dal timesheet: giornate ×
 tariffa, una riga sola. Sta accanto alle aliquote e non nel codice perché
 il giorno che cambia non deve servire un deploy — è un numero
 commerciale, non una regola del forfettario.
+
+> **Era rimasta indietro, e non in silenzio.** Il codice manda
+> `tariffa_giornaliera` nel `PATCH` dei parametri insieme a tutto il resto:
+> senza la colonna, PostgREST rifiutava la riga intera e **la pagina
+> Parametri non riusciva a salvare niente** — né la tariffa, né le aliquote,
+> né i costi fissi. Lanciata con il connettore MCP il 01/09/2026.
 
 ```sql
 alter table b2f_parametri_fiscali
@@ -1524,7 +1583,7 @@ percorso: l'incasso non è più l'ultimo passo ma il terzo
 > **Passi 1-3: ✅ applicati il 01/09/2026** sul database vivo, con il
 > connettore MCP di Supabase. Colonna, vincolo e vista sono già a posto —
 > `docs/schema_supabase.md` è stato rigenerato di conseguenza. Il
-> **passo 4 è volutamente rimasto fuori**: vedi il riquadro dopo lo script.
+> **passo 4 non serve più**: vedi il riquadro dopo lo script.
 
 Andava lanciata prima del deploy, non dopo: il `CHECK` su
 `b2f_fatture.stato` non conosceva `inviata_nadia`, quindi finché restava
@@ -1614,30 +1673,52 @@ update b2f_fatture
    and data_invio_studio is not null;
 ```
 
-> ### ⏸ Il passo 4 aspetta il deploy, e non è pignoleria
+> ### ✅ Il passo 4 non serve più
 >
-> È l'unico pezzo che **muove un dato invece di allargare lo schema**, e va
-> lanciato solo quando su Render gira il codice di questa PR. Motivo, in
-> concreto: sui dati di oggi tocca una riga sola, la 2026/001 — 5.000 €,
-> incassata l'08/07 e già mandata allo studio — e la sposta da `incassata`
-> a `inviata_studio`. Il codice **nuovo** continua a contarla come
-> incassata, perché guarda `data_incasso`. Il codice **vecchio**, quello
-> in produzione fino al merge, guarda lo stato: nella finestra fra la
-> migrazione e il deploy vedrebbe *zero* incassato, con l'accantonamento e
-> i numeri per cassa che crollano di 5.000 € per poi tornare da soli. Un
-> saldo che sballa e si ripara da sé è peggio di uno che sballa e basta:
-> la volta dopo non ci credi più.
+> Era l'unico pezzo che muoveva un dato invece di allargare lo schema, ed
+> era rimasto fuori apposta: fino al deploy avrebbe spostato la 2026/001 da
+> `incassata` a `inviata_studio`, e il codice vecchio — che l'incasso lo
+> leggeva dallo stato — avrebbe mostrato zero incassato per tutta la
+> finestra fra migrazione e deploy.
 >
-> Lanciarlo è comunque facoltativo. Se non lo si lancia, quella riga resta
-> in `incassata` — che è vero — e l'unico effetto è che la linea temporale
-> non segna come fatto il passaggio allo studio, pur avendone la data.
-> `ha_incassato()` la legge correttamente in entrambi i casi.
+> Dopo il deploy la fattura è stata portata a mano fino a `trasmessa_sdi`,
+> che è più avanti di dove l'`update` l'avrebbe messa. Rilanciarlo oggi
+> tocca **zero righe** (verificato il 01/09/2026): resta scritto qui perché
+> è idempotente e perché serve a chi ripercorre queste migrazioni da capo su
+> un database vuoto.
 
-Il passo 4 è idempotente e, sui dati di oggi, tocca **una riga sola**. Le
-fatture vecchie ferme in `inviata_studio` senza incasso **non si toccano**:
-restano dove sono, la linea temporale mostra i due passi scavalcati come
-saltati, e `ha_incassato()` continua a leggerle correttamente come da
-incassare.
+Il passo 4 è idempotente. Le fatture vecchie ferme in `inviata_studio` senza
+incasso **non si toccano**: restano dove sono, la linea temporale mostra i due
+passi scavalcati come saltati, e `ha_incassato()` continua a leggerle
+correttamente come da incassare.
+
+### 8.16 — I quattro scenari di accantonamento cambiano nome ✅ applicata il 01/09/2026
+
+Da `minimo / consigliato / prudente / sicuro` (quattro gradi di copertura, i
+primi due scoperti sugli acconti) a `copertura / consigliato / prudente /
+blindato` (tutti coprono, cambia solo il cuscinetto) — [§ 5](#i-quattro-scenari-tutti-coprono-cambia-il-cuscinetto).
+
+Il vincolo accetta le chiavi nuove **insieme** alle vecchie, e le righe già
+scritte non si toccano: `accantonamento_importo` è il numero che conta e resta
+quello deciso allora, mentre il nome è l'etichetta di *come* fu scelto.
+Riscriverlo direbbe che allora fu presa una decisione che non fu presa. Il
+codice le rilegge con `accantonamento.normalizza_scenario()`.
+
+Compatibile in avanti e all'indietro: si può lanciare prima o dopo il deploy.
+
+```sql
+alter table b2f_fatture drop constraint if exists b2f_fatture_scenario_valido;
+alter table b2f_fatture add constraint b2f_fatture_scenario_valido
+  check (
+    accantonamento_scenario is null
+    or accantonamento_scenario in (
+      -- attuali
+      'copertura', 'consigliato', 'prudente', 'blindato',
+      -- storici, in sola lettura
+      'minimo', 'sicuro'
+    )
+  );
+```
 
 ## 9. Sicurezza
 

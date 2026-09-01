@@ -253,38 +253,49 @@ Le letture del conto P.IVA sono **paginate**: PostgREST tronca ogni
 richiesta a un tetto (~1000 righe), e un saldo troncato sarebbe sbagliato
 senza dare errore.
 
-### `fatture/accantonamento.py` — 384 righe · quanto mettere da parte
+### `fatture/accantonamento.py` — quanto mettere da parte
 
 Nessuna query: prende i parametri, restituisce numeri e HTML.
 
-- `aliquote(param)`: le quote **sul lordo incassato** (INPS 17,47 %,
-  imposta 2,48 %, dovuto 19,94 %, picco di cassa 36,39 %).
-- `scomponi(lordo, param, …)`: la scomposizione completa più i quattro
-  scenari — `minimo`, `consigliato`, `prudente`, `sicuro`. Ogni scenario è
-  un **dizionario di voci** in `componenti[scenario]` (`inps`, `imposta`,
-  `acconti`, `costi`, `margine`), e `importi[scenario]` è la loro somma:
-  il totale non può contenere niente che non sia nominato.
-- `acconti_dovuti` e `acconti_scoperti[scenario]`: quanto di acconti
-  l'incasso si porta dietro, e quanto ne resta scoperto scegliendo quello
-  scenario. `minimo` e `consigliato` non ne coprono niente.
-- `card_html(s, …, anno_acconto=None)`: la card con selettore di scenario,
-  barra a segmenti e il `<details>` “Come esce questo numero”.
-  `anno_acconto` serve solo alle etichette (“Acconti del 2027”); su una
-  fattura è l'anno **successivo** a quello della fattura.
-- `rivalsa` e `bollo_addebitato` **non entrano in nessun calcolo**: sono
-  già dentro il lordo (concorrono al reddito — per il bollo vedi la
-  Risposta AdE 428/2022). Servono solo a mostrarne la quota.
+- `aliquote(param, anno=None)`: le quote **sul lordo incassato**. `anno` serve
+  a una cosa sola ma importante: sapere se è l'anno di apertura della partita
+  IVA, l'unico in cui non hai versato contributi e quindi non hai niente da
+  dedurre. Anno di apertura → imposta 3,35 % e fabbisogno 38,14 %; a regime
+  → 2,48 % e 36,39 %. Senza `anno` si assume il caso a regime.
+- `primo_anno_attivita(param, anno)`: la domanda di sopra, isolata.
+- `scomponi(lordo, param, …, anno=None)`: la scomposizione completa più i
+  quattro scenari. Ogni scenario è un **dizionario di voci** in
+  `componenti[scenario]` (`inps`, `imposta`, `acconto_inps`,
+  `acconto_imposta`, `costi`, `margine`), e `importi[scenario]` è la loro
+  somma: il totale non può contenere niente che non sia nominato.
+- `gruppi(s, scenario)`: i tre rami dell'albero — `esce`, `fermo`, `tuo` — più
+  i sotto-rami `saldo`, `acconti`, `costi`. **È l'unico posto dove si decide
+  cosa sta con cosa**: la card, l'albero e il foglio di ripartizione leggono
+  tutti da qui.
+- `albero_html(s, uid, …)`: la scomposizione ad albero, reattiva allo
+  scenario. `aperto=True` solo sul dettaglio fattura.
+- `card_html(s, …, anno_saldo, anno_acconto, albero_aperto)`: la card con
+  selettore di scenario, barra a segmenti, riga del cuscinetto e albero.
+- `normalizza_scenario()`: `minimo` e `sicuro` → `copertura`. Restano scritti
+  sulle fatture già ripartite (README § 8.16).
+- `rivalsa` e `bollo_addebitato` **non entrano in nessun calcolo**: sono già
+  dentro il lordo (concorrono al reddito — per il bollo vedi la Risposta AdE
+  428/2022). Servono solo a mostrarne la quota.
 
-> **La quota acconti ha un segmento suo, ed è il motivo per cui la card è
-> fatta così.** Un accantonamento sono due debiti con due scadenze: il
-> saldo dell'anno e gli acconti dell'anno dopo, che si versano lo stesso
-> giorno. Prima l'ultimo segmento si chiamava “Costi e margine” ed era
-> calcolato come `importi[scenario] − INPS − imposta`: per
-> `prudente`/`sicuro` conteneva soprattutto gli acconti, cioè proprio il
-> numero che serviva sapere. Ora sono due segmenti distinti — quello degli
-> acconti è **a righe**, non a tinta piena — e la riga sotto la barra dice
-> quanto resta scoperto, con il bordo rosso/giallo/verde a seconda della
-> copertura.
+> **Tutti e quattro gli scenari coprono.** Prima erano quattro gradi di
+> copertura e i primi due lasciavano scoperti gli acconti: sceglierli voleva
+> dire trovarsi corti a giugno. Ora il pavimento è il **fabbisogno**
+> (saldo + acconti + costi) e cambia solo il moltiplicatore del margine —
+> `MOLTIPLICATORI_MARGINE`, 0 / 1 / 2 / 3,5 volte `margine_sicurezza`. Il
+> margine non è più decorazione: è l'unica cosa che distingue uno scenario
+> dall'altro, ed è il bonus che resta se l'anno va come previsto.
+
+> **L'albero, e perché i colori sono tre.** 🔴 esce (saldo, acconti, costi:
+> non sono tuoi) · 🟡 resta fermo ma è tuo (il margine) · 🟢 tuo subito. Le
+> barre sono tutte in scala sullo stesso lordo, le foglie sommano al ramo e i
+> tre rami sommano al lordo: se un conto non torna si vede. Gli acconti hanno
+> la barra **a righe** — stessa famiglia di colore, perché escono anche loro,
+> ma per l'anno dopo.
 
 ### `fatture/giroconto.py` — 352 righe · dall'incasso ai due conti
 

@@ -814,6 +814,14 @@ html[data-theme="light"] .sheet-ov{background:rgba(30,34,44,.34)}
 .acc-card .card-head{flex-direction:column;align-items:stretch;gap:var(--sp-3)}
 .acc-seg{display:flex;width:100%}
 .acc-seg button{flex:1;padding:7px var(--sp-2)}
+/* Sotto i 360px i quattro nomi non ci stanno in fila — "Copertura",
+   "Consigliato", "Prudente", "Blindato" sono piu' lunghi dei precedenti e
+   sforavano il viewport di 27px. Vanno a capo in due righe da due invece
+   di stringersi fino a diventare illeggibili. */
+@media (max-width:359px){
+  .acc-seg{flex-wrap:wrap}
+  .acc-seg button{flex:1 1 45%;font-size:12px;padding:6px 4px}
+}
 @media (min-width:560px){
   .acc-card .card-head{flex-direction:row;align-items:center}
   .acc-seg{width:auto}
@@ -824,13 +832,15 @@ html[data-theme="light"] .sheet-ov{background:rgba(30,34,44,.34)}
 .acc-netto{text-align:right}
 
 /* La quota acconti, nella barra e nella legenda: righe invece che tinta
-   piena. Le altre voci sono debiti di quest'anno, questa e' un debito
-   dell'anno prossimo — a colpo d'occhio si deve vedere che non e' la
-   stessa cosa, senza doverla leggere. */
+   piena, ma della stessa famiglia di colore del saldo — sono soldi che
+   escono entrambi, solo che questi escono per l'anno dopo. Le righe
+   dicono "non e' un debito di quest'anno" senza cambiare famiglia, ed e'
+   esattamente il codice che usa l'albero della fattura: stessa cosa,
+   stesso segno. */
 .seg-acconti,.legend .dot.acconti{
   background:repeating-linear-gradient(135deg,
-    var(--accent-hi) 0 3px,
-    color-mix(in srgb,var(--accent-hi) 30%,transparent) 3px 6px)}
+    color-mix(in srgb,var(--neg) 85%,transparent) 0 3px,
+    color-mix(in srgb,var(--neg) 28%,transparent) 3px 6px)}
 
 /* La riga che risponde a «e per l'anno prossimo?». Il bordo colorato e'
    il semaforo: rosso se lo scenario non tiene niente per gli acconti,
