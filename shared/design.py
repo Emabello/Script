@@ -360,8 +360,18 @@ ul,ol{margin:0;padding:0;list-style:none}
   .topbar{padding-top:var(--sp-7);padding-left:var(--sp-7);padding-right:var(--sp-7)}
   .content{padding-left:var(--sp-7);padding-right:var(--sp-7);padding-bottom:var(--sp-9)}
   /* Pagine pensate per una colonna sola (il timesheet): stirarle su 1140px
-     non aggiunge informazione, allunga solo le righe. */
-  .topbar.single,.content.single{max-width:760px;margin-left:0}
+     non aggiunge informazione, allunga solo le righe.
+     Il margine sinistro non e' 0: e' lo STESSO di una pagina normale, cioe'
+     quello che le lascerebbe il centraggio su 1140px. Con `margin-left:0`
+     la colonna partiva incollata alla sidebar e passando da /ore a
+     qualunque altra scheda tutto il contenuto saltava di lato di quei
+     pixel. Sotto i 1140px di colonna utile il max() vale 0 e le due
+     famiglie di pagine tornano a coincidere da sole. */
+  .topbar.single,.content.single{
+    max-width:760px;
+    margin-left:max(0px, calc((100% - var(--content-max-lg)) / 2));
+    margin-right:auto;
+  }
 }
 
 /* --- Tab bar (solo mobile/tablet) ------------------------------------ */

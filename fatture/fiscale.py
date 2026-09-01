@@ -225,8 +225,14 @@ def _situazione_data(sb, anno: int) -> dict:
         pass
 
     try:
+        # Incassato del mese: filtrato sulla DATA di incasso, non sullo
+        # stato. Da quando l'incasso e' un passo in mezzo al percorso
+        # (costanti.py), una fattura pagata prosegue verso lo studio e lo
+        # SDI: chiedere stato='incassata' farebbe sparire dai calcoli per
+        # cassa proprio le fatture piu' avanti nel giro. Il filtro di data
+        # esclude gia' da solo chi non ha incassato.
         r = (sb.table("b2f_fatture").select("data_incasso,totale")
-               .eq("stato", "incassata")
+               .neq("stato", "annullata")
                .gte("data_incasso", f"{anno}-01-01").lte("data_incasso", f"{anno}-12-31")
                .execute())
         for f in (r.data or []):
@@ -422,7 +428,7 @@ def saldo_piva(sb, al: str | None = None) -> dict:
     rivalsa = 0.0
     try:
         r = (sb.table("b2f_fatture").select("cassa_importo,data_incasso")
-               .eq("stato", "incassata").lte("data_incasso", al).execute())
+               .neq("stato", "annullata").lte("data_incasso", al).execute())
         rivalsa = sum(float(f.get("cassa_importo") or 0) for f in (r.data or [])
                       if f.get("data_incasso"))
     except Exception:

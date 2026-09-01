@@ -122,9 +122,19 @@ per effetto collaterale dell'import. L'ordine conta: `views` tira dentro
 Nessuna query, nessun HTML: solo definizioni. È il file da leggere per
 primo per capire l'area.
 
-- `STATI` e derivati (`_LABEL`, `_CLASSE`, `_DESCR`), `STATI_PERCORSO`,
-  `STATI_EMESSE` (cosa concorre al fatturato), `STATI_MODIFICABILI`
-  (`bozza` e basta), `DATE_STATO` (quale data chiedere entrando in uno stato).
+- `STATI` e derivati (`_LABEL`, `_CLASSE`, `_DESCR`), `STATI_PERCORSO`
+  (`bozza → inviata_nadia → incassata → inviata_studio → trasmessa_sdi`),
+  `STATI_EMESSE` (cosa concorre al fatturato: tutto tranne bozza e
+  annullata), `STATI_INCASSATE`, `STATI_MODIFICABILI` (`bozza` e
+  `inviata_nadia`: si può correggere finché il denaro non si è mosso),
+  `DATE_STATO` (quale data chiedere entrando in uno stato).
+- `ha_incassato(f)`: **i soldi sono arrivati?** Si chiede a `data_incasso`,
+  non allo stato — dopo l'incasso la fattura prosegue verso lo studio e lo
+  SDI, e `stato == 'incassata'` non vuol più dire "pagata". È anche l'unica
+  lettura che regge sui dati vecchi, dove `inviata_studio` significava
+  "spedita ma non ancora pagata".
+- `indice_percorso(stato)`: la posizione lungo il percorso. Confrontare
+  indici è l'unico modo corretto di dire "più avanti / più indietro".
 - `normalizza_stato()` mappa lo storico `emessa` → `inviata_studio`.
 - `motivo_blocco()`: il testo mostrato quando non si può modificare. Dice
   **cosa fare invece**, non solo che è vietato.
@@ -196,10 +206,13 @@ Il file più denso dell'area: qui vive la pagina che si guarda di più.
   **testo grezzo**: chi lo stampa deve passarlo da `_esc()`.
 
 > **Tre guardie che stanno negli endpoint, non nell'interfaccia:**
-> 1. `PATCH /api/fatture/<fid>` rifiuta tutto ciò che non è bozza.
-> 2. `PATCH .../stato` rifiuta di uscire da `incassata` se la ripartizione
->    è già stata fatta: resterebbero due movimenti sui conti senza un
->    incasso che li giustifichi.
+> 1. `PATCH /api/fatture/<fid>` rifiuta tutto ciò che non è modificabile
+>    (oltre `inviata_nadia`).
+> 2. `PATCH .../stato` rifiuta di tornare **prima** dell'incasso se la
+>    ripartizione è già stata fatta: resterebbero due movimenti sui conti
+>    senza un incasso che li giustifichi. Il confronto è fra posizioni sul
+>    percorso, non fra chiavi: andare avanti da `incassata` verso lo studio
+>    è un passo normale e non deve far scattare niente.
 > 3. Tornando indietro nel percorso si ripuliscono solo le date dei passi
 >    **non più raggiunti**; quelle dei passi già attraversati restano.
 >    Correggere un errore non deve falsificare la cronologia.

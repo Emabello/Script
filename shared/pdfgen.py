@@ -5,10 +5,15 @@ ATTENZIONE: questo documento NON e' la fattura elettronica.
 
 Il giro concordato con lo studio (mail del 5 agosto 2026) e': tu emetti il
 facsimile e lo mandi allo studio, loro predispongono e trasmettono l'XML
-allo SDI. Il documento fiscale e' quello, non questo. Per questo il PDF si
-intitola FACSIMILE e lo dice esplicitamente in calce: se somigliasse a una
-fattura vera, prima o poi finirebbe in mano a un cliente al posto di
-quella giusta.
+allo SDI. Il documento fiscale e' quello, non questo, e a dirlo resta il
+badge FACSIMILE in testa al foglio.
+
+In calce NON c'e' piu' l'avviso esteso ("documento non valido ai fini
+fiscali... trasmessa al Sistema di Interscambio da..."): tolto su
+richiesta, 01/09/2026, perche' questo foglio si stampa e si consegna, e
+chi lo riceve sa gia' che la fattura elettronica arriva per altra via.
+Se un giorno lo si volesse rimettere, il posto e' dopo le note fiscali,
+prima del footer.
 
 La rivalsa INPS del 4 % e' SCORPORATA dal corrispettivo, non aggiunta:
 il totale che il cliente paga non cambia, e' il compenso a ridursi.
@@ -65,8 +70,9 @@ def emittente_to_json(em: dict) -> str:
         "pec":          em.get("pec") or "",
         "iban":         em.get("iban") or "",
         "aliquota_cassa": float(em.get("aliquota_cassa") or 0),
-        # Chi predispone e trasmette la fattura elettronica. Se vuoti, il
-        # PDF usa una dicitura generica.
+        # Chi predispone e trasmette la fattura elettronica. Non compare
+        # piu' nel PDF (l'avviso in calce non c'e' piu'), ma resta qui:
+        # e' il posto da cui rileggerlo se servisse rimetterlo.
         "studio_nome":  em.get("studio_nome") or "",
         "studio_email": em.get("studio_email") or "",
     }
@@ -88,7 +94,7 @@ def pdf_script(emittente: dict) -> str:
 # Layout PDF identico a genPDF() del fatturatore.html originale, con:
 #   - titolo "FATTURA" (o "NOTA CREDITO" / "PARCELLA") invece di "PROFORMA"
 #   - modo pagamento senza prefisso codice MP0x
-#   - rimosso il blocco disclaimer "DOCUMENTO NON VALIDO AI FINI FISCALI"
+#   - nessun blocco disclaimer in calce
 #   - nome file "Fattura_N_Cliente.pdf"
 _JS_TEMPLATE = r"""
 <!-- jsPDF 2.5.1 (MIT), ospitata dall'app: il facsimile e' il documento
@@ -338,22 +344,10 @@ _JS_TEMPLATE = r"""
       y += nl.length * 3.6 + 1.6;
     });
 
-    // ===== AVVISO: questo non e' il documento fiscale =====
-    // Va detto in modo che non si possa scambiare: e' l'unica difesa
-    // contro l'errore di mandarlo al cliente al posto della fattura vera.
-    y += 2.5;
-    const chi = e.studio_nome
-      ? `${e.studio_nome}${e.studio_email ? ' (' + e.studio_email + ')' : ''}`
-      : 'lo studio incaricato';
-    const avviso = 'FACSIMILE — documento non valido ai fini fiscali. '
-      + `La fattura elettronica viene predisposta e trasmessa al Sistema di `
-      + `Interscambio da ${chi}. Fa fede il documento trasmesso allo SDI.`;
-    const al = d.splitTextToSize(avviso, CW - 8);
-    const ah = al.length * 3.6 + 7;
-    d.setFillColor(...tint); d.roundedRect(M, y, CW, ah, 1.8, 1.8, 'F');
-    d.setTextColor(...accD); d.setFont('helvetica','bold'); d.setFontSize(7.5);
-    d.text(al, M + 4, y + 5);
-    y += ah;
+    // In calce non c'e' nessun avviso: il foglio che si stampa e si
+    // consegna deve leggersi come un documento e basta. Che non sia la
+    // fattura elettronica lo dice il badge FACSIMILE in testa, e lo sa
+    // chi lo riceve. (Tolto su richiesta esplicita, 01/09/2026.)
 
     // ===== FOOTER =====
     const fy = 288;

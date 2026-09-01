@@ -39,7 +39,7 @@ from flask import request, jsonify
 
 from . import fatture_bp
 from . import accantonamento as acc
-from .costanti import CATEGORIA_GIROCONTO, normalizza_stato
+from .costanti import CATEGORIA_GIROCONTO, ha_incassato, normalizza_stato
 from shared.supabase_client import get_client, is_configured
 
 
@@ -131,8 +131,11 @@ def api_giroconto_esegui(fid):
     if errore:
         return errore
 
+    # A incasso avvenuto, non "in stato incassata": dopo l'incasso la
+    # fattura prosegue verso lo studio e lo SDI, e la ripartizione si puo'
+    # fare in qualunque momento da li' in poi.
     stato = normalizza_stato(f.get("stato"))
-    if stato != "incassata":
+    if not ha_incassato(f):
         return jsonify({
             "error": ("Il giroconto si fa a incasso avvenuto: fino ad allora "
                       "i soldi non sono ancora sul conto P.IVA. Segna prima "
@@ -174,7 +177,8 @@ def api_giroconto_esegui(fid):
     # personale piu' soldi di quanti dovrebbero restare accantonati.
     param["aliquota_imposta"] = _aliquota_imposta_per_anno(param, anno_f)
     try:
-        r = (sb.table("b2f_fatture").select("totale").eq("stato", "incassata")
+        r = (sb.table("b2f_fatture").select("totale")
+               .neq("stato", "annullata")
                .gte("data_incasso", f"{anno_f}-01-01")
                .lte("data_incasso", f"{anno_f}-12-31").execute())
         incassato_anno = sum(float(x.get("totale") or 0) for x in (r.data or []))

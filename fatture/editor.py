@@ -2,13 +2,13 @@
 fatture/editor.py — Compilazione e modifica del facsimile di fattura.
 
 Il documento prodotto qui non e' la fattura elettronica: e' il facsimile
-che viene mandato allo studio, che poi predispone e trasmette l'XML allo
-SDI. Per questo si nasce in bozza e si diventa "inviata allo studio" solo
-con un'azione esplicita.
+che va prima a Nadia (l'amministrazione di B2FORGE, che ci paga sopra) e
+poi allo studio, che predispone e trasmette l'XML allo SDI. Per questo si
+nasce in bozza e si avanza solo con un'azione esplicita.
 
 Rotte:
   GET /fatture/nuova            -> nuovo documento
-  GET /fatture/<int:fid>/modifica -> modifica, solo se ancora in bozza
+  GET /fatture/<int:fid>/modifica -> modifica, finche' non e' incassata
 
 Il PDF e' delegato a window.b2fRenderInvoicePDF (shared/pdfgen.py).
 """

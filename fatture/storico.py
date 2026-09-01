@@ -21,6 +21,7 @@ from .costanti import (
     CATEGORIE_SPESE_PIVA, STATI, STATI_CHIAVI, STATI_LABEL, STATI_CLASSE,
     STATI_DESCR, STATI_PERCORSO, STATI_EMESSE, DATE_STATO,
     normalizza_stato, prossimo_stato, modificabile, motivo_blocco,
+    ha_incassato, indice_percorso,
     scorpora_rivalsa, RIVALSA_PERC,
 )
 from shared.theme import render_page
@@ -69,8 +70,15 @@ def _timeline(f: dict, stato: str) -> str:
     Il percorso della fattura, con le date dei passaggi gia' avvenuti.
 
     Serve a rendere visibile una cosa che altrimenti resta implicita: dopo
-    "inviata allo studio" il documento non e' piu' in mano tua, ed e' per
-    questo che smette di essere modificabile.
+    l'incasso il documento non si tocca piu', perche' gli importi sono
+    gia' diventati denaro sul conto.
+
+    Un passo alle spalle di quello corrente ma senza la sua data e'
+    disegnato SALTATO, non fatto: succede sui documenti piu' vecchi del
+    percorso attuale (una fattura del vecchio giro sta in
+    "inviata allo studio" senza essere mai passata da Nadia) e quando lo
+    stato viene forzato a mano dal menu. Dire "fatto" con la data vuota
+    sarebbe l'unico modo di raccontare un incasso mai avvenuto.
     """
     if stato == "annullata":
         return ('<div class="notice neg small">Fattura annullata: '
@@ -82,11 +90,13 @@ def _timeline(f: dict, stato: str) -> str:
 
     passi = []
     for i, chiave in enumerate(STATI_PERCORSO):
-        fatto = i <= idx_corrente
+        raggiunto = i <= idx_corrente
         attuale = i == idx_corrente
         data = f.get(campo_data.get(chiave, "")) if chiave in campo_data else f.get("data")
-        data_txt = _fmt_date(data) if (fatto and data) else ""
-        cls = "fatto" if fatto else ""
+        fatto = raggiunto and (chiave not in campo_data or bool(data))
+        saltato = raggiunto and not fatto
+        data_txt = _fmt_date(data) if (fatto and data) else ("non registrata" if saltato else "")
+        cls = "fatto" if fatto else ("saltato" if saltato else "")
         if attuale:
             cls += " ora"
         passi.append(f'''<li class="{cls.strip()}">
@@ -108,6 +118,11 @@ def _timeline(f: dict, stato: str) -> str:
         width:12px;height:12px;border-radius:50%;
         border:2px solid var(--line-strong);background:var(--surface)}}
       .tl li.fatto::before{{border-color:var(--accent);background:var(--accent)}}
+      /* Saltato: raggiunto ma senza data. Il pallino resta vuoto e il
+         filo tratteggiato, cosi' si vede che il percorso ha un buco. */
+      .tl li.saltato::before{{border-color:var(--accent);
+        border-style:dashed;background:var(--surface)}}
+      .tl li.saltato .tl-data{{opacity:.6;font-style:italic}}
       .tl li.ora::before{{box-shadow:0 0 0 4px var(--accent-soft)}}
       .tl .tl-lbl{{font-size:14px;font-weight:500;color:var(--ink-3)}}
       .tl li.fatto .tl-lbl{{color:var(--ink)}}
@@ -147,8 +162,11 @@ def storico_list():
     # Riepilogo anno
     valide = [x for x in rows if normalizza_stato(x.get("stato")) in STATI_EMESSE]
     tot_fatturato = sum(float(x.get("totale") or 0) for x in valide)
+    # Incassato = quelle con una data di incasso, non quelle ferme sullo
+    # stato "incassata": dopo l'incasso la fattura prosegue verso lo
+    # studio e lo SDI, e i soldi restano arrivati.
     tot_incassato = sum(float(x.get("totale") or 0) for x in rows
-                        if normalizza_stato(x.get("stato")) == "incassata")
+                        if ha_incassato(x))
     da_incassare = round(tot_fatturato - tot_incassato, 2)
 
     # Toolbar
@@ -200,7 +218,7 @@ def storico_list():
         for f in rows:
             stato = normalizza_stato(f.get("stato"))
             incasso = (f' · incassata il {_fmt_date(f.get("data_incasso"))}'
-                       if stato == "incassata" and f.get("data_incasso") else "")
+                       if ha_incassato(f) else "")
             items.append(f'''
             <a class="item" href="/fatture/{f["id"]}">
               <span class="body">
@@ -440,8 +458,12 @@ def fattura_dettaglio(fid):
         # che puo' essere diverso (fattura vecchia o vista in anticipo).
         param["aliquota_imposta"] = _aliquota_imposta_per_anno(param, anno_f)
         try:
+            # Filtrata sulla data, non sullo stato: il filtro di data
+            # esclude gia' da solo chi non ha incassato (data nulla), e
+            # cosi' continua a contare le fatture pagate che sono nel
+            # frattempo avanzate verso lo studio.
             r_anno = (sb.table("b2f_fatture").select("totale")
-                        .eq("stato", "incassata")
+                        .neq("stato", "annullata")
                         .gte("data_incasso", f"{anno_f}-01-01")
                         .lte("data_incasso", f"{anno_f}-12-31").execute())
             incassato_anno = sum(float(x.get("totale") or 0) for x in (r_anno.data or []))
@@ -453,7 +475,7 @@ def fattura_dettaglio(fid):
                 f.get("totale"), param, fatturato_riferimento=incassato_anno,
                 rivalsa=f.get("cassa_importo") or 0,
                 bollo_addebitato=(f.get("bollo") or 0) if f.get("bollo_addebitato") else 0)
-            if stato_corrente == "incassata":
+            if ha_incassato(f):
                 contesto = (f"Fattura incassata il {_fmt_date(f.get('data_incasso'))}. "
                             f"Metti da parte questa quota prima di considerare "
                             f"il resto disponibile.")
@@ -515,7 +537,7 @@ def fattura_dettaglio(fid):
                     onclick="onAnnullaGiroconto()">Annulla la ripartizione</button>
           </div>
         </div>'''
-    elif stato_corrente == "incassata" and scomposizione and lordo_f > 0:
+    elif ha_incassato(f) and scomposizione and lordo_f > 0:
         # Le quattro scelte, con i numeri veri di questa fattura: e' piu'
         # onesto di quattro etichette astratte da interpretare.
         righe_scelte = []
@@ -604,9 +626,10 @@ def fattura_dettaglio(fid):
     azione_principale = ""
     if avanti:
         etichette_azione = {
+            "inviata_nadia":  "Segna inviata a Nadia",
+            "incassata":      "Segna incassata",
             "inviata_studio": "Segna inviata allo studio",
             "trasmessa_sdi":  "Segna trasmessa a SDI",
-            "incassata":      "Segna incassata",
         }
         azione_principale = (
             f'<button type="button" class="btn" '
@@ -817,8 +840,10 @@ def fattura_dettaglio(fid):
       <div class="sheet">
         <h3>Registra come entrata</h3>
         <div class="sheet-sub">
-          Crea un movimento in entrata fra le spese P.IVA, lo collega a questa
-          fattura e porta lo stato a "incassata".
+          Crea un movimento in entrata fra le spese P.IVA e lo collega a questa
+          fattura. Se l'incasso non era ancora segnato, lo segna: stato
+          "incassata" e data di incasso quella del movimento. Una fattura già
+          più avanti nel percorso resta dov'è.
         </div>
         <div class="field-group">
           <div class="field"><label>Data</label>
@@ -1115,9 +1140,9 @@ def api_fattura_stato(fid):
     Cambia lo stato della fattura, registrando la data del passaggio.
 
     Le date dei passi gia' percorsi non vengono azzerate tornando indietro:
-    se ti accorgi di aver segnato "incassata" per sbaglio e torni a
-    "trasmessa", la data di trasmissione resta quella vera. L'unica che si
-    cancella e' quella dello stato che stai lasciando.
+    se ti accorgi di aver segnato "inviata allo studio" per sbaglio e torni
+    a "incassata", la data di incasso resta quella vera. Si cancellano solo
+    le date dei passi che tornano a essere non raggiunti.
     """
     sb, err = _supabase_or_error()
     if err:
@@ -1131,11 +1156,20 @@ def api_fattura_stato(fid):
     if errore:
         return errore
 
-    # Uscire da "incassata" con la ripartizione gia' fatta lascerebbe i due
-    # movimenti sui conti senza piu' un incasso che li giustifichi: il conto
-    # P.IVA resterebbe alleggerito e il personale gonfiato, senza che nulla
-    # lo segnali. Prima si annulla la ripartizione, poi si cambia stato.
-    if stato != "incassata" and normalizza_stato(f.get("stato")) == "incassata":
+    # Tornare PRIMA dell'incasso (o annullare) con la ripartizione gia'
+    # fatta lascerebbe i due movimenti sui conti senza piu' un incasso che
+    # li giustifichi: il conto P.IVA resterebbe alleggerito e il personale
+    # gonfiato, senza che nulla lo segnali. Prima si annulla la
+    # ripartizione, poi si cambia stato.
+    #
+    # Il confronto e' fra POSIZIONI sul percorso, non fra chiavi: andare
+    # avanti da "incassata" verso lo studio e' un passo normale e non deve
+    # far scattare niente — e' solo tornare indietro che scioglie l'incasso.
+    soglia = indice_percorso("incassata")
+    i_nuovo = indice_percorso(stato)
+    i_vecchio = indice_percorso(f.get("stato"))
+    esce_dall_incasso = i_vecchio >= soglia and (i_nuovo < soglia or stato == "annullata")
+    if esce_dall_incasso:
         if f.get("data_giroconto"):
             return jsonify({
                 "error": ("Questa fattura è già stata ripartita: i soldi sono stati "
@@ -1148,7 +1182,7 @@ def api_fattura_stato(fid):
         # libro P.IVA (bottone "Registra entrata su P.IVA"): tornare indietro
         # senza sciogliere quel collegamento lascia una riga di entrata su
         # b2f_spese_piva che il motore fiscale (situazione_data, filtra per
-        # stato='incassata') smette di contare, mentre il libro P.IVA la
+        # per data_incasso) smette di contare, mentre il libro P.IVA la
         # conta ancora — i due lati divergono su un incasso vero.
         if f.get("spesa_piva_id"):
             return jsonify({
@@ -1205,11 +1239,11 @@ def _carica_fattura(sb, fid):
 @fatture_bp.patch("/api/fatture/<int:fid>")
 def api_fattura_update(fid):
     """
-    Aggiorna una fattura in bozza.
+    Aggiorna una fattura ancora modificabile (bozza o inviata a Nadia).
 
     La guardia sta qui e non solo nell'interfaccia: nascondere un pulsante
     non impedisce a nessuno di chiamare l'endpoint, e una fattura gia'
-    mandata allo studio non deve poter cambiare da nessuna strada.
+    incassata non deve poter cambiare da nessuna strada.
     """
     sb, err = _supabase_or_error()
     if err:
@@ -1305,8 +1339,13 @@ def api_fattura_delete(fid):
 def api_fattura_registra_entrata(fid):
     """
     Crea riga in tabella `b2f_spese_piva` (tipo=entrata) e collega
-    spesa_piva_id sulla fattura. Se stato non era gia' incassata/annullata,
-    lo porta a incassata con data_incasso = data della spesa.
+    spesa_piva_id sulla fattura, e se l'incasso non era ancora segnato lo
+    segna: data_incasso = data della spesa, e stato portato a "incassata".
+
+    Solo se la fattura e' ancora PRIMA dell'incasso, pero': una gia'
+    arrivata allo studio o allo SDI verrebbe altrimenti riportata
+    indietro di due passi dal gesto di registrare l'entrata sul libro
+    P.IVA, che con il percorso non c'entra niente.
     """
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1341,8 +1380,14 @@ def api_fattura_registra_entrata(fid):
         return jsonify({"error": f"errore insert spese P.IVA: {str(e)[:200]}"}), 500
 
     upd = {"spesa_piva_id": spesa_piva_id}
-    if f.get("stato") not in ("incassata", "annullata"):
+    stato_f = normalizza_stato(f.get("stato"))
+    if (stato_f != "annullata"
+            and indice_percorso(stato_f) < indice_percorso("incassata")):
         upd["stato"] = "incassata"
+        upd["data_incasso"] = riga["data"]
+    elif not f.get("data_incasso") and stato_f != "annullata":
+        # Gia' oltre l'incasso ma senza data (dato vecchio, o stato
+        # forzato a mano): lo stato resta dov'e', la data si scrive.
         upd["data_incasso"] = riga["data"]
     try:
         sb.table("b2f_fatture").update(upd).eq("id", fid).execute()
@@ -1484,7 +1529,7 @@ def api_fattura_create():
         "pagamento_cond":    data.get("pagamento_cond"),
         "scadenza":          data.get("scadenza"),
         "iban":              data.get("iban"),
-        # Si nasce bozza: il documento diventa "inviata allo studio" solo
+        # Si nasce bozza: il documento diventa "inviata a Nadia" solo
         # quando lo mandi davvero, non nel momento in cui lo salvi.
         "stato":             normalizza_stato(data.get("stato") or "bozza"),
         "note":              data.get("note"),

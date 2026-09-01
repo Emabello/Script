@@ -267,6 +267,22 @@ DB["v_risparmi_mese"] = [
 ]
 
 
+def _oltre(stato, passo):
+    """Lo stato ha gia' attraversato quel passo del percorso?"""
+    from fatture.costanti import indice_percorso
+    return indice_percorso(stato) >= indice_percorso(passo)
+
+
+def _vecchio_giro(f):
+    """
+    La fattura com'era prima del percorso nuovo: mandata allo studio senza
+    passare da Nadia. Serve a tenere sotto gli occhi il dato storico, che
+    e' il caso in cui il confine "incassata" letto dallo stato invece che
+    dalla data si vede subito che e' sbagliato.
+    """
+    return {**f, "data_invio_nadia": None}
+
+
 def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
              cassa=True, spesa_piva_id=None):
     cli = next(c for c in DB["b2f_clienti"] if c["id"] == cliente_id)
@@ -293,8 +309,13 @@ def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
         "pagamento_mod": "Bonifico bancario", "pagamento_cond": "30 gg data fattura",
         "scadenza": None, "iban": DB["b2f_emittente"][0]["iban"],
         "stato": stato, "data_incasso": data_incasso,
-        "data_invio_studio": (data if stato != "bozza" else None),
-        "data_trasmissione_sdi": (data if stato in ("trasmessa_sdi", "incassata") else None),
+        # Le date dei passi seguono il percorso: si compilano quelle dei
+        # passi gia' attraversati, non una a caso per ogni stato != bozza.
+        # La 6 fa eccezione apposta (vedi sotto): e' il documento vecchio,
+        # arrivato allo studio senza essere mai passato da Nadia.
+        "data_invio_nadia": (data if _oltre(stato, "inviata_nadia") else None),
+        "data_invio_studio": (data if _oltre(stato, "inviata_studio") else None),
+        "data_trasmissione_sdi": (data if _oltre(stato, "trasmessa_sdi") else None),
         "numero_sdi": None,
         "spesa_piva_id": spesa_piva_id, "pdf_url": None, "xml_url": None,
         "note": None,
@@ -334,15 +355,25 @@ DB["b2f_fatture"] = [
     _fattura(4, 4, "2026-07-22", 3,
              [{"descrizione": "Migration assessment", "qta": 12, "um": "h", "prezzo": 205.00}],
              "incassata", "2026-08-01", cassa=False, spesa_piva_id=8),
+    # Incassata e poi proseguita fino allo SDI: il caso che con il vecchio
+    # codice sarebbe sparito dall'"incassato", perche' lo stato non e' piu'
+    # "incassata" ma i soldi ci sono.
     _fattura(5, 5, "2026-08-01", 1,
              [{"descrizione": "Manutenzione evolutiva agosto", "qta": 18, "um": "h", "prezzo": 190.00}],
-             "trasmessa_sdi"),
-    _fattura(6, 6, "2026-08-03", 2,
+             "trasmessa_sdi", "2026-08-20"),
+    # Il documento del vecchio giro: mandato allo studio senza passare da
+    # Nadia e senza incasso. Deve restare "da incassare" e mostrare i due
+    # passi scavalcati come saltati, non come fatti.
+    _vecchio_giro(_fattura(6, 6, "2026-08-03", 2,
              [{"descrizione": "Intervento urgente su backup", "qta": 5, "um": "h", "prezzo": 195.00}],
-             "inviata_studio"),
+             "inviata_studio")),
     _fattura(7, 7, "2026-08-04", 4,
              [{"descrizione": "Recupero dati da disco danneggiato", "qta": 3, "um": "h", "prezzo": 90.00}],
              "bozza"),
+    _fattura(8, 8, "2026-08-28", 3,
+             [{"descrizione": "Attività di agosto con tempi consegnati nel rapportino",
+               "qta": 1, "um": "gg", "prezzo": 3500.00}],
+             "inviata_nadia"),
 ]
 
 

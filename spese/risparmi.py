@@ -39,6 +39,9 @@ from . import revolut
 from shared.theme import render_page
 from shared.design import icon
 from shared.fmt import eur, eur_segno, data_it, mese_anno, pct
+# Una sola domanda, una sola risposta: "i soldi sono arrivati?" la sa
+# il modulo fatture, e la risposta e' la data di incasso (non lo stato).
+from fatture.costanti import ha_incassato
 
 
 def _n(v):
@@ -61,17 +64,21 @@ def _fatture_da_girocontare(client) -> list[dict]:
     Il filtro su `data_giroconto` e' in Python e non nella query: il
     "non ancora fatto" e' un NULL, e PostgREST vuole `is.null` mentre
     l'harness di anteprima non lo implementa. Le fatture incassate sono
-    poche decine l'anno: filtrarle qui non costa niente.
+    poche decine l'anno: filtrarle qui non costa niente. Per lo stesso
+    motivo ci sta anche il filtro sull'incasso: `ha_incassato` guarda
+    `data_incasso`, non lo stato, perche' dopo l'incasso la fattura
+    prosegue verso lo studio e lo SDI e resta pagata.
     """
     try:
         r = (client.table("b2f_fatture")
              .select("id,numero,totale,data_incasso,data_giroconto,stato")
-             .eq("stato", "incassata")
+             .neq("stato", "annullata")
              .order("data_incasso", desc=True).execute())
         righe = getattr(r, "data", None) or []
     except Exception:
         return []
-    return [f for f in righe if not f.get("data_giroconto")]
+    return [f for f in righe
+            if ha_incassato(f) and not f.get("data_giroconto")]
 
 
 def _card_procedura(client, periodo_label: str, consigliato: float,

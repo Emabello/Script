@@ -169,6 +169,13 @@ Ultimo aggiornamento: 2026-08-25.
 | `giroconto_piva_id` | bigint | YES | NO |  |
 | `giroconto_personale_id` | bigint | YES | NO |  |
 
+> **In attesa della migrazione [README § 8.15](../README.md#815--il-nuovo-percorso-della-fattura-necessaria)**:
+> il codice usa già lo stato `inviata_nadia` e la colonna `data_invio_nadia`,
+> che qui sotto non ci sono ancora perché la foto è del database vivo. Finché
+> la migrazione non è lanciata, segnare una fattura "inviata a Nadia" fallisce
+> sul `CHECK` qui sotto. Quando l'hai lanciata, riscatta la foto (README § 8.5)
+> e togli questo riquadro.
+
 **Vincoli:**
 
 - `b2f_fatture_anno_progressivo_key`: UNIQUE (anno, progressivo)

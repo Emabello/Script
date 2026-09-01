@@ -493,25 +493,52 @@ sapere se vale la pena aprirla, e in un mese non lo legge più nessuno.
 ## 6. Il ciclo di vita della fattura
 
 ```
-bozza → inviata_studio → trasmessa_sdi → incassata
-                                              ↘ annullata
+bozza → inviata_nadia → incassata → inviata_studio → trasmessa_sdi
+                                                          ↘ annullata
 ```
 
 | Stato | Significato |
 |---|---|
 | `bozza` | in lavorazione, solo tua. Modificabile ed eliminabile |
-| `inviata_studio` | il facsimile è dallo studio. Da qui **niente più modifiche** |
-| `trasmessa_sdi` | lo studio ha trasmesso la fattura elettronica |
-| `incassata` | il denaro è arrivato: fa scattare l'accantonamento |
+| `inviata_nadia` | il facsimile è a Nadia, l'amministrazione interna di B2FORGE: è il documento su cui pagano. Ancora modificabile |
+| `incassata` | il denaro è arrivato: fa scattare l'accantonamento, e da qui **niente più modifiche** |
+| `inviata_studio` | il facsimile è dallo studio, che predispone la fattura elettronica |
+| `trasmessa_sdi` | lo studio ha trasmesso allo SDI. Fine del percorso |
 | `annullata` | fuori dal giro, non concorre ai calcoli |
 
-Concorrono al fatturato solo `inviata_studio`, `trasmessa_sdi` e `incassata`.
+Concorre al fatturato tutto tranne `bozza` e `annullata`.
 
-Oltre la bozza il documento non è più modificabile: correggerlo qui lo farebbe
-divergere dalla fattura vera senza che nessuno se ne accorga. Tornando indietro
-lungo il percorso, le date dei passi non più raggiunti vengono ripulite, ma
-quelle dei passi già attraversati restano: correggere un errore non deve
-falsificare la cronologia.
+Il documento resta modificabile finché non si è mosso il denaro: fino a
+`inviata_nadia` una correzione è solo un facsimile rifatto. **Dall'incasso in
+poi no**, e per due motivi diversi che si sommano: prima perché cambiare gli
+importi li farebbe divergere dai soldi già entrati sul conto P.IVA e
+dall'accantonamento calcolato su quella cifra; poi, da `inviata_studio`, anche
+perché la fattura elettronica vera esiste già.
+
+Tornando indietro lungo il percorso, le date dei passi non più raggiunti
+vengono ripulite, ma quelle dei passi già attraversati restano: correggere un
+errore non deve falsificare la cronologia.
+
+### L'incasso è in mezzo, e questo cambia una domanda
+
+Fino al 01/09/2026 `incassata` era **l'ultimo** stato, e quindi
+`stato == 'incassata'` voleva dire "i soldi sono arrivati". Ora l'incasso sta
+in mezzo: una fattura pagata prosegue verso lo studio e lo SDI, e in quegli
+stati i soldi **ci sono lo stesso**. Chiedere ancora `stato == 'incassata'`
+farebbe sparire dai totali — e dai calcoli per cassa, che sono le tasse —
+proprio le fatture più avanti nel giro.
+
+Da qui in avanti la domanda «è stata incassata?» si fa a **`data_incasso`**,
+non allo stato: `fatture/costanti.py::ha_incassato()`. È anche l'unica
+risposta che regge sui dati vecchi, dove `inviata_studio` significava
+"spedita ma non ancora pagata": lì la data è vuota, e la fattura risulta
+correttamente da incassare. La linea temporale del dettaglio disegna infatti
+quei passi come **saltati** — pallino vuoto, tratteggio — e non come fatti:
+un passo alle spalle di quello corrente ma senza la sua data non è avvenuto.
+
+Le query che devono chiedere la stessa cosa al database filtrano sulla data
+(`gte/lte` su `data_incasso`, che esclude già i NULL) più `stato ≠ annullata`,
+mai su `stato = 'incassata'`.
 
 ### 6.1 — Il mese di ore e la fattura che lo racconta
 
@@ -1451,6 +1478,104 @@ alter table b2f_parametri_fiscali
 comment on column b2f_parametri_fiscali.tariffa_giornaliera is
   'Tariffa per giornata da 8 ore, usata per precompilare la fattura dalle ore';
 ```
+
+### 8.15 — Il nuovo percorso della fattura (**necessaria**)
+
+Aggiunge lo stato `inviata_nadia` e la sua data, e rimette in ordine il
+percorso: l'incasso non è più l'ultimo passo ma il terzo
+([§ 6](#6-il-ciclo-di-vita-della-fattura)).
+
+**Va lanciata prima del deploy**, non dopo: il `CHECK` attuale su
+`b2f_fatture.stato` non conosce `inviata_nadia`, quindi finché resta com'è
+ogni tentativo di segnare una fattura "inviata a Nadia" fallisce con un
+errore del database. Il contrario — migrazione senza codice nuovo — non
+rompe niente: nessuna riga usa ancora il nuovo stato.
+
+Il `CHECK` viene riscritto in forma **aperta** (`not in ('bozza', ...)` non
+si può, quindi resta un elenco): se un giorno si aggiunge un altro passo,
+è di nuovo qui che va toccato. La vista `v_situazione_annuale`, invece,
+smette di elencare gli stati e chiede quello che intende davvero — "non
+bozza e non annullata" per il fatturato, "ha una data di incasso" per
+l'incassato — così il prossimo stato nuovo non la costringe a cambiare.
+
+```sql
+-- 1. la data del passaggio da Nadia
+alter table b2f_fatture
+  add column if not exists data_invio_nadia date;
+
+comment on column b2f_fatture.data_invio_nadia is
+  'Data di invio del facsimile a Nadia (amministrazione interna B2FORGE)';
+
+-- 2. lo stato nuovo entra nel vincolo
+alter table b2f_fatture drop constraint if exists b2f_fatture_stato_check;
+alter table b2f_fatture add constraint b2f_fatture_stato_check
+  check (stato in ('bozza', 'inviata_nadia', 'incassata',
+                   'inviata_studio', 'trasmessa_sdi', 'annullata'));
+
+-- 3. la vista non ragiona più per elenco di stati.
+--    fatturato = tutto tranne bozza e annullata
+--    incassato = c'è una data di incasso (e non è annullata)
+create or replace view v_situazione_annuale as
+with param as (
+  select * from b2f_parametri_fiscali where id = 1
+), fatt as (
+  select extract(year  from data)::int as anno,
+         extract(month from data)::int as mese,
+         sum(coalesce(totale, 0)) as fatturato_mese,
+         sum(coalesce(bollo, 0)) filter (where bollo_addebitato) as bollo_mese,
+         count(*) as n_fatture
+    from b2f_fatture
+   where stato not in ('bozza', 'annullata')
+   group by 1, 2
+), inc as (
+  select extract(year  from data_incasso)::int as anno,
+         extract(month from data_incasso)::int as mese,
+         sum(coalesce(totale, 0)) as incasso_mese
+    from b2f_fatture
+   where data_incasso is not null and stato <> 'annullata'
+   group by 1, 2
+), spese as (
+  select extract(year  from data)::int as anno,
+         extract(month from data)::int as mese,
+         sum(importo) filter (
+           where categoria = 'commercialista' and tipo = 'uscita'
+         ) as commercialista_mese
+    from b2f_spese_piva
+   group by 1, 2
+)
+select f.anno, f.mese, f.fatturato_mese,
+       round(f.fatturato_mese * p.coeff_ateco, 2) as imponibile_mese,
+       coalesce(i.incasso_mese, 0) as incasso_mese,
+       round(f.fatturato_mese * p.coeff_ateco * (1 - p.aliquota_inps) * p.aliquota_imposta, 2) as imposta_mese,
+       round(f.fatturato_mese * p.coeff_ateco * p.aliquota_inps, 2) as inps_saldo_mese,
+       round(f.fatturato_mese * p.coeff_ateco * p.aliquota_inps * p.aliquota_acconto, 2) as inps_acconto_mese,
+       coalesce(f.bollo_mese, 0) as bollo_mese,
+       coalesce(s.commercialista_mese, 0) as commercialista_mese,
+       f.n_fatture
+  from fatt f
+  cross join param p
+  left join inc   i using (anno, mese)
+  left join spese s using (anno, mese)
+ order by f.anno, f.mese;
+
+-- 4. le fatture già incassate che erano anche già andate allo studio
+--    stanno, nel percorso nuovo, un passo più avanti: lo dice la loro
+--    stessa data di invio. Nessun importo si muove — `data_incasso`
+--    resta dov'è, ed è quella a dire che i soldi sono arrivati.
+update b2f_fatture
+   set stato = case
+                 when data_trasmissione_sdi is not null then 'trasmessa_sdi'
+                 else 'inviata_studio'
+               end
+ where stato = 'incassata'
+   and data_invio_studio is not null;
+```
+
+Il passo 4 è idempotente e, sui dati di oggi, tocca **una riga sola** (la
+2026/001: incassata il 30/06, già mandata allo studio). Le fatture vecchie
+ferme in `inviata_studio` senza incasso **non si toccano**: restano dove
+sono, la linea temporale mostra i due passi scavalcati come saltati, e
+`ha_incassato()` continua a leggerle correttamente come da incassare.
 
 ## 9. Sicurezza
 
