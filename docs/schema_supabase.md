@@ -2,7 +2,7 @@
 
 Foto dello schema reale su Supabase, presa con la query di [README §8.5](../README.md#85--ispezionare-lo-schema). **Va rigenerata dopo ogni migrazione**: si aggiorna qui, non a mano.
 
-Ultimo aggiornamento: 2026-08-25.
+Ultimo aggiornamento: 2026-09-01 (dopo la migrazione [README § 8.15](../README.md#815--il-nuovo-percorso-della-fattura-necessaria), applicata al database vivo).
 
 
 > **Nota**: questa foto è stata riverificata campo per campo contro il database
@@ -168,6 +168,7 @@ Ultimo aggiornamento: 2026-08-25.
 | `data_giroconto` | date | YES | NO |  |
 | `giroconto_piva_id` | bigint | YES | NO |  |
 | `giroconto_personale_id` | bigint | YES | NO |  |
+| `data_invio_nadia` | date | YES | NO |  |
 
 **Vincoli:**
 
@@ -177,7 +178,7 @@ Ultimo aggiornamento: 2026-08-25.
 - `b2f_fatture_pkey`: PRIMARY KEY (id)
 - `b2f_fatture_scenario_valido`: CHECK (((accantonamento_scenario IS NULL) OR (accantonamento_scenario = ANY (ARRAY['minimo'::text, 'consigliato'::text, 'prudente'::text, 'sicuro'::text]))))
 - `b2f_fatture_spesa_piva_id_fkey`: FOREIGN KEY (spesa_piva_id) REFERENCES b2f_spese_piva(id) ON DELETE SET NULL
-- `b2f_fatture_stato_check`: CHECK ((stato = ANY (ARRAY['bozza'::text, 'inviata_studio'::text, 'trasmessa_sdi'::text, 'incassata'::text, 'annullata'::text])))
+- `b2f_fatture_stato_check`: CHECK ((stato = ANY (ARRAY['bozza'::text, 'inviata_nadia'::text, 'incassata'::text, 'inviata_studio'::text, 'trasmessa_sdi'::text, 'annullata'::text])))
 - `b2f_fatture_tipo_doc_check`: CHECK ((tipo_doc = ANY (ARRAY['TD01'::text, 'TD02'::text, 'TD03'::text, 'TD04'::text, 'TD05'::text, 'TD06'::text, 'TD16'::text, 'TD17'::text, 'TD18'::text, 'TD19'::text, 'TD20'::text, 'TD24'::text, 'TD25'::text, 'TD26'::text, 'TD27'::text])))
 
 **Indici:**
@@ -760,14 +761,14 @@ WITH param AS (
             sum(COALESCE(b2f_fatture.bollo, 0::numeric)) FILTER (WHERE b2f_fatture.bollo_addebitato) AS bollo_mese,
             count(*) AS n_fatture
            FROM b2f_fatture
-          WHERE b2f_fatture.stato = ANY (ARRAY['inviata_studio'::text, 'trasmessa_sdi'::text, 'incassata'::text])
+          WHERE b2f_fatture.stato <> ALL (ARRAY['bozza'::text, 'annullata'::text])
           GROUP BY (EXTRACT(year FROM b2f_fatture.data)::integer), (EXTRACT(month FROM b2f_fatture.data)::integer)
         ), inc AS (
          SELECT EXTRACT(year FROM b2f_fatture.data_incasso)::integer AS anno,
             EXTRACT(month FROM b2f_fatture.data_incasso)::integer AS mese,
             sum(COALESCE(b2f_fatture.totale, 0::numeric)) AS incasso_mese
            FROM b2f_fatture
-          WHERE b2f_fatture.stato = 'incassata'::text AND b2f_fatture.data_incasso IS NOT NULL
+          WHERE b2f_fatture.data_incasso IS NOT NULL AND b2f_fatture.stato <> 'annullata'::text
           GROUP BY (EXTRACT(year FROM b2f_fatture.data_incasso)::integer), (EXTRACT(month FROM b2f_fatture.data_incasso)::integer)
         ), spese AS (
          SELECT EXTRACT(year FROM b2f_spese_piva.data)::integer AS anno,

@@ -27,10 +27,6 @@ ATTESI = [
     # (frammento, perche' deve esserci)
     ("FACSIMILE",
      "chi lo riceve deve capire subito che non e' la fattura fiscale"),
-    ("documento non valido ai fini fiscali",
-     "l'avviso esplicito, l'unica difesa contro l'uso sbagliato"),
-    ("Sistema di Interscambio",
-     "deve dire chi trasmette allo SDI"),
     ("Corrispettivo",
      "il totale concordato col cliente"),
     ("di cui compenso",
@@ -55,6 +51,17 @@ ATTESI = [
 VIETATI = [
     ("5.200,00", "e' il totale con la rivalsa ADDEBITATA invece che scorporata"),
     ("cdnjs.cloudflare", "la libreria PDF deve essere quella locale"),
+    # L'avviso in calce e' stato tolto su richiesta (01/09/2026): il foglio
+    # si stampa e si consegna, e non deve portarsi dietro il nome dello
+    # studio ne' la frase sul valore fiscale. Sta fra i VIETATI e non fra
+    # gli spariti-e-basta perche' il modo in cui torna e' che qualcuno
+    # rimetta il blocco senza sapere che era stato tolto apposta.
+    ("documento non valido ai fini fiscali",
+     "l'avviso in calce e' stato tolto: non deve ricomparire"),
+    ("Sistema di Interscambio",
+     "stessa riga dell'avviso, stesso motivo"),
+    ("Studio Bagaglia",
+     "il nome dello studio non deve finire sul foglio consegnato"),
 ]
 
 

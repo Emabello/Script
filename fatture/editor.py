@@ -2,26 +2,49 @@
 fatture/editor.py — Compilazione e modifica del facsimile di fattura.
 
 Il documento prodotto qui non e' la fattura elettronica: e' il facsimile
-che viene mandato allo studio, che poi predispone e trasmette l'XML allo
-SDI. Per questo si nasce in bozza e si diventa "inviata allo studio" solo
-con un'azione esplicita.
+che va prima a Nadia (l'amministrazione di B2FORGE, che ci paga sopra) e
+poi allo studio, che predispone e trasmette l'XML allo SDI. Per questo si
+nasce in bozza e si avanza solo con un'azione esplicita.
 
 Rotte:
   GET /fatture/nuova            -> nuovo documento
-  GET /fatture/<int:fid>/modifica -> modifica, solo se ancora in bozza
+  GET /fatture/<int:fid>/modifica -> modifica, finche' non e' incassata
 
 Il PDF e' delegato a window.b2fRenderInvoicePDF (shared/pdfgen.py).
 """
 import json
 from datetime import date
 
-from flask import Response, redirect
+from flask import Response, redirect, request
 
 from . import fatture_bp
-from .costanti import RIVALSA_PERC, modificabile, motivo_blocco, normalizza_stato
+from .costanti import (MESI_NOMI, RIVALSA_PERC, modificabile,
+                       motivo_blocco, normalizza_stato)
 from shared.theme import render_page
 from shared.supabase_client import get_client, is_configured
+from shared.fmt import eur
 from shared.pdfgen import pdf_script
+
+# Vale finche' `b2f_parametri_fiscali.tariffa_giornaliera` non c'e' o e'
+# vuota: vedi `tariffa_giornaliera()`.
+TARIFFA_DEFAULT = 250.0
+
+
+def tariffa_giornaliera(sb) -> float:
+    """
+    Quanto vale una giornata da 8 ore (README §8.14).
+
+    Sta nei parametri e non qui dentro perche' e' un numero commerciale:
+    cambia quando cambia un contratto, non quando cambia una legge. Il
+    default a 250 vale anche se la migrazione non e' ancora stata lanciata,
+    cosi' la precompilazione funziona lo stesso invece di proporre zero.
+    """
+    try:
+        from .fiscale import get_parametri
+        return round(float((get_parametri(sb) or {}).get("tariffa_giornaliera")
+                           or TARIFFA_DEFAULT), 2)
+    except Exception:
+        return TARIFFA_DEFAULT
 
 
 def _contesto_comune(sb):
@@ -45,8 +68,73 @@ def _contesto_comune(sb):
     return em, acc_rate
 
 
+def _precompila_da_ore(sb, init: dict, periodo: str):
+    """
+    Riempie l'editor con le ore di un mese: `periodo` e' "YYYY-MM".
+
+    Una riga sola, non una per cliente. La fattura la emetti a **un**
+    cliente — quello che ti paga — mentre la ripartizione fra i clienti
+    finali e' informazione tua, e resta nella foto (`ore_snapshot`) che
+    il dettaglio mostra in fondo. Una riga per cliente finirebbe sul PDF
+    che il cliente legge, e li' non c'entra niente.
+
+    Le giornate arrivano dal totale dei minuti del mese diviso 8 ore: due
+    mezze giornate sono una giornata da fatturare.
+    """
+    try:
+        anno, mese = int(periodo[:4]), int(periodo[5:7])
+    except (ValueError, IndexError):
+        return init, ('<div class="notice warn">Periodo delle ore non valido: '
+                      f'"{_esc_txt(periodo)}". Atteso il formato AAAA-MM.</div>')
+
+    from shared import ore as O
+    riep = O.riepilogo_mese(anno, mese)
+    if riep.get("errore"):
+        return init, (f'<div class="notice err">Non sono riuscito a leggere le '
+                      f'ore di {MESI_NOMI[mese - 1]} {anno}: '
+                      f'{_esc_txt(str(riep["errore"]).rstrip(". "))}. La fattura '
+                      f'si compila lo stesso a mano.</div>')
+
+    giornate = riep["giornate"]
+    if giornate <= 0:
+        return init, (f'<div class="notice warn">Su {MESI_NOMI[mese - 1]} {anno} '
+                      f'il portale non ha ore registrate: non c\'è niente da '
+                      f'precompilare.</div>')
+
+    tariffa = tariffa_giornaliera(sb)
+    init = {**init,
+            "righe": [{"desc": f"Attività di consulenza informatica — "
+                               f"{MESI_NOMI[mese - 1]} {anno}",
+                       "qta": giornate, "prezzo": tariffa, "um": "gg"}],
+            "ore_periodo": riep["periodo"],
+            "ore_snapshot": riep,
+            "ore_lette_il": riep["letto_il"]}
+
+    clienti = ", ".join(f'{c["nome"]} {eur(c["giornate"])} gg'
+                        for c in riep["clienti"][:4])
+    coda = " · " + _esc_txt(clienti) if clienti else ""
+    asterisco = ""
+    if riep.get("voci_illeggibili"):
+        asterisco = (f' <strong>Attenzione</strong>: {riep["voci_illeggibili"]} '
+                     f'voce/i del mese hanno un orario che il portale non '
+                     f'espone in modo leggibile e non sono nel totale.')
+    return init, (
+        f'<div class="notice">Precompilata dalle ore di '
+        f'<strong>{MESI_NOMI[mese - 1]} {anno}</strong>: '
+        f'{O.fmt_min(riep["minuti"])} su {riep["giorni_lavorati"]} giorni, '
+        f'<strong>{eur(giornate)} giornate</strong> da 8h × '
+        f'€ {eur(tariffa)}{coda}. Controlla e correggi prima di salvare.'
+        f'{asterisco}</div>')
+
+
+def _esc_txt(v) -> str:
+    """Testo libero dentro un attributo o un blocco HTML."""
+    return (str(v if v is not None else "").replace("&", "&amp;")
+            .replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;"))
+
+
 def _render_editor(em, acc_rate, init: dict, titolo: str, eyebrow: str,
-                   breadcrumb) -> Response:
+                   breadcrumb, avviso: str = "") -> Response:
     # __INIT__ si sostituisce per ultimo: il suo valore porta dentro testo
     # libero (numero, righe di una fattura esistente). Se un'altra
     # sostituzione girasse dopo, un valore che contenesse per caso il
@@ -61,7 +149,7 @@ def _render_editor(em, acc_rate, init: dict, titolo: str, eyebrow: str,
                .replace("__INIT__", json.dumps(init, ensure_ascii=False)
                         .replace("<", "\\u003c")))
     html = render_page(section="fatture", eyebrow=eyebrow, title_html=titolo,
-                       content=content, breadcrumb=breadcrumb)
+                       content=(avviso or "") + content, breadcrumb=breadcrumb)
     return Response(html, mimetype="text/html")
 
 
@@ -90,10 +178,21 @@ def fattura_nuova():
         "pagamento_mod": "",
         "pagamento_cond": "",
         "scadenza": "",
+        "ore_periodo": None,
+        "ore_snapshot": None,
+        "ore_lette_il": None,
     }
+
+    # ?ore=YYYY-MM — arrivo dal timesheet: la riga e' gia' scritta.
+    avviso = ""
+    periodo = (request.args.get("ore") or "").strip()
+    if periodo:
+        init, avviso = _precompila_da_ore(sb, init, periodo)
+
     return _render_editor(em, acc_rate, init,
                           '<em>Nuova</em> fattura', "Nuova fattura",
-                          [("Fatture", "/fatture"), ("Nuova", "")])
+                          [("Fatture", "/fatture"), ("Nuova", "")],
+                          avviso=avviso)
 
 
 @fatture_bp.get("/<int:fid>/modifica")
@@ -139,6 +238,13 @@ def fattura_modifica(fid):
         "pagamento_mod": f.get("pagamento_mod") or "",
         "pagamento_cond": f.get("pagamento_cond") or "",
         "scadenza": f.get("scadenza") or "",
+        # Il legame con le ore sopravvive alla modifica della bozza: senza
+        # questi tre campi nell'INIT, salvare di nuovo li rimanderebbe
+        # indietro vuoti e la foto sparirebbe senza che nessuno l'abbia
+        # chiesto.
+        "ore_periodo": f.get("ore_periodo"),
+        "ore_snapshot": f.get("ore_snapshot"),
+        "ore_lette_il": f.get("ore_lette_il"),
     }
     numero = f.get("numero") or str(fid)
     return _render_editor(
@@ -527,6 +633,9 @@ function corpoComune(t, dataIso) {
     pagamento_cond: $('p_cond').value || null,
     scadenza: $('p_scad').value || null,
     iban: (window.B2F_EMITTENTE && window.B2F_EMITTENTE.iban) || null,
+    ore_periodo: INIT.ore_periodo || null,
+    ore_snapshot: INIT.ore_snapshot || null,
+    ore_lette_il: INIT.ore_lette_il || null,
   };
 }
 

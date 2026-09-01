@@ -21,12 +21,13 @@ from .costanti import (
     CATEGORIE_SPESE_PIVA, STATI, STATI_CHIAVI, STATI_LABEL, STATI_CLASSE,
     STATI_DESCR, STATI_PERCORSO, STATI_EMESSE, DATE_STATO,
     normalizza_stato, prossimo_stato, modificabile, motivo_blocco,
+    ha_incassato, indice_percorso,
     scorpora_rivalsa, RIVALSA_PERC,
 )
 from shared.theme import render_page
 from shared.design import icon as _icon
 from shared.supabase_client import get_client, is_configured
-from shared.fmt import eur as _fmt_eur, data_it as _fmt_date, pct
+from shared.fmt import (eur as _fmt_eur, data_it as _fmt_date, mese_anno, pct)
 
 
 def cliente_label(f: dict) -> str:
@@ -69,8 +70,15 @@ def _timeline(f: dict, stato: str) -> str:
     Il percorso della fattura, con le date dei passaggi gia' avvenuti.
 
     Serve a rendere visibile una cosa che altrimenti resta implicita: dopo
-    "inviata allo studio" il documento non e' piu' in mano tua, ed e' per
-    questo che smette di essere modificabile.
+    l'incasso il documento non si tocca piu', perche' gli importi sono
+    gia' diventati denaro sul conto.
+
+    Un passo alle spalle di quello corrente ma senza la sua data e'
+    disegnato SALTATO, non fatto: succede sui documenti piu' vecchi del
+    percorso attuale (una fattura del vecchio giro sta in
+    "inviata allo studio" senza essere mai passata da Nadia) e quando lo
+    stato viene forzato a mano dal menu. Dire "fatto" con la data vuota
+    sarebbe l'unico modo di raccontare un incasso mai avvenuto.
     """
     if stato == "annullata":
         return ('<div class="notice neg small">Fattura annullata: '
@@ -82,11 +90,13 @@ def _timeline(f: dict, stato: str) -> str:
 
     passi = []
     for i, chiave in enumerate(STATI_PERCORSO):
-        fatto = i <= idx_corrente
+        raggiunto = i <= idx_corrente
         attuale = i == idx_corrente
         data = f.get(campo_data.get(chiave, "")) if chiave in campo_data else f.get("data")
-        data_txt = _fmt_date(data) if (fatto and data) else ""
-        cls = "fatto" if fatto else ""
+        fatto = raggiunto and (chiave not in campo_data or bool(data))
+        saltato = raggiunto and not fatto
+        data_txt = _fmt_date(data) if (fatto and data) else ("non registrata" if saltato else "")
+        cls = "fatto" if fatto else ("saltato" if saltato else "")
         if attuale:
             cls += " ora"
         passi.append(f'''<li class="{cls.strip()}">
@@ -108,6 +118,11 @@ def _timeline(f: dict, stato: str) -> str:
         width:12px;height:12px;border-radius:50%;
         border:2px solid var(--line-strong);background:var(--surface)}}
       .tl li.fatto::before{{border-color:var(--accent);background:var(--accent)}}
+      /* Saltato: raggiunto ma senza data. Il pallino resta vuoto e il
+         filo tratteggiato, cosi' si vede che il percorso ha un buco. */
+      .tl li.saltato::before{{border-color:var(--accent);
+        border-style:dashed;background:var(--surface)}}
+      .tl li.saltato .tl-data{{opacity:.6;font-style:italic}}
       .tl li.ora::before{{box-shadow:0 0 0 4px var(--accent-soft)}}
       .tl .tl-lbl{{font-size:14px;font-weight:500;color:var(--ink-3)}}
       .tl li.fatto .tl-lbl{{color:var(--ink)}}
@@ -147,8 +162,11 @@ def storico_list():
     # Riepilogo anno
     valide = [x for x in rows if normalizza_stato(x.get("stato")) in STATI_EMESSE]
     tot_fatturato = sum(float(x.get("totale") or 0) for x in valide)
+    # Incassato = quelle con una data di incasso, non quelle ferme sullo
+    # stato "incassata": dopo l'incasso la fattura prosegue verso lo
+    # studio e lo SDI, e i soldi restano arrivati.
     tot_incassato = sum(float(x.get("totale") or 0) for x in rows
-                        if normalizza_stato(x.get("stato")) == "incassata")
+                        if ha_incassato(x))
     da_incassare = round(tot_fatturato - tot_incassato, 2)
 
     # Toolbar
@@ -200,7 +218,7 @@ def storico_list():
         for f in rows:
             stato = normalizza_stato(f.get("stato"))
             incasso = (f' · incassata il {_fmt_date(f.get("data_incasso"))}'
-                       if stato == "incassata" and f.get("data_incasso") else "")
+                       if ha_incassato(f) else "")
             items.append(f'''
             <a class="item" href="/fatture/{f["id"]}">
               <span class="body">
@@ -222,6 +240,118 @@ def storico_list():
 # ---------------------------------------------------------------------------
 # Dettaglio
 # ---------------------------------------------------------------------------
+
+def _card_ore(f: dict) -> str:
+    """
+    La card "Ore fatturate" del dettaglio, dalla foto salvata sulla fattura.
+
+    Tre stati, e sono tre messaggi diversi:
+
+    1. **nessun periodo agganciato** — un selettore di mese e un bottone.
+       Il mese proposto e' quello *prima* della data della fattura: le ore
+       si fatturano a fine mese, quindi la fattura del 2 luglio racconta
+       giugno molto piu' spesso di quanto racconti luglio.
+    2. **periodo agganciato ma foto vuota** (letta quando il portale non
+       aveva ancora niente) — si dice, e si offre di rileggere.
+    3. **foto piena** — giornate, ore, giorni lavorati, la ripartizione
+       per cliente e il link al riepilogo di quel mese nel timesheet.
+
+    La ripartizione per cliente e' l'unico posto dove quei nomi compaiono:
+    sul PDF non ci vanno (il cliente che paga non c'entra con i clienti
+    finali del lavoro), ma "20 giornate" senza sapere per chi non risponde
+    alla domanda per cui uno apre questa card.
+    """
+    from shared import ore as O
+
+    periodo = f.get("ore_periodo")
+    snap = f.get("ore_snapshot") or {}
+    mm = (periodo or "")[:7]
+
+    # Il mese proposto quando non c'e' niente di agganciato.
+    data_f = str(f.get("data") or "")[:10]
+    try:
+        anno_p, mese_p = int(data_f[:4]), int(data_f[5:7])
+        mese_p -= 1
+        if mese_p == 0:
+            anno_p, mese_p = anno_p - 1, 12
+        proposto = f"{anno_p:04d}-{mese_p:02d}"
+    except (ValueError, IndexError):
+        proposto = ""
+
+    testa = '<div class="card-head"><div class="eyebrow">Ore fatturate</div>'
+
+    if not periodo:
+        return f'''
+        <div class="card" id="cardOre">
+          {testa}</div>
+          <p class="small muted">Questa fattura non è agganciata a nessun mese
+            di ore. Agganciala e resterà scritto quante giornate e per quali
+            clienti — anche fra due anni, quando il portale non se le
+            ricorderà più.</p>
+          <div class="field mt-3">
+            <label>Mese delle ore</label>
+            <input type="month" id="f_ore_periodo" value="{proposto}">
+          </div>
+          <div class="actions">
+            <button type="button" class="btn ghost block" onclick="onLeggiOre()">
+              Leggi le ore dal portale</button>
+          </div>
+          <p class="hint mt-2">La lettura interroga il portale XS un giorno
+            alla volta: per un mese sono una trentina di richieste, ci mette
+            qualche secondo.</p>
+        </div>'''
+
+    letto = f.get("ore_lette_il") or snap.get("letto_il") or ""
+    riga_letto = (f'<p class="hint mt-3">Foto del {_fmt_date(letto[:10])}'
+                  f'{" alle " + _esc(letto[11:16]) if len(letto) >= 16 else ""}. '
+                  f'Rileggila se hai corretto le ore sul portale.</p>')
+    azioni = f'''
+      <div class="actions mt-4">
+        <button type="button" class="btn ghost" onclick="onLeggiOre({mm!r})">
+          Aggiorna dal portale</button>
+        <a class="btn ghost" href="/ore?mese={_esc(mm)}">Vedi il mese nel timesheet</a>
+      </div>'''
+
+    minuti = int(snap.get("minuti") or 0)
+    if minuti <= 0:
+        return f'''
+        <div class="card" id="cardOre">
+          {testa}<span class="chip warn">vuota</span></div>
+          <p class="small muted">Agganciata a
+            <strong>{_esc(mese_anno(periodo))}</strong>, ma la foto non contiene
+            nessuna ora: al momento della lettura il portale non ne aveva.</p>
+          {azioni}{riga_letto}
+        </div>'''
+
+    righe_cli = "".join(
+        f'''<div class="row">
+          <span class="t">{_esc(c.get("nome"))}
+            <span class="sub">{O.fmt_min(c.get("minuti"))}</span></span>
+          <span class="v tnum">{_fmt_eur(c.get("giornate"))} gg</span>
+        </div>''' for c in (snap.get("clienti") or []))
+
+    illeggibili = int(snap.get("voci_illeggibili") or 0)
+    avviso_ill = ""
+    if illeggibili:
+        avviso_ill = (f'<div class="notice warn mt-3">{illeggibili} voce/i del '
+                      f'mese hanno un orario che il portale non espone in modo '
+                      f'leggibile: non sono in questi totali.</div>')
+
+    return f'''
+    <div class="card" id="cardOre">
+      {testa}<span class="chip">{_esc(mese_anno(periodo))}</span></div>
+      <div class="stat">
+        <div class="val tnum accent">{_fmt_eur(snap.get("giornate"))} <small>giornate</small></div>
+        <div class="lbl">{O.fmt_min(minuti)} su {int(snap.get("giorni_lavorati") or 0)}
+          giorni lavorati</div>
+      </div>
+      <div class="rows detail mt-4">{righe_cli or
+        '<div class="row"><span class="t muted">Nessun cliente nella foto</span></div>'}</div>
+      {avviso_ill}
+      {azioni}
+      {riga_letto}
+    </div>'''
+
 
 @fatture_bp.get("/<int:fid>")
 def fattura_dettaglio(fid):
@@ -328,8 +458,12 @@ def fattura_dettaglio(fid):
         # che puo' essere diverso (fattura vecchia o vista in anticipo).
         param["aliquota_imposta"] = _aliquota_imposta_per_anno(param, anno_f)
         try:
+            # Filtrata sulla data, non sullo stato: il filtro di data
+            # esclude gia' da solo chi non ha incassato (data nulla), e
+            # cosi' continua a contare le fatture pagate che sono nel
+            # frattempo avanzate verso lo studio.
             r_anno = (sb.table("b2f_fatture").select("totale")
-                        .eq("stato", "incassata")
+                        .neq("stato", "annullata")
                         .gte("data_incasso", f"{anno_f}-01-01")
                         .lte("data_incasso", f"{anno_f}-12-31").execute())
             incassato_anno = sum(float(x.get("totale") or 0) for x in (r_anno.data or []))
@@ -341,7 +475,7 @@ def fattura_dettaglio(fid):
                 f.get("totale"), param, fatturato_riferimento=incassato_anno,
                 rivalsa=f.get("cassa_importo") or 0,
                 bollo_addebitato=(f.get("bollo") or 0) if f.get("bollo_addebitato") else 0)
-            if stato_corrente == "incassata":
+            if ha_incassato(f):
                 contesto = (f"Fattura incassata il {_fmt_date(f.get('data_incasso'))}. "
                             f"Metti da parte questa quota prima di considerare "
                             f"il resto disponibile.")
@@ -403,7 +537,7 @@ def fattura_dettaglio(fid):
                     onclick="onAnnullaGiroconto()">Annulla la ripartizione</button>
           </div>
         </div>'''
-    elif stato_corrente == "incassata" and scomposizione and lordo_f > 0:
+    elif ha_incassato(f) and scomposizione and lordo_f > 0:
         # Le quattro scelte, con i numeri veri di questa fattura: e' piu'
         # onesto di quattro etichette astratte da interpretare.
         righe_scelte = []
@@ -492,9 +626,10 @@ def fattura_dettaglio(fid):
     azione_principale = ""
     if avanti:
         etichette_azione = {
+            "inviata_nadia":  "Segna inviata a Nadia",
+            "incassata":      "Segna incassata",
             "inviata_studio": "Segna inviata allo studio",
             "trasmessa_sdi":  "Segna trasmessa a SDI",
-            "incassata":      "Segna incassata",
         }
         azione_principale = (
             f'<button type="button" class="btn" '
@@ -537,6 +672,14 @@ def fattura_dettaglio(fid):
         {k: [v[0], v[1]] for k, v in DATE_STATO.items()}, ensure_ascii=False)
     oggi_iso = date.today().isoformat()
 
+    # --- Ore fatturate ------------------------------------------------
+    # In fondo, dopo i soldi: e' la risposta alla domanda "questi 5.000
+    # euro da dove vengono?". La foto e' quella salvata sulla fattura
+    # (README §8.13), non una lettura dal vivo: il portale si legge un
+    # giorno alla volta, e una pagina che si apre non puo' aspettare
+    # trenta richieste HTTP. Il bottone rilegge quando serve.
+    ore_card = _card_ore(f)
+
     # Importi dei quattro scenari per il foglio di ripartizione. Calcolati
     # qui una volta sola: il client li rilegge, non li ricalcola.
     scelte_js = _json.dumps(
@@ -571,6 +714,7 @@ def fattura_dettaglio(fid):
 
         {acc_card}
         {giroconto_card}
+        {ore_card}
       </div>
 
       <div class="stack">
@@ -696,8 +840,10 @@ def fattura_dettaglio(fid):
       <div class="sheet">
         <h3>Registra come entrata</h3>
         <div class="sheet-sub">
-          Crea un movimento in entrata fra le spese P.IVA, lo collega a questa
-          fattura e porta lo stato a "incassata".
+          Crea un movimento in entrata fra le spese P.IVA e lo collega a questa
+          fattura. Se l'incasso non era ancora segnato, lo segna: stato
+          "incassata" e data di incasso quella del movimento. Una fattura già
+          più avanti nel percorso resta dov'è.
         </div>
         <div class="field-group">
           <div class="field"><label>Data</label>
@@ -743,6 +889,36 @@ def fattura_dettaglio(fid):
       }}
       function openModal(id) {{ document.getElementById(id).classList.add('show'); }}
       function closeModal(id) {{ document.getElementById(id).classList.remove('show'); }}
+
+      // --- ore: legge il portale e riscrive la foto sulla fattura ---
+      // Il bottone si disabilita e lo dice: la lettura e' una trentina di
+      // richieste HTTP al portale XS, e senza un segnale sembra che non
+      // sia successo niente e si clicca due volte.
+      async function onLeggiOre(periodo) {{
+        const campo = document.getElementById('f_ore_periodo');
+        const mm = periodo || (campo && campo.value) || '';
+        if (!/^\\d{{4}}-\\d{{2}}$/.test(mm)) {{
+          toast('Scegli il mese delle ore', 'err'); return;
+        }}
+        const card = document.getElementById('cardOre');
+        const btns = card ? card.querySelectorAll('button') : [];
+        btns.forEach(b => {{ b.disabled = true; }});
+        toast('Leggo le ore dal portale, un giorno alla volta…');
+        try {{
+          const r = await fetch('/fatture/api/fatture/' + FATTURA_ID + '/ore', {{
+            method: 'POST', headers: {{'Content-Type': 'application/json'}},
+            body: JSON.stringify({{periodo: mm}}),
+          }});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err');
+                        btns.forEach(b => {{ b.disabled = false; }}); return; }}
+          toast('Ore aggiornate', 'ok');
+          setTimeout(()=>location.reload(), 700);
+        }} catch (e) {{
+          toast('Errore rete: ' + e.message, 'err');
+          btns.forEach(b => {{ b.disabled = false; }});
+        }}
+      }}
 
       // Etichette e campi data associati a ciascuno stato, dal server:
       // una sola definizione, in fatture/costanti.py.
@@ -964,9 +1140,9 @@ def api_fattura_stato(fid):
     Cambia lo stato della fattura, registrando la data del passaggio.
 
     Le date dei passi gia' percorsi non vengono azzerate tornando indietro:
-    se ti accorgi di aver segnato "incassata" per sbaglio e torni a
-    "trasmessa", la data di trasmissione resta quella vera. L'unica che si
-    cancella e' quella dello stato che stai lasciando.
+    se ti accorgi di aver segnato "inviata allo studio" per sbaglio e torni
+    a "incassata", la data di incasso resta quella vera. Si cancellano solo
+    le date dei passi che tornano a essere non raggiunti.
     """
     sb, err = _supabase_or_error()
     if err:
@@ -980,11 +1156,20 @@ def api_fattura_stato(fid):
     if errore:
         return errore
 
-    # Uscire da "incassata" con la ripartizione gia' fatta lascerebbe i due
-    # movimenti sui conti senza piu' un incasso che li giustifichi: il conto
-    # P.IVA resterebbe alleggerito e il personale gonfiato, senza che nulla
-    # lo segnali. Prima si annulla la ripartizione, poi si cambia stato.
-    if stato != "incassata" and normalizza_stato(f.get("stato")) == "incassata":
+    # Tornare PRIMA dell'incasso (o annullare) con la ripartizione gia'
+    # fatta lascerebbe i due movimenti sui conti senza piu' un incasso che
+    # li giustifichi: il conto P.IVA resterebbe alleggerito e il personale
+    # gonfiato, senza che nulla lo segnali. Prima si annulla la
+    # ripartizione, poi si cambia stato.
+    #
+    # Il confronto e' fra POSIZIONI sul percorso, non fra chiavi: andare
+    # avanti da "incassata" verso lo studio e' un passo normale e non deve
+    # far scattare niente — e' solo tornare indietro che scioglie l'incasso.
+    soglia = indice_percorso("incassata")
+    i_nuovo = indice_percorso(stato)
+    i_vecchio = indice_percorso(f.get("stato"))
+    esce_dall_incasso = i_vecchio >= soglia and (i_nuovo < soglia or stato == "annullata")
+    if esce_dall_incasso:
         if f.get("data_giroconto"):
             return jsonify({
                 "error": ("Questa fattura è già stata ripartita: i soldi sono stati "
@@ -997,7 +1182,7 @@ def api_fattura_stato(fid):
         # libro P.IVA (bottone "Registra entrata su P.IVA"): tornare indietro
         # senza sciogliere quel collegamento lascia una riga di entrata su
         # b2f_spese_piva che il motore fiscale (situazione_data, filtra per
-        # stato='incassata') smette di contare, mentre il libro P.IVA la
+        # per data_incasso) smette di contare, mentre il libro P.IVA la
         # conta ancora — i due lati divergono su un incasso vero.
         if f.get("spesa_piva_id"):
             return jsonify({
@@ -1054,11 +1239,11 @@ def _carica_fattura(sb, fid):
 @fatture_bp.patch("/api/fatture/<int:fid>")
 def api_fattura_update(fid):
     """
-    Aggiorna una fattura in bozza.
+    Aggiorna una fattura ancora modificabile (bozza o inviata a Nadia).
 
     La guardia sta qui e non solo nell'interfaccia: nascondere un pulsante
     non impedisce a nessuno di chiamare l'endpoint, e una fattura gia'
-    mandata allo studio non deve poter cambiare da nessuna strada.
+    incassata non deve poter cambiare da nessuna strada.
     """
     sb, err = _supabase_or_error()
     if err:
@@ -1080,7 +1265,8 @@ def api_fattura_update(fid):
     campi = ("data", "tipo_doc", "natura_iva", "cliente_id", "cliente_snapshot",
              "righe", "imponibile", "bollo", "bollo_addebitato", "cassa_perc",
              "cassa_importo", "totale", "divisa", "pagamento_mod",
-             "pagamento_cond", "scadenza", "iban", "note")
+             "pagamento_cond", "scadenza", "iban", "note",
+             "ore_periodo", "ore_snapshot", "ore_lette_il")
     payload = {k: data[k] for k in campi if k in data}
     if not payload:
         return jsonify({"error": "nessun campo da aggiornare"}), 400
@@ -1153,8 +1339,13 @@ def api_fattura_delete(fid):
 def api_fattura_registra_entrata(fid):
     """
     Crea riga in tabella `b2f_spese_piva` (tipo=entrata) e collega
-    spesa_piva_id sulla fattura. Se stato non era gia' incassata/annullata,
-    lo porta a incassata con data_incasso = data della spesa.
+    spesa_piva_id sulla fattura, e se l'incasso non era ancora segnato lo
+    segna: data_incasso = data della spesa, e stato portato a "incassata".
+
+    Solo se la fattura e' ancora PRIMA dell'incasso, pero': una gia'
+    arrivata allo studio o allo SDI verrebbe altrimenti riportata
+    indietro di due passi dal gesto di registrare l'entrata sul libro
+    P.IVA, che con il percorso non c'entra niente.
     """
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1189,8 +1380,14 @@ def api_fattura_registra_entrata(fid):
         return jsonify({"error": f"errore insert spese P.IVA: {str(e)[:200]}"}), 500
 
     upd = {"spesa_piva_id": spesa_piva_id}
-    if f.get("stato") not in ("incassata", "annullata"):
+    stato_f = normalizza_stato(f.get("stato"))
+    if (stato_f != "annullata"
+            and indice_percorso(stato_f) < indice_percorso("incassata")):
         upd["stato"] = "incassata"
+        upd["data_incasso"] = riga["data"]
+    elif not f.get("data_incasso") and stato_f != "annullata":
+        # Gia' oltre l'incasso ma senza data (dato vecchio, o stato
+        # forzato a mano): lo stato resta dov'e', la data si scrive.
         upd["data_incasso"] = riga["data"]
     try:
         sb.table("b2f_fatture").update(upd).eq("id", fid).execute()
@@ -1201,6 +1398,102 @@ def api_fattura_registra_entrata(fid):
         return jsonify({"error": f"aggiornamento fattura fallito: {str(e)[:200]}"}), 500
 
     return jsonify({"ok": True, "spesa_piva_id": spesa_piva_id})
+
+
+@fatture_bp.get("/api/fatture-per-ore")
+def api_fatture_per_ore():
+    """
+    Le fatture agganciate a un mese di ore. `?periodo=AAAA-MM`.
+
+    Serve al timesheet per dire "questo mese l'hai già fatturato" prima
+    che tu ne faccia una seconda: due fatture sullo stesso periodo non
+    danno nessun errore, si scoprono a fine anno e una va cancellata a
+    mano.
+    """
+    sb, err = _supabase_or_error()
+    if err:
+        return jsonify({"error": "supabase not configured"}), 503
+    periodo = (request.args.get("periodo") or "").strip()
+    try:
+        anno, mese = int(periodo[:4]), int(periodo[5:7])
+        if not 1 <= mese <= 12:
+            raise ValueError
+    except (ValueError, IndexError):
+        return jsonify({"error": "periodo non valido, atteso AAAA-MM"}), 400
+    try:
+        r = (sb.table("b2f_fatture")
+               .select("id,numero,stato,totale,data,ore_periodo")
+               .eq("ore_periodo", f"{anno:04d}-{mese:02d}-01")
+               .order("data", desc=True).execute())
+        righe = r.data or []
+    except Exception:
+        # Colonna assente (migrazione §8.13 non ancora lanciata): il
+        # timesheet non deve rompersi per questo, semplicemente non sa
+        # dire se il mese e' gia' fatturato.
+        righe = []
+    for f in righe:
+        f["stato"] = normalizza_stato(f.get("stato"))
+    return jsonify({"periodo": periodo, "fatture": righe})
+
+
+@fatture_bp.post("/api/fatture/<int:fid>/ore")
+def api_fattura_ore(fid):
+    """
+    Aggancia (o riaggancia) una fattura a un mese di ore.
+
+    Body: {"periodo": "2026-07"} — oppure {"periodo": null} per staccarla.
+
+    Legge il portale XS **adesso**, un giorno alla volta: e' lento apposta
+    (vedi shared/ore.py) ed e' per questo che sta dietro a un bottone e
+    non dentro il caricamento del dettaglio. Quello che resta scritto e'
+    una foto con la sua data: il portale, fra due anni, quel mese potrebbe
+    non averlo piu'.
+
+    Non e' ristretto alle bozze come le altre modifiche: la foto delle ore
+    non cambia il documento — non tocca righe, importi, numero — descrive
+    il lavoro che c'e' dietro. Su una fattura gia' trasmessa e' anzi
+    l'unico momento in cui uno se ne ricorda.
+    """
+    sb, err = _supabase_or_error()
+    if err:
+        return jsonify({"error": "supabase not configured"}), 503
+
+    f, errore = _carica_fattura(sb, fid)
+    if errore:
+        return errore
+
+    body = request.get_json(silent=True) or {}
+    periodo = body.get("periodo")
+
+    if periodo in (None, "", False):
+        payload = {"ore_periodo": None, "ore_snapshot": None, "ore_lette_il": None}
+    else:
+        periodo = str(periodo).strip()
+        try:
+            anno, mese = int(periodo[:4]), int(periodo[5:7])
+            if not 1 <= mese <= 12:
+                raise ValueError
+        except (ValueError, IndexError):
+            return jsonify({"error": f'Periodo non valido: "{periodo[:20]}". '
+                                     f'Atteso AAAA-MM.'}), 400
+
+        from shared import ore as O
+        riep = O.riepilogo_mese(anno, mese)
+        if riep.get("errore"):
+            return jsonify({"error": riep["errore"]}), 502
+        payload = {"ore_periodo": riep["periodo"], "ore_snapshot": riep,
+                   "ore_lette_il": riep["letto_il"]}
+
+    try:
+        sb.table("b2f_fatture").update(payload).eq("id", fid).execute()
+    except Exception as e:
+        msg = str(e)
+        if "ore_periodo" in msg or "ore_snapshot" in msg:
+            return jsonify({
+                "error": "Colonne mancanti su b2f_fatture: esegui la migrazione "
+                         "README §8.13 nell'SQL Editor di Supabase."}), 409
+        return jsonify({"error": msg[:250]}), 500
+    return jsonify({"ok": True, **payload})
 
 
 @fatture_bp.post("/api/fatture")
@@ -1236,11 +1529,18 @@ def api_fattura_create():
         "pagamento_cond":    data.get("pagamento_cond"),
         "scadenza":          data.get("scadenza"),
         "iban":              data.get("iban"),
-        # Si nasce bozza: il documento diventa "inviata allo studio" solo
+        # Si nasce bozza: il documento diventa "inviata a Nadia" solo
         # quando lo mandi davvero, non nel momento in cui lo salvi.
         "stato":             normalizza_stato(data.get("stato") or "bozza"),
         "note":              data.get("note"),
     }
+
+    # Il legame con le ore (README §8.13) si scrive solo se c'e': una
+    # fattura senza ore non deve fallire l'insert su un database dove la
+    # migrazione non e' ancora stata lanciata.
+    for campo in ("ore_periodo", "ore_snapshot", "ore_lette_il"):
+        if data.get(campo):
+            payload[campo] = data[campo]
 
     try:
         r = sb.table("b2f_fatture").insert(payload).execute()

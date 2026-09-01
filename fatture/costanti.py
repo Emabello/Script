@@ -46,26 +46,35 @@ MESI_NOMI = [
 # Ciclo di vita della fattura
 # ---------------------------------------------------------------------------
 # Il documento che questa app produce NON e' la fattura elettronica: e' il
-# facsimile che viene mandato allo studio, che poi predispone e trasmette
-# l'XML allo SDI. Gli stati rispecchiano quel passaggio di mano, perche' e'
-# il momento oltre il quale il documento non e' piu' modificabile senza
-# passare da loro.
+# facsimile. Il percorso vero, quello che si vuole vedere sulla pagina, e'
+# questo (deciso il 01/09/2026, sostituisce l'ordine precedente):
 #
-# Ordine e significato:
 #   bozza           in lavorazione, solo tua. Modificabile ed eliminabile.
-#   inviata_studio  facsimile mandato allo studio. Da qui il documento e'
-#                   in mano loro: niente piu' modifiche.
-#   trasmessa_sdi   lo studio ha confermato la trasmissione allo SDI.
+#   inviata_nadia   facsimile mandato a Nadia, l'amministrazione interna
+#                   di B2FORGE. E' il documento su cui pagano.
 #   incassata       il denaro e' arrivato. E' questo che fa scattare
 #                   l'accantonamento, perche' il forfettario e' per cassa.
+#   inviata_studio  facsimile mandato allo studio, che predispone la
+#                   fattura elettronica. Da qui non si tocca piu'.
+#   trasmessa_sdi   lo studio ha confermato la trasmissione allo SDI.
+#                   Fine del percorso.
 #   annullata       fuori dal giro, non concorre a nulla.
+#
+# L'INCASSO NON E' PIU' L'ULTIMO PASSO, ed e' la cosa da tenere a mente
+# leggendo il resto del codice: `stato == "incassata"` NON vuol piu' dire
+# "i soldi sono arrivati" — una fattura pagata e poi mandata allo studio
+# sta in `inviata_studio` e i soldi ci sono lo stesso. La domanda "e'
+# stata incassata?" si fa a `data_incasso` (vedi `ha_incassato`), che e'
+# anche l'unica risposta che regge sui dati vecchi, dove `inviata_studio`
+# significava "spedita ma non ancora pagata".
 
 STATI = (
     # (chiave, etichetta, classe del chip, descrizione breve)
     ("bozza",          "Bozza",              "",       "In lavorazione, non ancora inviata"),
-    ("inviata_studio", "Inviata allo studio", "accent", "Il facsimile è dallo studio, che predispone la fattura elettronica"),
-    ("trasmessa_sdi",  "Trasmessa a SDI",    "accent", "Lo studio ha trasmesso la fattura elettronica"),
+    ("inviata_nadia",  "Inviata a Nadia",    "accent", "Il facsimile è all'amministrazione di B2FORGE"),
     ("incassata",      "Incassata",          "pos",    "Il denaro è arrivato"),
+    ("inviata_studio", "Inviata allo studio", "accent", "Lo studio predispone la fattura elettronica"),
+    ("trasmessa_sdi",  "Trasmessa a SDI",    "pos",    "Lo studio ha trasmesso la fattura elettronica"),
     ("annullata",      "Annullata",          "neg",    "Fuori dal giro, non concorre ai calcoli"),
 )
 
@@ -75,23 +84,33 @@ STATI_CLASSE = {k: cls for k, _, cls, _ in STATI}
 STATI_DESCR = {k: d for k, _, _, d in STATI}
 
 # Ordine di avanzamento, per la linea temporale sul dettaglio.
-STATI_PERCORSO = ("bozza", "inviata_studio", "trasmessa_sdi", "incassata")
+STATI_PERCORSO = ("bozza", "inviata_nadia", "incassata",
+                  "inviata_studio", "trasmessa_sdi")
 
 # Stati che concorrono al fatturato e ai calcoli fiscali: la bozza no
 # (non e' ancora un documento), l'annullata nemmeno.
-STATI_EMESSE = ("inviata_studio", "trasmessa_sdi", "incassata")
+STATI_EMESSE = tuple(k for k in STATI_PERCORSO if k != "bozza")
 
-# Il documento e' modificabile o eliminabile solo finche' non e' uscito
-# dalle tue mani. Dopo, correggerlo qui vorrebbe dire divergere dalla
-# fattura vera senza che nessuno se ne accorga.
-STATI_MODIFICABILI = ("bozza",)
+# Gli stati che stanno a incasso avvenuto, cioe' da "incassata" in poi.
+# Serve alle query che devono chiedere al database "quali fatture sono
+# state pagate" senza poter chiamare `ha_incassato` riga per riga.
+STATI_INCASSATE = STATI_PERCORSO[STATI_PERCORSO.index("incassata"):]
 
 # Data da chiedere quando si entra in un certo stato: (campo, etichetta)
 DATE_STATO = {
+    "inviata_nadia":  ("data_invio_nadia", "Data di invio a Nadia"),
+    "incassata":      ("data_incasso", "Data di incasso"),
     "inviata_studio": ("data_invio_studio", "Data di invio allo studio"),
     "trasmessa_sdi":  ("data_trasmissione_sdi", "Data di trasmissione"),
-    "incassata":      ("data_incasso", "Data di incasso"),
 }
+
+# Il documento e' modificabile finche' non e' successo niente di
+# irreversibile. Il confine e' l'INCASSO, non la spedizione: finche' i
+# soldi non si sono mossi, una correzione concordata con Nadia e' solo
+# un facsimile rifatto. Dopo, correggere qui vorrebbe dire far divergere
+# l'importo dal denaro gia' entrato — e, piu' avanti, dalla fattura vera
+# che lo studio ha gia' costruito.
+STATI_MODIFICABILI = ("bozza", "inviata_nadia")
 
 # Mappatura degli stati storici: prima dell'introduzione del passaggio
 # dallo studio esisteva un solo stato "emessa".
@@ -104,12 +123,41 @@ def normalizza_stato(stato: str | None) -> str:
     return STATI_LEGACY.get(s, s)
 
 
+def indice_percorso(stato: str) -> int:
+    """
+    Posizione dello stato lungo il percorso, o -1 se ne sta fuori
+    (annullata, o una chiave che non conosciamo). Confrontare due indici
+    e' l'unico modo corretto di dire "piu' avanti / piu' indietro": da
+    quando l'incasso sta in mezzo, l'ordine alfabetico o quello di
+    dichiarazione non dicono piu' niente.
+    """
+    s = normalizza_stato(stato)
+    return STATI_PERCORSO.index(s) if s in STATI_PERCORSO else -1
+
+
+def ha_incassato(f: dict) -> bool:
+    """
+    I soldi di questa fattura sono arrivati?
+
+    Lo dice la DATA, non lo stato. Da quando l'incasso e' un passo in
+    mezzo al percorso, una fattura pagata puo' trovarsi in
+    `inviata_studio` o `trasmessa_sdi`: chiedere `stato == "incassata"`
+    la conterebbe come non pagata e farebbe sparire un incasso vero dai
+    totali. La data invece resta scritta, e viene ripulita da sola se si
+    torna indietro prima dell'incasso (vedi l'API di cambio stato).
+
+    Una fattura annullata non conta mai, anche se la data e' rimasta li'.
+    """
+    if normalizza_stato(f.get("stato")) == "annullata":
+        return False
+    return bool(f.get("data_incasso"))
+
+
 def prossimo_stato(stato: str) -> str | None:
     """Passo successivo naturale del percorso, o None se non ce n'e'."""
-    s = normalizza_stato(stato)
-    if s not in STATI_PERCORSO:
+    i = indice_percorso(stato)
+    if i < 0:
         return None
-    i = STATI_PERCORSO.index(s)
     return STATI_PERCORSO[i + 1] if i + 1 < len(STATI_PERCORSO) else None
 
 
@@ -128,12 +176,18 @@ def motivo_blocco(stato: str) -> str:
         return ("Questa fattura è annullata. Per rifatturare, creane una nuova: "
                 "modificare un documento annullato lascerebbe due verità diverse "
                 "sullo stesso numero.")
-    if s in ("inviata_studio", "trasmessa_sdi", "incassata"):
-        return ("Il facsimile è già stato mandato allo studio, che predispone e "
-                "trasmette la fattura elettronica. Modificarla qui la farebbe "
-                "divergere da quella vera senza che nessuno se ne accorga. "
-                "Scrivi allo studio: se non hanno ancora trasmesso la correggono "
-                "loro, altrimenti serve una nota di credito.")
+    if s == "incassata":
+        return ("Questa fattura è già stata incassata: cambiarne gli importi ora "
+                "la farebbe divergere dal denaro entrato sul conto P.IVA, e "
+                "dall'accantonamento calcolato su quella cifra. Se l'incasso "
+                "è stato segnato per sbaglio, riportala prima a «Inviata a Nadia»: "
+                "da lì torna modificabile.")
+    if s in ("inviata_studio", "trasmessa_sdi"):
+        return ("Il facsimile è già dallo studio, che predispone e trasmette la "
+                "fattura elettronica. Modificarla qui la farebbe divergere da "
+                "quella vera senza che nessuno se ne accorga. Scrivi allo studio: "
+                "se non hanno ancora trasmesso la correggono loro, altrimenti "
+                "serve una nota di credito.")
     return ""
 
 

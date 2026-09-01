@@ -115,7 +115,8 @@ ultimi movimenti.
 
 Il timesheet originale (`xs_server.py`), che parla con un portale esterno
 tramite `xs_client.py`. È rimasto com'era: la hub gli inietta soltanto
-l'intestazione.
+l'intestazione — più il ponte verso le fatture, che è nuovo e sta in
+[§ 6.1](#61--il-mese-di-ore-e-la-fattura-che-lo-racconta).
 
 ### Fatture — `/fatture`
 
@@ -230,9 +231,9 @@ sbagliato — non c'è nessun altro punto in cui la cosa verrebbe fuori.
 |---|---|
 | `b2f_emittente` | riga unica: i tuoi dati, più nome e mail dello studio |
 | `b2f_clienti` | anagrafica clienti |
-| `b2f_fatture` | i documenti, con stato, date dei passaggi e ripartizione |
+| `b2f_fatture` | i documenti, con stato, date dei passaggi, ripartizione e il mese di ore che raccontano — [§ 8.13](#813--la-fattura-si-ricorda-di-quali-ore-è-fatta-necessaria) |
 | `b2f_spese_piva` | movimenti del conto P.IVA |
-| `b2f_parametri_fiscali` | riga unica: aliquote e parametri di accantonamento |
+| `b2f_parametri_fiscali` | riga unica: aliquote, parametri di accantonamento e tariffa giornaliera — [§ 8.14](#814--la-tariffa-giornaliera-è-un-parametro-non-una-costante-necessaria) |
 | `b2f_revolut` | saldi Revolut, uno snapshot per data — [§ 8.10](#810--tabella-dei-saldi-revolut) |
 | `b2f_webauthn_credentials` | credenziali dello sblocco biometrico |
 
@@ -244,7 +245,7 @@ sbagliato — non c'è nessun altro punto in cui la cosa verrebbe fuori.
 | `cfg_categorie` · `cfg_sottocategorie` | le voci |
 | `cfg_categoria_sottocategoria` | gli accoppiamenti ammessi fra le due |
 | `impostazioni` | saldo iniziale, percentuale di risparmio, quote di destinazione |
-| `risparmi_periodo` | quanto hai messo via davvero, per periodo |
+| `risparmi_periodo` | **non più una fonte per nessun calcolo**: dopo la [§ 8.11](#811--i-risparmi-diventano-movimenti-veri-necessaria) il risparmio è un'uscita di `spese`, categoria *Risparmi* |
 
 ### Viste
 
@@ -441,30 +442,146 @@ così spariscono entrambe le righe; da `/fatture/spese-piva` tipo e importo di
 un giroconto (manuale o da fattura) non si possono più cambiare una volta
 registrato, per non disallineare i due conti — va eliminato e rifatto.
 
+### La procedura di fine periodo
+
+Il giroconto porta il denaro **sul** conto personale. La domanda subito
+dopo è quanta parte di quel denaro non deve restarci: è il risparmio, e
+`/spese/risparmi` la trasforma in una procedura di due passi, nell'ordine
+in cui il denaro si muove davvero.
+
+1. **L'incasso è arrivato sul personale?** Se ci sono fatture già
+   incassate il cui denaro sta ancora sul conto P.IVA, la procedura le
+   elenca con il link e chiede di ripartirle prima. Non è un vincolo, è
+   un ordine di grandezza: la quota si applica a quel che resta sul conto
+   personale, e finché l'incasso non è arrivato lì quel numero è più
+   basso del vero.
+2. **Quanto ne metti via.** Il consigliato è la percentuale di
+   `impostazioni` applicata a quel che resta nel periodo — lo stesso
+   numero della colonna *Risparmio consigliato* di `v_risparmi_mese`. Si
+   può correggere, e mentre lo si scrive l'anteprima mostra quanto
+   finisce in ciascuno dei cinque salvadanai. Alla conferma l'app
+   registra **un'uscita vera** dal conto personale, categoria *Risparmi*,
+   con la data del bonifico.
+
+Il bonifico lo fai tu dalla banca: l'app registra che è successo, non
+sposta denaro. Sembra una sfumatura e non lo è — è la differenza fra un
+saldo che segue la banca e uno che la anticipa.
+
+**Un movimento solo, non cinque.** La banca vede un bonifico; la
+ripartizione fra i secchielli è un calcolo, e `v_risparmi_mese` lo rifà
+per ogni periodo dalle percentuali di `impostazioni`. Cinque righe
+darebbero cinque movimenti che sull'estratto non esistono, e la
+riconciliazione riga per riga tornerebbe a non tornare.
+
+**Perché non c'è più il campo "Risparmio effettivo".** C'era, e scriveva
+un numero su `risparmi_periodo` **al posto** del movimento bancario: è la
+seconda strada che la [§ 8.11](#811--i-risparmi-diventano-movimenti-veri-necessaria)
+ha chiuso dopo che era costata 829,78 € di scarto in diciotto mesi. Da
+allora `v_risparmi_mese` calcola l'effettivo dai movimenti e quella
+colonna non entra in nessun conto: continuare ad accettarla vorrebbe dire
+scrivere dove nessuno guarda, che è peggio di un errore — sembra
+funzionare. `PATCH /spese/api/risparmi` risponde 409 e dice dove andare.
+
+**L'avviso in home** compare solo quando c'è davvero qualcosa da fare: un
+periodo aperto, un consigliato sopra zero e nessuna uscita verso i
+salvadanai dentro quel periodo. Porta la cifra, non un "ricordati di
+risparmiare": un avviso senza il numero costringe ad aprire la pagina per
+sapere se vale la pena aprirla, e in un mese non lo legge più nessuno.
+
 ---
 
 ## 6. Il ciclo di vita della fattura
 
 ```
-bozza → inviata_studio → trasmessa_sdi → incassata
-                                              ↘ annullata
+bozza → inviata_nadia → incassata → inviata_studio → trasmessa_sdi
+                                                          ↘ annullata
 ```
 
 | Stato | Significato |
 |---|---|
 | `bozza` | in lavorazione, solo tua. Modificabile ed eliminabile |
-| `inviata_studio` | il facsimile è dallo studio. Da qui **niente più modifiche** |
-| `trasmessa_sdi` | lo studio ha trasmesso la fattura elettronica |
-| `incassata` | il denaro è arrivato: fa scattare l'accantonamento |
+| `inviata_nadia` | il facsimile è a Nadia, l'amministrazione interna di B2FORGE: è il documento su cui pagano. Ancora modificabile |
+| `incassata` | il denaro è arrivato: fa scattare l'accantonamento, e da qui **niente più modifiche** |
+| `inviata_studio` | il facsimile è dallo studio, che predispone la fattura elettronica |
+| `trasmessa_sdi` | lo studio ha trasmesso allo SDI. Fine del percorso |
 | `annullata` | fuori dal giro, non concorre ai calcoli |
 
-Concorrono al fatturato solo `inviata_studio`, `trasmessa_sdi` e `incassata`.
+Concorre al fatturato tutto tranne `bozza` e `annullata`.
 
-Oltre la bozza il documento non è più modificabile: correggerlo qui lo farebbe
-divergere dalla fattura vera senza che nessuno se ne accorga. Tornando indietro
-lungo il percorso, le date dei passi non più raggiunti vengono ripulite, ma
-quelle dei passi già attraversati restano: correggere un errore non deve
-falsificare la cronologia.
+Il documento resta modificabile finché non si è mosso il denaro: fino a
+`inviata_nadia` una correzione è solo un facsimile rifatto. **Dall'incasso in
+poi no**, e per due motivi diversi che si sommano: prima perché cambiare gli
+importi li farebbe divergere dai soldi già entrati sul conto P.IVA e
+dall'accantonamento calcolato su quella cifra; poi, da `inviata_studio`, anche
+perché la fattura elettronica vera esiste già.
+
+Tornando indietro lungo il percorso, le date dei passi non più raggiunti
+vengono ripulite, ma quelle dei passi già attraversati restano: correggere un
+errore non deve falsificare la cronologia.
+
+### L'incasso è in mezzo, e questo cambia una domanda
+
+Fino al 01/09/2026 `incassata` era **l'ultimo** stato, e quindi
+`stato == 'incassata'` voleva dire "i soldi sono arrivati". Ora l'incasso sta
+in mezzo: una fattura pagata prosegue verso lo studio e lo SDI, e in quegli
+stati i soldi **ci sono lo stesso**. Chiedere ancora `stato == 'incassata'`
+farebbe sparire dai totali — e dai calcoli per cassa, che sono le tasse —
+proprio le fatture più avanti nel giro.
+
+Da qui in avanti la domanda «è stata incassata?» si fa a **`data_incasso`**,
+non allo stato: `fatture/costanti.py::ha_incassato()`. È anche l'unica
+risposta che regge sui dati vecchi, dove `inviata_studio` significava
+"spedita ma non ancora pagata": lì la data è vuota, e la fattura risulta
+correttamente da incassare. La linea temporale del dettaglio disegna infatti
+quei passi come **saltati** — pallino vuoto, tratteggio — e non come fatti:
+un passo alle spalle di quello corrente ma senza la sua data non è avvenuto.
+
+Le query che devono chiedere la stessa cosa al database filtrano sulla data
+(`gte/lte` su `data_incasso`, che esclude già i NULL) più `stato ≠ annullata`,
+mai su `stato = 'incassata'`.
+
+### 6.1 — Il mese di ore e la fattura che lo racconta
+
+Le ore stanno sul portale XS, le fatture su Supabase, e per un anno
+l'unico ponte fra i due è stato ricopiare "20 giornate" a mano. Ora il
+ponte è doppio, e va nei due versi.
+
+**Dal timesheet alla fattura.** Nel riepilogo del mese (`/ore`, bottone
+"Riepilogo mese") c'è il blocco *Fattura*: dice quante giornate da 8 ore
+fanno i minuti del mese e apre l'editor già compilato — **una riga sola**,
+giornate × `tariffa_giornaliera`. Se quel mese è già stato fatturato lo
+dice prima, col link alla fattura che esiste: due fatture sullo stesso
+periodo non danno nessun errore, si scoprono a fine anno e una va
+cancellata a mano.
+
+Una riga sola e non una per cliente, ed è una scelta: la fattura la emetti
+a **un** cliente — quello che ti paga — mentre i clienti finali del lavoro
+sono informazione tua. Una riga per ciascuno finirebbe stampata sul PDF
+che il cliente legge.
+
+**Dalla fattura al timesheet.** In fondo al dettaglio della fattura c'è la
+card *Ore fatturate*: giornate, ore, giorni lavorati, la ripartizione per
+cliente, e il link che apre `/ore` direttamente sul riepilogo di quel mese.
+
+Quello che la fattura si porta dietro è una **foto**, non una lettura dal
+vivo (`ore_snapshot`, [§ 8.13](#813--la-fattura-si-ricorda-di-quali-ore-è-fatta-necessaria)),
+per due motivi che vale la pena tenere a mente prima di "ottimizzare"
+sostituendola con una query:
+
+- il portale si legge **un giorno alla volta**: un mese sono una trentina
+  di richieste HTTP, troppe per aprire una pagina — per questo la lettura
+  sta sempre dietro a un bottone;
+- fra due anni quel mese sul portale potrebbe non esserci più. La fattura
+  invece resta, e deve continuare a saper dire di cosa era fatta.
+
+La foto porta la data in cui è stata scattata, e un bottone la rilegge.
+Una foto senza data si legge come un dato dal vivo: è lo stesso errore che
+la tessera Revolut ha già fatto una volta.
+
+**La giornata è 8 ore**, e si conta sul totale dei minuti del mese, non
+sui giorni in cui hai timbrato: due mezze giornate sono una giornata da
+fatturare. È la stessa definizione che il riepilogo del timesheet mostra
+come "giorni pieni da 8h" — se cambia lì, cambia in `shared/ore.py`.
 
 ---
 
@@ -1313,6 +1430,178 @@ on conflict (conto, data) do update
 **Ogni volta che apri l'estratto**, aggiungi una riga: sono dieci
 secondi, e sono la differenza fra accorgersi di uno scarto in una
 settimana o in un anno e mezzo.
+
+### 8.13 — La fattura si ricorda di quali ore è fatta (**necessaria**)
+
+Fino a oggi la fattura e il timesheet non si parlavano: le ore stanno sul
+portale XS, la fattura su Supabase, e l'unico ponte era la memoria di chi
+scriveva "20 giornate" nella riga. Queste tre colonne sono quel ponte.
+
+`ore_periodo` è il mese di competenza (il primo giorno del mese, così è
+una data vera e non una stringa da parsare). `ore_snapshot` è la **foto**
+del riepilogo del portale al momento in cui l'hai agganciata: totale
+minuti, giornate, giorni lavorati, ripartizione per cliente. È una foto e
+non una lettura dal vivo per due motivi — il portale si legge un giorno
+alla volta (trenta richieste HTTP per un mese: troppo per aprire una
+pagina) e fra due anni quel mese sul portale potrebbe non esserci più,
+mentre la fattura resta.
+
+`ore_lette_il` dice **quando** è stata scattata: una foto senza data si
+legge come un dato dal vivo, ed è lo stesso errore che la tessera Revolut
+ha già fatto una volta.
+
+```sql
+alter table b2f_fatture
+  add column if not exists ore_periodo  date,
+  add column if not exists ore_snapshot jsonb,
+  add column if not exists ore_lette_il timestamptz;
+
+comment on column b2f_fatture.ore_periodo  is
+  'Mese di competenza delle ore fatturate (primo giorno del mese)';
+comment on column b2f_fatture.ore_snapshot is
+  'Foto del riepilogo ore del portale XS: minuti, giornate, per cliente';
+comment on column b2f_fatture.ore_lette_il is
+  'Quando è stata scattata ore_snapshot';
+```
+
+### 8.14 — La tariffa giornaliera è un parametro, non una costante (**necessaria**)
+
+Serve alla precompilazione della fattura dal timesheet: giornate ×
+tariffa, una riga sola. Sta accanto alle aliquote e non nel codice perché
+il giorno che cambia non deve servire un deploy — è un numero
+commerciale, non una regola del forfettario.
+
+```sql
+alter table b2f_parametri_fiscali
+  add column if not exists tariffa_giornaliera numeric(12,2) not null default 250;
+
+comment on column b2f_parametri_fiscali.tariffa_giornaliera is
+  'Tariffa per giornata da 8 ore, usata per precompilare la fattura dalle ore';
+```
+
+### 8.15 — Il nuovo percorso della fattura
+
+Aggiunge lo stato `inviata_nadia` e la sua data, e rimette in ordine il
+percorso: l'incasso non è più l'ultimo passo ma il terzo
+([§ 6](#6-il-ciclo-di-vita-della-fattura)).
+
+> **Passi 1-3: ✅ applicati il 01/09/2026** sul database vivo, con il
+> connettore MCP di Supabase. Colonna, vincolo e vista sono già a posto —
+> `docs/schema_supabase.md` è stato rigenerato di conseguenza. Il
+> **passo 4 è volutamente rimasto fuori**: vedi il riquadro dopo lo script.
+
+Andava lanciata prima del deploy, non dopo: il `CHECK` su
+`b2f_fatture.stato` non conosceva `inviata_nadia`, quindi finché restava
+com'era ogni tentativo di segnare una fattura "inviata a Nadia" sarebbe
+fallito con un errore del database. Il contrario — migrazione senza codice
+nuovo — non rompe niente, ed è esattamente la finestra in cui siamo:
+nessuna riga usa ancora il nuovo stato, e i passi 1-3 lasciano invariato
+tutto quello che il codice in produzione legge oggi.
+
+Il `CHECK` viene riscritto in forma **aperta** (`not in ('bozza', ...)` non
+si può, quindi resta un elenco): se un giorno si aggiunge un altro passo,
+è di nuovo qui che va toccato. La vista `v_situazione_annuale`, invece,
+smette di elencare gli stati e chiede quello che intende davvero — "non
+bozza e non annullata" per il fatturato, "ha una data di incasso" per
+l'incassato — così il prossimo stato nuovo non la costringe a cambiare.
+
+```sql
+-- 1. la data del passaggio da Nadia
+alter table b2f_fatture
+  add column if not exists data_invio_nadia date;
+
+comment on column b2f_fatture.data_invio_nadia is
+  'Data di invio del facsimile a Nadia (amministrazione interna B2FORGE)';
+
+-- 2. lo stato nuovo entra nel vincolo
+alter table b2f_fatture drop constraint if exists b2f_fatture_stato_check;
+alter table b2f_fatture add constraint b2f_fatture_stato_check
+  check (stato in ('bozza', 'inviata_nadia', 'incassata',
+                   'inviata_studio', 'trasmessa_sdi', 'annullata'));
+
+-- 3. la vista non ragiona più per elenco di stati.
+--    fatturato = tutto tranne bozza e annullata
+--    incassato = c'è una data di incasso (e non è annullata)
+create or replace view v_situazione_annuale as
+with param as (
+  select * from b2f_parametri_fiscali where id = 1
+), fatt as (
+  select extract(year  from data)::int as anno,
+         extract(month from data)::int as mese,
+         sum(coalesce(totale, 0)) as fatturato_mese,
+         sum(coalesce(bollo, 0)) filter (where bollo_addebitato) as bollo_mese,
+         count(*) as n_fatture
+    from b2f_fatture
+   where stato not in ('bozza', 'annullata')
+   group by 1, 2
+), inc as (
+  select extract(year  from data_incasso)::int as anno,
+         extract(month from data_incasso)::int as mese,
+         sum(coalesce(totale, 0)) as incasso_mese
+    from b2f_fatture
+   where data_incasso is not null and stato <> 'annullata'
+   group by 1, 2
+), spese as (
+  select extract(year  from data)::int as anno,
+         extract(month from data)::int as mese,
+         sum(importo) filter (
+           where categoria = 'commercialista' and tipo = 'uscita'
+         ) as commercialista_mese
+    from b2f_spese_piva
+   group by 1, 2
+)
+select f.anno, f.mese, f.fatturato_mese,
+       round(f.fatturato_mese * p.coeff_ateco, 2) as imponibile_mese,
+       coalesce(i.incasso_mese, 0) as incasso_mese,
+       round(f.fatturato_mese * p.coeff_ateco * (1 - p.aliquota_inps) * p.aliquota_imposta, 2) as imposta_mese,
+       round(f.fatturato_mese * p.coeff_ateco * p.aliquota_inps, 2) as inps_saldo_mese,
+       round(f.fatturato_mese * p.coeff_ateco * p.aliquota_inps * p.aliquota_acconto, 2) as inps_acconto_mese,
+       coalesce(f.bollo_mese, 0) as bollo_mese,
+       coalesce(s.commercialista_mese, 0) as commercialista_mese,
+       f.n_fatture
+  from fatt f
+  cross join param p
+  left join inc   i using (anno, mese)
+  left join spese s using (anno, mese)
+ order by f.anno, f.mese;
+
+-- 4. le fatture già incassate che erano anche già andate allo studio
+--    stanno, nel percorso nuovo, un passo più avanti: lo dice la loro
+--    stessa data di invio. Nessun importo si muove — `data_incasso`
+--    resta dov'è, ed è quella a dire che i soldi sono arrivati.
+update b2f_fatture
+   set stato = case
+                 when data_trasmissione_sdi is not null then 'trasmessa_sdi'
+                 else 'inviata_studio'
+               end
+ where stato = 'incassata'
+   and data_invio_studio is not null;
+```
+
+> ### ⏸ Il passo 4 aspetta il deploy, e non è pignoleria
+>
+> È l'unico pezzo che **muove un dato invece di allargare lo schema**, e va
+> lanciato solo quando su Render gira il codice di questa PR. Motivo, in
+> concreto: sui dati di oggi tocca una riga sola, la 2026/001 — 5.000 €,
+> incassata l'08/07 e già mandata allo studio — e la sposta da `incassata`
+> a `inviata_studio`. Il codice **nuovo** continua a contarla come
+> incassata, perché guarda `data_incasso`. Il codice **vecchio**, quello
+> in produzione fino al merge, guarda lo stato: nella finestra fra la
+> migrazione e il deploy vedrebbe *zero* incassato, con l'accantonamento e
+> i numeri per cassa che crollano di 5.000 € per poi tornare da soli. Un
+> saldo che sballa e si ripara da sé è peggio di uno che sballa e basta:
+> la volta dopo non ci credi più.
+>
+> Lanciarlo è comunque facoltativo. Se non lo si lancia, quella riga resta
+> in `incassata` — che è vero — e l'unico effetto è che la linea temporale
+> non segna come fatto il passaggio allo studio, pur avendone la data.
+> `ha_incassato()` la legge correttamente in entrambi i casi.
+
+Il passo 4 è idempotente e, sui dati di oggi, tocca **una riga sola**. Le
+fatture vecchie ferme in `inviata_studio` senza incasso **non si toccano**:
+restano dove sono, la linea temporale mostra i due passi scavalcati come
+saltati, e `ha_incassato()` continua a leggerle correttamente come da
+incassare.
 
 ## 9. Sicurezza
 

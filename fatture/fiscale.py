@@ -51,6 +51,9 @@ PARAMETRI_DEFAULT = {
     "aliquota_acconto": 0.80, "bollo_soglia": 77.47, "bollo_importo": 2.00,
     "limite_fatturato_anno": 85000, "data_apertura_piva": "2026-05-28",
     "anno_fine_regime_agevolato": 2031,
+    # Quanto vale una giornata da 8 ore: e' quello che la precompilazione
+    # dal timesheet moltiplica per le giornate del mese (README §8.14).
+    "tariffa_giornaliera": 250.00,
     **acc.PARAMETRI_DEFAULT,
 }
 
@@ -58,6 +61,7 @@ PARAMETRI_CAMPI = (
     "regime", "coeff_ateco", "aliquota_imposta", "aliquota_inps",
     "aliquota_acconto", "bollo_soglia", "bollo_importo",
     "limite_fatturato_anno", "data_apertura_piva", "anno_fine_regime_agevolato",
+    "tariffa_giornaliera",
 ) + acc.PARAMETRI_CAMPI
 
 # Paracadute contro l'errore di battitura, non un vincolo di legge:
@@ -76,6 +80,7 @@ PARAMETRI_LIMITI = {
     "bollo_importo":              (0.0, None),
     "limite_fatturato_anno":      (0.0, None),
     "anno_fine_regime_agevolato": (2000, 2100),
+    "tariffa_giornaliera":        (0.0, None),
     "margine_sicurezza":          (0.0, 2.0),
     "costi_fissi_annui":          (0.0, None),
     "fatturato_atteso_anno":      (0.0, None),
@@ -220,8 +225,14 @@ def _situazione_data(sb, anno: int) -> dict:
         pass
 
     try:
+        # Incassato del mese: filtrato sulla DATA di incasso, non sullo
+        # stato. Da quando l'incasso e' un passo in mezzo al percorso
+        # (costanti.py), una fattura pagata prosegue verso lo studio e lo
+        # SDI: chiedere stato='incassata' farebbe sparire dai calcoli per
+        # cassa proprio le fatture piu' avanti nel giro. Il filtro di data
+        # esclude gia' da solo chi non ha incassato.
         r = (sb.table("b2f_fatture").select("data_incasso,totale")
-               .eq("stato", "incassata")
+               .neq("stato", "annullata")
                .gte("data_incasso", f"{anno}-01-01").lte("data_incasso", f"{anno}-12-31")
                .execute())
         for f in (r.data or []):
@@ -417,7 +428,7 @@ def saldo_piva(sb, al: str | None = None) -> dict:
     rivalsa = 0.0
     try:
         r = (sb.table("b2f_fatture").select("cassa_importo,data_incasso")
-               .eq("stato", "incassata").lte("data_incasso", al).execute())
+               .neq("stato", "annullata").lte("data_incasso", al).execute())
         rivalsa = sum(float(f.get("cassa_importo") or 0) for f in (r.data or [])
                       if f.get("data_incasso"))
     except Exception:
@@ -896,6 +907,16 @@ def parametri_editor():
         </div>
 
         <div class="card">
+          <div class="card-head"><div class="eyebrow">Tariffa</div></div>
+          <div class="field"><label>Tariffa giornaliera (€)</label>
+            <input type="number" step="0.01" min="0" id="f_tariffa"
+                   value="{p.get('tariffa_giornaliera', 250)}">
+            <div class="hint">Quanto vale una giornata da 8 ore. È il prezzo
+              che il timesheet propone quando precompila la fattura di fine
+              mese: giornate × tariffa, una riga sola.</div></div>
+        </div>
+
+        <div class="card">
           <div class="card-head"><div class="eyebrow">Accantonamento</div></div>
           <p class="small muted mb-3">
             Questi tre valori determinano lo scarto tra il dovuto matematico e
@@ -969,6 +990,7 @@ def parametri_editor():
         costi_fissi_annui: g('f_costi'),
         fatturato_atteso_anno: g('f_atteso'),
         scenario_preferito: v('f_scenario'),
+        tariffa_giornaliera: g('f_tariffa'),
       }};
       try {{
         const r = await fetch('/fatture/api/parametri', {{
