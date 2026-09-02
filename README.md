@@ -312,6 +312,23 @@ Il totale non cambia: è il compenso a ridursi. Nell'accantonamento la rivalsa
 non sposta nulla, perché nel forfettario l'imponibile è il corrispettivo
 intero: è una suddivisione che serve alla fattura elettronica.
 
+**La percentuale sta in `b2f_emittente.aliquota_cassa`**, e da lì la legge
+`costanti.rivalsa_perc()`: è quel numero a decidere sia se la casella "Rivalsa
+INPS" nell'editor parte spuntata, sia con quale aliquota si scorpora. La
+costante `RIVALSA_PERC = 4.0` resta solo come fallback per un emittente non
+ancora compilato.
+
+> **Perché è finita così.** Prima erano due verità sullo stesso numero: lo
+> scorporo girava sulla costante, e `aliquota_cassa` — che ha una pagina per
+> modificarla — non la leggeva nessuno. Sul database valeva **zero**, e non
+> dava sintomi perché la casella partiva da un `True` fisso. Sulle fatture
+> emesse prima che quel default esistesse la casella era spenta: il facsimile
+> non esponeva la rivalsa, **lo studio l'ha applicata lo stesso** (è l'accordo)
+> e la fattura elettronica vera riporta 192,31 € su 5.000. Facsimile e
+> documento fiscale dicevano due cose diverse — esattamente ciò che il
+> facsimile esiste per evitare. Se oggi l'aliquota è a zero l'editor **lo
+> dice**, con il link alla pagina dove sistemarla.
+
 **Verificato il 2026-08-12** contro la normativa aggiornata (non è scontato:
 è diverso dal contributo integrativo delle Casse professionali, che invece
 *è* escluso): la rivalsa INPS facoltativa (art. 1 co. 212 L. 662/1996)

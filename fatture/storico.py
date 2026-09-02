@@ -22,7 +22,6 @@ from .costanti import (
     STATI_DESCR, STATI_PERCORSO, STATI_EMESSE, DATE_STATO,
     normalizza_stato, prossimo_stato, modificabile, motivo_blocco,
     ha_incassato, indice_percorso,
-    scorpora_rivalsa, RIVALSA_PERC,
 )
 from shared.theme import render_page
 from shared.design import icon as _icon

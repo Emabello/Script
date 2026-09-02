@@ -18,7 +18,7 @@ from datetime import date
 from flask import Response, redirect, request
 
 from . import fatture_bp
-from .costanti import (MESI_NOMI, RIVALSA_PERC, modificabile,
+from .costanti import (MESI_NOMI, RIVALSA_PERC, rivalsa_perc, modificabile,
                        motivo_blocco, normalizza_stato)
 from shared.theme import render_page
 from shared.supabase_client import get_client, is_configured
@@ -135,6 +135,24 @@ def _esc_txt(v) -> str:
 
 def _render_editor(em, acc_rate, init: dict, titolo: str, eyebrow: str,
                    breadcrumb, avviso: str = "") -> Response:
+    # La percentuale di rivalsa viene dall'emittente, non dalla costante:
+    # e' il numero che si modifica in "Dati emittente", e deve essere lo
+    # stesso che lo scorporo usa.
+    perc_riv = rivalsa_perc(em)
+    if perc_riv <= 0:
+        # Zero non e' un difetto da nascondere: e' una scelta, e va detta.
+        # Se e' un errore (come lo era: `aliquota_cassa` a 0 mentre
+        # l'accordo con lo studio dice 4 %) qui si vede, invece di
+        # scoprirlo confrontando il facsimile con la fattura vera.
+        avviso += (
+            '<div class="notice warn mb-3">'
+            "<strong>Nessuna rivalsa INPS.</strong> In "
+            '<a href="/fatture/emittente">Dati emittente</a> l&apos;aliquota '
+            "cassa &egrave; a zero, quindi la casella qui sotto parte "
+            "spenta e il facsimile non la espone. Se il tuo accordo con lo "
+            "studio prevede la rivalsa, impostala l&igrave;."
+            "</div>")
+
     # __INIT__ si sostituisce per ultimo: il suo valore porta dentro testo
     # libero (numero, righe di una fattura esistente). Se un'altra
     # sostituzione girasse dopo, un valore che contenesse per caso il
@@ -142,7 +160,7 @@ def _render_editor(em, acc_rate, init: dict, titolo: str, eyebrow: str,
     # una descrizione) verrebbe espanso una seconda volta.
     content = (_EDITOR_HTML
                .replace("__ACC_RATE__", f"{acc_rate:.6f}")
-               .replace("__RIVALSA_PERC__", f"{RIVALSA_PERC:g}")
+               .replace("__RIVALSA_PERC__", f"{perc_riv:g}")
                .replace("__PDF_SCRIPT__", pdf_script(em))
                # niente "<" nel blob: un cliente o una riga con "</script>"
                # dentro chiuderebbe il tag prima e inietterebbe markup.
@@ -173,7 +191,11 @@ def fattura_nuova():
         "numero": "",
         "cliente_id": None,
         "righe": [{"desc": "", "qta": 1, "prezzo": "", "um": ""}],
-        "rivalsa": True,
+        # La casella parte spuntata se l'emittente dichiara una rivalsa.
+        # Prima era un `True` fisso, che ignorava `aliquota_cassa`: il
+        # campo esisteva, aveva una pagina per modificarlo, e non lo
+        # leggeva nessuno.
+        "rivalsa": rivalsa_perc(em) > 0,
         "bollo_add": True,
         "pagamento_mod": "",
         "pagamento_cond": "",
