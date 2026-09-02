@@ -2,7 +2,7 @@
 
 Foto dello schema reale su Supabase, presa con la query di [README §8.5](../README.md#85--ispezionare-lo-schema). **Va rigenerata dopo ogni migrazione**: si aggiorna qui, non a mano.
 
-Ultimo aggiornamento: 2026-09-01 (dopo la migrazione [README § 8.15](../README.md#815--il-nuovo-percorso-della-fattura-necessaria), applicata al database vivo).
+Ultimo aggiornamento: 2026-09-01 (dopo le migrazioni § 8.14, § 8.15, § 8.16 e § 8.17, tutte applicate al database vivo).
 
 
 > **Nota**: questa foto è stata riverificata campo per campo contro il database
@@ -176,7 +176,7 @@ Ultimo aggiornamento: 2026-09-01 (dopo la migrazione [README § 8.15](../README.
 - `b2f_fatture_cliente_id_fkey`: FOREIGN KEY (cliente_id) REFERENCES b2f_clienti(id) ON DELETE RESTRICT
 - `b2f_fatture_giroconto_piva_id_fkey`: FOREIGN KEY (giroconto_piva_id) REFERENCES b2f_spese_piva(id) ON DELETE SET NULL
 - `b2f_fatture_pkey`: PRIMARY KEY (id)
-- `b2f_fatture_scenario_valido`: CHECK (((accantonamento_scenario IS NULL) OR (accantonamento_scenario = ANY (ARRAY['minimo'::text, 'consigliato'::text, 'prudente'::text, 'sicuro'::text]))))
+- `b2f_fatture_scenario_valido`: CHECK (((accantonamento_scenario IS NULL) OR (accantonamento_scenario = ANY (ARRAY['copertura'::text, 'consigliato'::text, 'prudente'::text, 'blindato'::text, 'minimo'::text, 'sicuro'::text]))))
 - `b2f_fatture_spesa_piva_id_fkey`: FOREIGN KEY (spesa_piva_id) REFERENCES b2f_spese_piva(id) ON DELETE SET NULL
 - `b2f_fatture_stato_check`: CHECK ((stato = ANY (ARRAY['bozza'::text, 'inviata_nadia'::text, 'incassata'::text, 'inviata_studio'::text, 'trasmessa_sdi'::text, 'annullata'::text])))
 - `b2f_fatture_tipo_doc_check`: CHECK ((tipo_doc = ANY (ARRAY['TD01'::text, 'TD02'::text, 'TD03'::text, 'TD04'::text, 'TD05'::text, 'TD06'::text, 'TD16'::text, 'TD17'::text, 'TD18'::text, 'TD19'::text, 'TD20'::text, 'TD24'::text, 'TD25'::text, 'TD26'::text, 'TD27'::text])))
@@ -216,12 +216,14 @@ Ultimo aggiornamento: 2026-09-01 (dopo la migrazione [README § 8.15](../README.
 | `fatturato_atteso_anno` | numeric | NO | NO | 0 |
 | `acconto_imposta_perc` | numeric | NO | NO | 1.00 |
 | `scenario_preferito` | text | NO | NO | 'consigliato'::text |
+| `tariffa_giornaliera` | numeric | NO | NO | 250 |
+| `acconto_prima_rata_perc` | numeric | NO | NO | 0.40 |
 
 **Vincoli:**
 
 - `b2f_parametri_fiscali_id_check`: CHECK ((id = 1))
 - `b2f_parametri_fiscali_pkey`: PRIMARY KEY (id)
-- `b2f_parametri_scenario_valido`: CHECK ((scenario_preferito = ANY (ARRAY['minimo'::text, 'consigliato'::text, 'prudente'::text, 'sicuro'::text])))
+- `b2f_parametri_scenario_valido`: CHECK ((scenario_preferito = ANY (ARRAY['copertura'::text, 'consigliato'::text, 'prudente'::text, 'blindato'::text, 'minimo'::text, 'sicuro'::text])))
 
 **Indici:**
 

@@ -263,6 +263,11 @@ Nessuna query: prende i parametri, restituisce numeri e HTML.
   dedurre. Anno di apertura → imposta 3,35 % e fabbisogno 38,14 %; a regime
   → 2,48 % e 36,39 %. Senza `anno` si assume il caso a regime.
 - `primo_anno_attivita(param, anno)`: la domanda di sopra, isolata.
+- **Le due scadenze**: `aliquote()` e `scomponi()` espongono `entro_giugno`
+  (saldo + 1ª rata acconti) ed `entro_novembre` (2ª rata), più
+  `acconto_prima_rata` / `acconto_seconda_rata`. La quota è il parametro
+  `acconto_prima_rata_perc` (README § 8.17); la seconda rata si ricava **per
+  differenza**, così le due risommano esatte agli acconti dovuti.
 - `scomponi(lordo, param, …, anno=None)`: la scomposizione completa più i
   quattro scenari. Ogni scenario è un **dizionario di voci** in
   `componenti[scenario]` (`inps`, `imposta`, `acconto_inps`,

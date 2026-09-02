@@ -854,6 +854,21 @@ html[data-theme="light"] .sheet-ov{background:rgba(30,34,44,.34)}
 .acc-acconti.neg{border-left-color:var(--neg)}
 .acc-acconti.warn{border-left-color:var(--warn)}
 .acc-acconti.pos{border-left-color:var(--pos)}
+
+/* Le due scadenze, sotto la barra dell'accantonamento. Il fabbisogno non
+   serve tutto insieme: meta' della risposta e' QUANDO, ed e' quello che
+   dice se a giugno i soldi ci sono. Due riquadri affiancati, uno per
+   data, perche' sono due domande separate e si guardano una alla volta. */
+.scad-due{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-2);
+  margin-top:var(--sp-3)}
+.scad{padding:10px 12px;border-radius:var(--r-sm);background:var(--surface-3);
+  border-left:3px solid var(--neg)}
+.scad-quando{font-size:11px;color:var(--ink-3);text-transform:lowercase;
+  letter-spacing:.01em}
+.scad-quanto{font-size:17px;font-weight:600;color:var(--ink);margin-top:2px;
+  line-height:1.15}
+.scad-cosa{font-size:11px;color:var(--ink-3);margin-top:2px;line-height:1.3}
+@media (max-width:359px){.scad-due{grid-template-columns:1fr}}
 .acc-netto .lbl{margin-bottom:1px}
 .stat-hint{margin-top:var(--sp-3)}
 
