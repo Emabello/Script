@@ -54,6 +54,22 @@ storico, imposta sostitutiva al 100 %). Il fabbisogno di cassa e' quindi:
        a regime          36,39 % di L
        anno di apertura  38,14 % di L
 
+DUE SCADENZE, NON UNA
+---------------------
+Il fabbisogno non serve tutto insieme, e sapere QUANDO serve e' meta'
+della risposta: e' quello che decide quanto devi avere liquido a giugno
+e quanto a novembre.
+
+    30 giugno anno+1     saldo dell'anno + prima rata degli acconti
+    (di norma prorogato   (40 %, `acconto_prima_rata_perc`)
+     al 31 luglio)
+    30 novembre anno+1   seconda rata degli acconti (il resto, 60 %)
+
+La quota della prima rata e' un parametro e non una costante: la soglia
+sotto cui l'acconto si versa in unica rata a novembre, e le proroghe, le
+decide il commercialista. Mettendolo a 0 si torna esattamente al modello
+precedente — acconto tutto a novembre — senza toccare il codice.
+
 A regime gli acconti si scomputano dal saldo successivo, e a fatturato
 costante l'uscita annua torna a essere una annualita' sola. Ma quel
 fondo, la prima volta, va costituito — e finche' non c'e' il fabbisogno
@@ -94,6 +110,10 @@ PARAMETRI_DEFAULT = {
     "costi_fissi_annui": 0.0,        # commercialista + PEC + varie
     "fatturato_atteso_anno": 0.0,    # 0 = stimalo dai dati dell'anno
     "acconto_imposta_perc": 1.00,    # acconto imposta sostitutiva (100 %)
+    # Quota dell'acconto che si versa con il saldo di giugno; il resto va
+    # al 30 novembre. A 0 l'acconto e' tutto sulla seconda scadenza, che
+    # era il modello di prima (vedi DUE SCADENZE, NON UNA).
+    "acconto_prima_rata_perc": 0.40,
     "scenario_preferito": "consigliato",
 }
 
@@ -191,6 +211,12 @@ def aliquote(param: dict, anno: int | None = None) -> dict:
     q_acc_imp  = q_imposta * acc_imp
     acconti   = q_acc_inps + q_acc_imp
 
+    # Le due scadenze. Il saldo sta tutto sulla prima; gli acconti si
+    # dividono fra le due secondo `acconto_prima_rata_perc`.
+    prima_rata = min(max(_f(param, "acconto_prima_rata_perc", 0.40), 0.0), 1.0)
+    q_giugno = saldo + acconti * prima_rata
+    q_novembre = acconti * (1.0 - prima_rata)
+
     return {
         "inps": q_inps,
         "imposta": q_imposta,
@@ -201,6 +227,12 @@ def aliquote(param: dict, anno: int | None = None) -> dict:
         "acconto_inps": q_acc_inps,
         "acconto_imposta": q_acc_imp,
         "acconti": acconti,
+        "acconti_prima_rata": acconti * prima_rata,
+        "acconti_seconda_rata": acconti * (1.0 - prima_rata),
+        # Quanto serve avere liquido a ciascuna delle due scadenze.
+        "entro_giugno": q_giugno,
+        "entro_novembre": q_novembre,
+        "prima_rata_perc": prima_rata,
         # Quello che serve avere in mano l'anno in cui saldo e acconti
         # cadono insieme. E' il pavimento di tutti e quattro gli scenari.
         "fabbisogno": saldo + acconti,
@@ -273,6 +305,15 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0,
     # il numero che deve reggere, non una sua parte.
     fabbisogno = round(inps + imposta + acconto_inps + acconto_imposta, 2)
 
+    # Le due scadenze, in euro. La seconda rata si ricava per differenza
+    # cosi' le due risommano esattamente agli acconti dovuti: e' la
+    # stessa regola dello scorporo della rivalsa, e per lo stesso motivo.
+    acconti_tot = round(acconto_inps + acconto_imposta, 2)
+    acconto_prima_rata = round(acconti_tot * a["prima_rata_perc"], 2)
+    acconto_seconda_rata = round(acconti_tot - acconto_prima_rata, 2)
+    entro_giugno = round(inps + imposta + acconto_prima_rata, 2)
+    entro_novembre = acconto_seconda_rata
+
     componenti = {}
     for k in SCENARI:
         componenti[k] = {
@@ -299,7 +340,14 @@ def scomponi(lordo: float, param: dict, fatturato_riferimento: float = 0.0,
         "saldo": round(inps + imposta, 2),
         "acconto_inps": acconto_inps,
         "acconto_imposta": acconto_imposta,
-        "acconti_dovuti": round(acconto_inps + acconto_imposta, 2),
+        "acconti_dovuti": acconti_tot,
+        # Quando servono davvero. Il saldo sta tutto sulla prima
+        # scadenza; gli acconti si dividono fra le due.
+        "acconto_prima_rata": acconto_prima_rata,
+        "acconto_seconda_rata": acconto_seconda_rata,
+        "entro_giugno": entro_giugno,
+        "entro_novembre": entro_novembre,
+        "prima_rata_perc": a["prima_rata_perc"],
         # Quanto serve avere in mano, tasse e costi, senza cuscinetto.
         # E' il pavimento di ogni scenario: `acconti_scoperti` e' zero
         # ovunque per costruzione, e resta esposto perche' le pagine lo
@@ -416,6 +464,13 @@ ALBERO_CSS = """
   .alb-riga.g-fermo .alb-eur{color:var(--warn)}
   .alb-riga.g-tuo  .alb-eur{color:var(--pos)}
 
+  /* Le due scadenze: sono i nodi che rispondono alla domanda vera —
+     quanto devo avere liquido, e per quando. Stanno un gradino sopra le
+     voci che contengono, anche visivamente. */
+  .alb-riga.scadenza .alb-nome{font-weight:600;color:var(--ink);font-size:13px}
+  .alb-riga.scadenza .alb-eur{font-weight:600;color:var(--ink)}
+  .alb-riga.scadenza{padding-top:9px}
+
   /* Le voci dentro "uscira' davvero": stessa famiglia, tinta piu' bassa. */
   .ramo-esce .alb-riga:not(.gruppo) .alb-barra i{
     background:color-mix(in srgb,var(--neg) 55%,transparent)}
@@ -507,27 +562,38 @@ def albero_html(s: dict, uid: str, anno_acconto=None, anno_saldo=None,
                 f'<span class="alb-pct tnum">{pct(q(valore) / 100, 1)}</span>'
                 f'</div>')
 
-    perc_acc_inps = pct(s["aliquote_acconto"]["inps"], 0)
-    perc_acc_imp = pct(s["aliquote_acconto"]["imposta"], 0)
     sub_imposta = ("sull'imponibile pieno: primo anno, nessun contributo ancora "
                    "versato e quindi niente da dedurre" if s.get("primo_anno")
                    else "al netto dei contributi, che sono deducibili")
 
     righe_esce = "".join([
-        riga(f"Saldo {a_sal}", scad, g["saldo"]),
+        # PRIMA SCADENZA — saldo dell'anno piu' la prima rata degli acconti.
+        # E' il ramo che risponde a "quanto devo avere liquido a giugno",
+        # ed e' il motivo per cui l'albero e' raggruppato per DATA e non
+        # per tipo di tributo: i tributi sono tre, le date sono due, e
+        # quella che ti serve sapere e' la data.
+        riga(f"Entro il 30 giugno {a_acc}",
+             "saldo dell'anno pi&ugrave; la prima rata degli acconti &mdash; "
+             "di norma prorogato al 31 luglio",
+             s["entro_giugno"], "scadenza"),
         '<div class="alb-ramo">',
-        riga("INPS gestione separata", "", s["inps"]),
-        riga("Imposta sostitutiva", sub_imposta, s["imposta"]),
+        riga(f"Saldo INPS {a_sal}", "gestione separata", s["inps"]),
+        riga(f"Saldo imposta {a_sal}", sub_imposta, s["imposta"]),
+        riga(f"1&ordf; rata acconti {a_acc}",
+             f"{pct(s['prima_rata_perc'], 0)} degli acconti, versata insieme al saldo",
+             s["acconto_prima_rata"], "acconto"),
         "</div>",
-        riga(f"Acconti {a_acc}", scad_acc, g["acconti"], "acconto"),
+        # SECONDA SCADENZA — il resto degli acconti.
+        riga(f"Entro il 30 novembre {a_acc}", "seconda rata degli acconti",
+             s["entro_novembre"], "scadenza"),
         '<div class="alb-ramo">',
-        riga("Acconto INPS", f"{perc_acc_inps} del saldo INPS",
-             s["acconto_inps"], "acconto"),
-        riga("Acconto imposta", f"{perc_acc_imp} del saldo imposta",
-             s["acconto_imposta"], "acconto"),
+        riga(f"2&ordf; rata acconti {a_acc}",
+             f"il resto: {pct(1 - s['prima_rata_perc'], 0)} degli acconti",
+             s["acconto_seconda_rata"], "acconto"),
         "</div>",
         riga("Costi fissi pro-quota",
-             "commercialista, PEC, bolli: la quota di questa fattura", g["costi"]),
+             "commercialista, PEC, bolli: escono durante l'anno, non a scadenza",
+             g["costi"]),
     ])
 
     rivalsa_html = _riga_rivalsa_bollo(s)
@@ -662,6 +728,24 @@ def card_html(s: dict, titolo: str = "Da accantonare",
         f'<div><i class="dot" style="background:var(--warn)"></i>Cuscinetto '
         f'<span data-acc-leg-fermo="{uid}" class="tnum">&euro; {eur(g["fermo"])}</span></div>')
 
+    # Le due scadenze, in cima e non solo dentro l'albero: e' la domanda
+    # che uno si fa guardando la fattura ("quanto mi serve, e per
+    # quando"), e non deve costare l'apertura di un accordion.
+    anno_sc = anno_acconto or ""
+    chip_scadenze = f'''
+  <div class="scad-due">
+    <div class="scad">
+      <div class="scad-quando">entro il 30 giugno {anno_sc}</div>
+      <div class="scad-quanto tnum">&euro; {eur(s["entro_giugno"])}</div>
+      <div class="scad-cosa">saldo + 1&ordf; rata acconti</div>
+    </div>
+    <div class="scad">
+      <div class="scad-quando">entro il 30 novembre {anno_sc}</div>
+      <div class="scad-quanto tnum">&euro; {eur(s["entro_novembre"])}</div>
+      <div class="scad-cosa">2&ordf; rata acconti</div>
+    </div>
+  </div>'''
+
     albero = albero_html(s, uid, anno_acconto=anno_acconto,
                          anno_saldo=anno_saldo, aperto=albero_aperto)
 
@@ -697,6 +781,7 @@ def card_html(s: dict, titolo: str = "Da accantonare",
 
   {barra}
   <div class="legend">{"".join(voci_legenda)}</div>
+  {chip_scadenze}
 
   <div class="acc-acconti {classe(pref)}" data-acc-acconti="{uid}">
     <i class="dot" style="background:var(--warn)" aria-hidden="true"></i>

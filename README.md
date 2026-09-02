@@ -431,6 +431,32 @@ mentre nella realtà nel secondo anno se ne versano circa 1,8 (saldo del primo
 più acconti del secondo). Lì l'errore è verso l'alto — accantoni un po' più del
 dovuto — e va bene così.
 
+### Due scadenze, non una
+
+Il fabbisogno non serve tutto insieme, e sapere **quando** serve è metà della
+risposta: è quello che decide quanto devi avere liquido a giugno e quanto a
+novembre.
+
+| Quando | Cosa si versa | Quanto (anno di apertura) |
+|---|---|---|
+| **30 giugno** anno+1 <br>*di norma prorogato al 31 luglio* | saldo dell'anno + **1ª rata** degli acconti (40 %) | 27,7 % del lordo |
+| **30 novembre** anno+1 | **2ª rata** degli acconti (60 %) | 10,4 % del lordo |
+
+La quota della prima rata è il parametro `acconto_prima_rata_perc`
+([§ 8.17](#817--lacconto-si-versa-in-due-rate-non-tutto-a-novembre--applicata-il-01092026)):
+la soglia sotto cui l'acconto si versa in unica rata a novembre, e le proroghe,
+le decide il commercialista. A **0** l'acconto torna tutto sulla scadenza di
+novembre, che era il modello di prima.
+
+Le due date compaiono in tre posti, e sono sempre lo stesso conto:
+
+- **due riquadri** sotto la barra dell'accantonamento, sulla fattura: *entro il
+  30 giugno € X · entro il 30 novembre € Y*;
+- l'albero, che raggruppa *Uscirà davvero* **per data** e non per tipo di
+  tributo — i tributi sono tre, le date sono due, e quella che serve sapere è
+  la data;
+- la card **Calendario dei versamenti** sulla situazione fiscale.
+
 ### L'albero: dove finiscono quei soldi
 
 La card mostra quanto accantonare. L'**albero** mostra dove va, e lo fa in una
@@ -450,6 +476,17 @@ Tre gruppi, e il colore è il significato:
 In fondo, *Accantoni in tutto* = rosso + giallo, cioè quello che resta sul conto
 P.IVA. Le voci fisse non cambiano con lo scenario; cambiano il margine, i tre
 totali di ramo e quanto resta tuo.
+
+### Il calendario dei versamenti
+
+Sulla situazione fiscale, sotto il fondo. Due blocchi, uno per scadenza, e in
+ciascuno: la data, il totale, le voci che lo compongono e — la parte che serve
+davvero — **quanto resta sul conto P.IVA dopo averla pagata**. Il residuo parte
+dal saldo P.IVA di oggi e scala una scadenza alla volta, così si vede subito se
+la seconda regge dopo la prima.
+
+Se il saldo P.IVA non è leggibile la card mostra le scadenze senza la colonna
+del residuo: meglio niente che un residuo inventato.
 
 ### Il fondo tasse: i soldi ci sono davvero?
 
@@ -1706,6 +1743,14 @@ codice le rilegge con `accantonamento.normalizza_scenario()`.
 
 Compatibile in avanti e all'indietro: si può lanciare prima o dopo il deploy.
 
+> **Il vincolo vive in due posti, non uno**, e la prima stesura ne aveva
+> allargato solo uno: `b2f_fatture.accantonamento_scenario` (quale scenario fu
+> scelto per quella fattura) e `b2f_parametri_fiscali.scenario_preferito` (quale
+> l'app propone di default). Senza il secondo, scegliere *Copertura* o
+> *Blindato* fra i parametri faceva fallire il salvataggio dell'intera pagina —
+> lo stesso errore grezzo della tariffa giornaliera, per la stessa ragione.
+> Trovato riguardando la foto dello schema, prima che uscisse.
+
 ```sql
 alter table b2f_fatture drop constraint if exists b2f_fatture_scenario_valido;
 alter table b2f_fatture add constraint b2f_fatture_scenario_valido
@@ -1718,7 +1763,41 @@ alter table b2f_fatture add constraint b2f_fatture_scenario_valido
       'minimo', 'sicuro'
     )
   );
+
+-- Lo stesso vincolo, sull'altra tabella.
+alter table b2f_parametri_fiscali
+  drop constraint if exists b2f_parametri_scenario_valido;
+alter table b2f_parametri_fiscali
+  add constraint b2f_parametri_scenario_valido
+  check (scenario_preferito in (
+    'copertura', 'consigliato', 'prudente', 'blindato',
+    'minimo', 'sicuro'
+  ));
 ```
+
+### 8.17 — L'acconto si versa in due rate, non tutto a novembre ✅ applicata il 01/09/2026
+
+Il modello di prima metteva l'intero acconto sulla scadenza del 30 novembre.
+Il calendario vero è **40 % con il saldo** (30 giugno, di norma prorogato al
+31 luglio) e **60 % il 30 novembre**. La differenza non è contabile — il totale
+dell'anno non cambia di un euro — ma è di **cassa**: è quanto devi avere
+liquido a giugno, ed era sottostimato di tutta la prima rata.
+
+È un parametro e non una costante perché la soglia sotto cui l'acconto si versa
+in unica rata a novembre, e le proroghe, le decide il commercialista. Mettendolo
+a **0** si torna esattamente al comportamento precedente, senza toccare il codice.
+
+```sql
+alter table b2f_parametri_fiscali
+  add column if not exists acconto_prima_rata_perc numeric(5,4) not null default 0.40;
+
+comment on column b2f_parametri_fiscali.acconto_prima_rata_perc is
+  'Quota dell''acconto versata con il saldo di giugno; il resto va al 30/11. 0 = tutto a novembre';
+```
+
+> **Va lanciata prima del deploy.** Come per la [§ 8.14](#814--la-tariffa-giornaliera-è-un-parametro-non-una-costante--applicata-il-01092026):
+> il campo entra in `PARAMETRI_CAMPI`, quindi finisce nel `PATCH` dei parametri
+> insieme a tutto il resto, e senza la colonna PostgREST rifiuta la riga intera.
 
 ## 9. Sicurezza
 
