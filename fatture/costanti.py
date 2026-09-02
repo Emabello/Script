@@ -208,6 +208,33 @@ def motivo_blocco(stato: str) -> str:
 RIVALSA_PERC = 4.0
 
 
+def rivalsa_perc(emittente: dict | None) -> float:
+    """
+    La percentuale di rivalsa da usare, letta dall'EMITTENTE.
+
+    `b2f_emittente.aliquota_cassa` e' il posto in cui questo numero deve
+    stare: c'e' una pagina per modificarlo, e chi lo cambia si aspetta che
+    l'app lo usi. Prima non lo usava nessuno — finiva solo dentro il
+    payload del PDF — mentre lo scorporo girava sulla costante qui sopra.
+    Due verita' sullo stesso numero, e quella scritta a database era zero
+    senza che niente lo segnalasse.
+
+    Il fallback sulla costante resta per un motivo solo: un emittente non
+    ancora compilato non deve far sparire una rivalsa che l'accordo con
+    lo studio prevede. Chi non ha rivalsa la mette esplicitamente a zero,
+    e l'editor lo dice invece di limitarsi a non spuntare la casella.
+    """
+    if emittente is None:
+        return RIVALSA_PERC
+    val = emittente.get("aliquota_cassa")
+    if val is None or val == "":
+        return RIVALSA_PERC
+    try:
+        return max(float(val), 0.0)
+    except (TypeError, ValueError):
+        return RIVALSA_PERC
+
+
 def scorpora_rivalsa(corrispettivo: float, perc: float = RIVALSA_PERC) -> dict:
     """
     Scompone il corrispettivo concordato in compenso e rivalsa.
