@@ -259,7 +259,7 @@ def importa_pagina():
           <table class="table">
             <thead><tr>
               <th></th><th>Data</th><th>Tipo</th><th class="num">Importo</th>
-              <th>Descrizione</th><th>Categoria</th><th>Sottocategoria</th>
+              <th>Descrizione</th><th>Categoria</th><th>Sottocategoria</th><th>Esito</th>
             </tr></thead>
             <tbody id="corpoTabella"></tbody>
           </table>
@@ -320,7 +320,15 @@ def importa_pagina():
           if (!r.ok) {{ errBox.textContent = j.error || 'Errore'; errBox.style.display = 'block'; return; }}
           MOVS = j.movimenti || [];
           if (!MOVS.length) {{ toast('Nessun movimento trovato nel file', 'err'); return; }}
-          RIGHE = MOVS.map(() => ({{selezionata: true, categoria: '', sottocategoria: '', salvata: false}}));
+          // I movimenti che assomigliano a uno gia' a database nascono
+          // SPENTI: si vedono, si legge il perche', e si riaccendono in un
+          // click. Non sparisce niente da solo.
+          RIGHE = MOVS.map(m => ({{selezionata: m.preselezionato !== false,
+                                  categoria: '', sottocategoria: '', salvata: false}}));
+          if (j.sospetti) {{
+            toast(`${{j.sospetti}} righe somigliano a spese già registrate: `
+                  + `le ho lasciate spente, controlla`, 'warn');
+          }}
           document.getElementById('cardUpload').style.display = 'none';
           document.getElementById('cardRevisione').style.display = 'block';
           renderTabella();
@@ -349,6 +357,14 @@ def importa_pagina():
         }} catch (e) {{ errBox.textContent = 'Errore rete: ' + e.message; errBox.style.display = 'block'; }}
       }}
 
+      // La riga saltata perche' gia' presente resta a schermo, spenta e
+      // con scritto il perche': sparire in silenzio e' esattamente il modo
+      // in cui un movimento mancante non si scopre mai.
+      const CSS_DUP = document.createElement('style');
+      CSS_DUP.textContent =
+        '.riga-dup{{opacity:.55}} .riga-dup [data-nota]{{color:var(--warn)}}';
+      document.head.appendChild(CSS_DUP);
+
       function renderTabella() {{
         const tbody = document.getElementById('corpoTabella');
         tbody.innerHTML = MOVS.map((m, i) => {{
@@ -356,7 +372,8 @@ def importa_pagina():
           const cls = m.tipo === 'entrata' ? 'pos' : 'neg';
           const segno = m.tipo === 'entrata' ? '+' : '−';
           const dis = r.salvata ? 'disabled' : '';
-          return `<tr>
+          const sosp = (!r.salvata && m.sospetto) ? ' riga-dup' : '';
+          return `<tr data-riga="${{i}}" class="${{sosp.trim()}}">
             <td><input type="checkbox" data-i="${{i}}" ${{r.selezionata ? 'checked' : ''}} ${{dis}}
                   onchange="onChk(${{i}}, this.checked)"></td>
             <td class="tnum">${{m.data.split('-').reverse().join('/')}}</td>
@@ -370,7 +387,9 @@ def importa_pagina():
                 </select></td>
             <td><select class="input sel-sub" style="min-width:150px" data-i="${{i}}" ${{dis}}
                   onchange="onSub(${{i}}, this.value)">${{subOptions(r.categoria, r.sottocategoria)}}</select></td>
-            ${{r.salvata ? '<td class="pos small">✔ salvato</td>' : ''}}
+            <td class="small muted" data-nota>${{
+              r.salvata ? '<span class="pos">✔ salvato</span>'
+                        : (m.sospetto ? esc(m.sospetto) : '')}}</td>
           </tr>`;
         }}).join('');
         aggiornaConteggio();
@@ -432,6 +451,17 @@ def importa_pagina():
           renderTabella();
           toast(`${{(j.salvate || []).length}} movimenti salvati`, 'ok');
           if (j.duplicati && j.duplicati.length) {{
+            // Non basta il numero: se una riga viene saltata perche' a
+            // database c'e' la stessa spesa con un'altra data, chi importa
+            // deve poterlo leggere invece di fidarsi.
+            j.duplicati.forEach(function(d){{
+              const tr = document.querySelector(`[data-riga="${{d.idx}}"]`);
+              if (tr) {{
+                tr.classList.add('riga-dup');
+                const c = tr.querySelector('[data-nota]');
+                if (c) c.textContent = d.nota || 'già presente';
+              }}
+            }});
             toast(`${{j.duplicati.length}} righe già presenti, non duplicate`, 'ok');
           }}
           if (j.errori && j.errori.length) {{
@@ -457,7 +487,31 @@ def api_importa_carica():
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"file non leggibile: {str(e)[:200]}"}), 400
+
+    # Il controllo sui possibili doppioni si fa QUI, prima che si scriva
+    # qualcosa: chi importa li vede nell'anteprima, spenti e con il
+    # motivo scritto accanto, e decide. Se il database non e' leggibile
+    # si tira dritto — un avviso in meno, non un import bloccato.
+    try:
+        client = D.sb()
+        if client is not None:
+            indice = _indice_per_sospetti(client, esito["movimenti"])
+            esito["sospetti"] = segnala_sospetti(indice, esito["movimenti"])
+    except Exception:
+        esito["sospetti"] = 0
     return jsonify(esito)
+
+
+# Quanti giorni di scarto rendono due movimenti uguali "sospetti".
+# L'estratto porta due date, contabile e valuta, e fra le due passa fino a
+# un paio di giorni: lo stesso movimento riscaricato puo' quindi arrivare
+# con una data diversa. Ma ATTENZIONE — questa tolleranza serve solo a
+# SEGNALARE, mai a scartare: il 02/09/2026 ci sono due McDonald's da 1,10
+# a un giorno di distanza da un terzo del 03/09, e sono tre caffe' veri.
+# Un controllo che scarta per somiglianza li farebbe sparire in silenzio,
+# che e' esattamente il modo in cui questo conto ha gia' perso 829,78 euro
+# una volta (vedi `spese/dati.py::saldo_conto`).
+TOLLERANZA_GIORNI = 4
 
 
 def _righe_gia_presenti(client, righe: list[dict]) -> set[tuple]:
@@ -466,6 +520,10 @@ def _righe_gia_presenti(client, righe: list[dict]) -> set[tuple]:
     coperti dalle righe da salvare — per accorgersi se lo stesso estratto
     conto (o una sua parte, le banche includono qualche giorno di margine
     fra un export e il successivo) e' gia' stato importato prima.
+
+    Chiave ESATTA, e resta esatta: e' l'unica che non puo' buttare via un
+    movimento vero. Lo stesso file riscaricato produce le stesse tre cose,
+    quindi il doppione da re-import lo prende comunque.
     """
     date_valide = [r.get("data") for r in righe if r.get("data")]
     if not date_valide:
@@ -480,6 +538,67 @@ def _righe_gia_presenti(client, righe: list[dict]) -> set[tuple]:
                 (riga.get("descrizione") or "").strip(),
             ))
     return esistenti
+
+
+def _indice_per_sospetti(client, movimenti: list[dict]) -> dict:
+    """
+    I movimenti gia' a database indicizzati per (tipo, importo), con le
+    loro date. Serve solo a costruire l'avviso, non a decidere.
+    """
+    date_valide = [m.get("data") for m in movimenti if m.get("data")]
+    if not date_valide:
+        return {}
+    anni = {int(d[:4]) for d in date_valide if len(d) >= 4 and d[:4].isdigit()}
+    anni |= {a - 1 for a in anni} | {a + 1 for a in anni}
+    indice: dict[tuple, list] = {}
+    for anno in sorted(anni):
+        for riga in D.righe_periodo(client, anno=anno):
+            d = riga.get("data")
+            if not d:
+                continue
+            chiave = (riga.get("tipo"), round(float(riga.get("importo") or 0), 2))
+            indice.setdefault(chiave, []).append(
+                (d, (riga.get("descrizione") or "").strip()))
+    return indice
+
+
+def segnala_sospetti(indice: dict, movimenti: list[dict]) -> int:
+    """
+    Marca i movimenti che *potrebbero* essere gia' a database con un'altra
+    data, e ritorna quanti ne ha marcati.
+
+    Non ne scarta nessuno. Aggiunge `sospetto` (il testo da mostrare) e
+    `preselezionato: False`, cosi' l'anteprima li lascia spenti: chi
+    importa li vede, legge perche', e decide. La differenza fra questo e
+    scartarli e' tutta qui — un movimento vero saltato in silenzio non si
+    scopre mai, uno spento davanti agli occhi si riaccende in un click.
+    """
+    n = 0
+    for m in movimenti:
+        m.setdefault("preselezionato", True)
+        try:
+            d_m = date.fromisoformat(m.get("data") or "")
+        except ValueError:
+            continue
+        chiave = (m.get("tipo"), round(float(m.get("importo") or 0), 2))
+        vicini = []
+        for d, desc in indice.get(chiave, []):
+            try:
+                scarto = abs((date.fromisoformat(d) - d_m).days)
+            except ValueError:
+                continue
+            if scarto <= TOLLERANZA_GIORNI:
+                vicini.append((scarto, d, desc))
+        if not vicini:
+            continue
+        vicini.sort()
+        scarto, d, desc = vicini[0]
+        quando = "stesso giorno" if scarto == 0 else f"il {d[8:10]}/{d[5:7]}"
+        m["sospetto"] = (f"già a database una spesa uguale {quando}"
+                         + (f" — «{desc[:40]}»" if desc else ""))
+        m["preselezionato"] = False
+        n += 1
+    return n
 
 
 @spese_bp.post("/api/importa/salva")
@@ -503,9 +622,9 @@ def api_importa_salva():
             errori.append({"idx": idx, "errore": "categoria mancante"})
             continue
         chiave = (r.get("data"), round(float(r.get("importo") or 0), 2),
-                 (r.get("descrizione") or "").strip())
+                  (r.get("descrizione") or "").strip())
         if chiave in gia_presenti:
-            duplicati.append(idx)
+            duplicati.append({"idx": idx, "nota": "già presente, identica"})
             continue
         link_id = D.link_categoria(client, cat, sub)
         if link_id is None:
@@ -524,8 +643,8 @@ def api_importa_salva():
         else:
             salvate.append(idx)
             # Anche nello stesso file possono esserci due righe identiche
-            # (capita, alcune banche duplicano una transazione nell'export):
-            # segnala la seconda come duplicato invece di scriverla due volte.
+            # in tutto e per tutto: la seconda si segnala invece di
+            # scriverla due volte.
             gia_presenti.add(chiave)
 
     return jsonify({"salvate": salvate, "errori": errori, "duplicati": duplicati})

@@ -484,6 +484,27 @@ selezionato. `clean_bank_description()` ripulisce le causali bancarie
 (pagamenti con carta, bonifici, SDD) con la stessa euristica del vecchio
 client desktop.
 
+**Il controllo sui doppioni ha due livelli, e la differenza fra i due è il
+punto:**
+
+| Quando | Cosa fa | Regola |
+|---|---|---|
+| Al **caricamento** | `segnala_sospetti()` marca le righe che somigliano a una già a database — stesso tipo e importo entro ±4 giorni — e le lascia **spente** nell'anteprima, col motivo scritto accanto | somiglianza, **non scarta mai** |
+| Al **salvataggio** | `_righe_gia_presenti()` scarta le righe identiche: stessa data, stesso importo, stessa descrizione | uguaglianza esatta |
+
+> **Perché la somiglianza non può scartare.** Il 02/09/2026 l'estratto porta
+> due McDonald's da 1,10, e il 03/09 un terzo: sono tre caffè veri. Un
+> controllo che scarta per "stesso importo entro pochi giorni" ne farebbe
+> sparire due — e un movimento vero saltato in silenzio non si scopre mai.
+> È la stessa forma del bug che è costato 829,78 € (vedi
+> `spese/dati.py::saldo_conto`). Quindi: la somiglianza **accende un
+> avviso**, l'uguaglianza esatta scarta. Lo stesso file riscaricato produce
+> le stesse tre cose, quindi il doppione da re-import viene preso lo stesso.
+
+> **La tolleranza di ±4 giorni non è arbitraria**: l'estratto porta due date,
+> contabile e valuta, e fra le due passa fino a un paio di giorni. Metà dei
+> movimenti di agosto 2026 sono a database con l'una e metà con l'altra.
+
 ---
 
 ## `shared/` — pezzi comuni
