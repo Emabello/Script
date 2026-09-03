@@ -110,11 +110,33 @@ DB = {
         {"id": 6, "data": "2026-08-05", "importo": 42.90, "tipo": "uscita",
          "descrizione": "addebito diretto sepa core - vodafone italia s.p.a. rata mensile",
          "categoria": "Fisso", "sottocategoria": "Telefonia"},
-        # Giroconto dalla P.IVA: tipo=entrata con la categoria dedicata,
-        # esattamente come lo scrive fatture/giroconto.py.
-        {"id": 7, "data": "2026-08-06", "importo": 2320.55, "tipo": "entrata",
-         "descrizione": "Giroconto da P.IVA — fattura 2026/003",
+        # Giroconto dalla P.IVA: tipo=entrata con la categoria dedicata.
+        # Non sono righe scritte dall'app: sono i movimenti VERI del conto,
+        # arrivati dall'import della banca, e la fattura ci si aggancia
+        # sopra (README §8.18). Tre casi apposta, perche' sono i tre stati
+        # che la card deve saper mostrare.
+        #
+        # Fattura 1 (deciso 2.500,00): due tranche e un rientro, netto
+        # 2.423,52 -> la card deve dire "manca ancora".
+        {"id": 7, "data": "2026-07-01", "importo": 2000.00, "tipo": "entrata",
+         "descrizione": "Trasferimento da conto *0479",
+         "metodo_pagamento": "Import banca", "fattura_giroconto_id": 1,
          "categoria": "Giroconto P.IVA", "sottocategoria": None},
+        {"id": 8, "data": "2026-07-09", "importo": 1491.85, "tipo": "entrata",
+         "descrizione": "Trasferimento da conto *0479",
+         "metodo_pagamento": "Import banca", "fattura_giroconto_id": 1,
+         "categoria": "Giroconto P.IVA", "sottocategoria": None},
+        {"id": 9, "data": "2026-07-20", "importo": 1068.33, "tipo": "uscita",
+         "descrizione": "Trasferimento a conto *0479",
+         "metodo_pagamento": "Import banca", "fattura_giroconto_id": 1,
+         "categoria": "Giroconto P.IVA", "sottocategoria": None},
+        # Fattura 2 (deciso 863,44): arrivato tutto in una volta.
+        {"id": 10, "data": "2026-07-11", "importo": 863.44, "tipo": "entrata",
+         "descrizione": "Trasferimento da conto *0479",
+         "metodo_pagamento": "Import banca", "fattura_giroconto_id": 2,
+         "categoria": "Giroconto P.IVA", "sottocategoria": None},
+        # Fattura 3: ripartita ma il bonifico non e' ancora partito. Non
+        # c'e' nessuna riga: e' proprio il punto — l'app non ne inventa una.
     ],
     # Saldo di apertura del conto personale: e' da qui che parte il saldo
     # mostrato in home e su /spese.
@@ -247,7 +269,8 @@ def _riga_v_spese(r):
             "categoria_link_id": link,
             "mese": r.get("mese") or (int(data[5:7]) if len(data) >= 7 else None),
             "anno": r.get("anno") or (int(data[:4]) if len(data) >= 4 else None),
-            "metodo_pagamento": r.get("metodo_pagamento")}
+            "metodo_pagamento": r.get("metodo_pagamento"),
+            "fattura_giroconto_id": r.get("fattura_giroconto_id")}
 
 
 DB["v_spese"] = [_riga_v_spese(r) for r in DB["spese"]]
@@ -318,8 +341,32 @@ def _fattura(fid, prog, data, cliente_id, righe, stato, data_incasso=None,
         "data_trasmissione_sdi": (data if _oltre(stato, "trasmessa_sdi") else None),
         "numero_sdi": None,
         "spesa_piva_id": spesa_piva_id, "pdf_url": None, "xml_url": None,
+        # I campi della ripartizione ci sono anche da vuoti, come in
+        # database: il codice li legge con .get() ma un finto client che
+        # non li ha nasconderebbe un `KeyError` vero.
+        "accantonamento_scenario": None, "accantonamento_importo": None,
+        "giroconto_importo": None, "data_giroconto": None,
+        "giroconto_piva_id": None, "giroconto_personale_id": None,
         "note": None,
     }
+
+
+def _ripartita(f, accantonato, quando, piva_id=None):
+    """
+    La DECISIONE di ripartizione sulla fattura. Non scrive niente sul
+    conto personale: quello e' il fatto, e arriva dalla banca (vedi
+    `fatture/giroconto.py`).
+    """
+    lordo = round(float(f["totale"]), 2)
+    f.update({
+        "accantonamento_scenario": "prudente",
+        "accantonamento_importo": round(accantonato, 2),
+        "giroconto_importo": round(lordo - accantonato, 2),
+        "data_giroconto": quando,
+        "giroconto_piva_id": piva_id,
+        "giroconto_personale_id": None,
+    })
+    return f
 
 
 def _ore(f):
@@ -341,17 +388,24 @@ def _ore(f):
 
 
 DB["b2f_fatture"] = [
-    _ore(_fattura(1, 1, "2026-06-05", 1,
+    # Ripartita, e il bonifico e' arrivato in due tranche con un rientro:
+    # deciso 2.500,00, arrivato 2.423,52. La card deve dirlo.
+    _ripartita(_ore(_fattura(1, 1, "2026-06-05", 1,
                   [{"descrizione": "Attività di consulenza SAP / sviluppo ABAP",
                     "qta": 20, "um": "gg", "prezzo": 250.00}],
                   "incassata", "2026-06-30", spesa_piva_id=3)),
-    _fattura(2, 2, "2026-06-20", 2,
+               2502.00, "2026-06-30"),
+    # Ripartita e arrivata esatta.
+    _ripartita(_fattura(2, 2, "2026-06-20", 2,
              [{"descrizione": "Consulenza infrastruttura di rete", "qta": 9, "um": "h", "prezzo": 195.00}],
              "incassata", "2026-07-10", spesa_piva_id=5),
-    _fattura(3, 3, "2026-07-03", 1,
+               893.56, "2026-07-10"),
+    # Ripartita e in attesa: nessun movimento sul conto personale.
+    _ripartita(_fattura(3, 3, "2026-07-03", 1,
              [{"descrizione": "Sviluppo modulo reportistica", "qta": 20, "um": "h", "prezzo": 190.00},
               {"descrizione": "Sessione di formazione al team", "qta": 1, "um": "gg", "prezzo": 350.00}],
              "incassata", "2026-07-31", spesa_piva_id=7),
+               2200.00, "2026-07-31"),
     _fattura(4, 4, "2026-07-22", 3,
              [{"descrizione": "Migration assessment", "qta": 12, "um": "h", "prezzo": 205.00}],
              "incassata", "2026-08-01", cassa=False, spesa_piva_id=8),
@@ -511,11 +565,15 @@ class _Query:
         if self._op == "update":
             for r in sel:
                 r.update(deepcopy(self._payload))
+                if self.table == "spese":
+                    _rispecchia_v_spese(r)
             return _Res([deepcopy(r) for r in sel])
 
         if self._op == "delete":
             for r in sel:
                 rows.remove(r)
+                if self.table == "spese":
+                    _rispecchia_v_spese(r, togli=True)
             return _Res([])
 
         if self._order:
@@ -535,6 +593,28 @@ class _Query:
                 raise RuntimeError(f"nessuna riga in {self.table}")
             return _Res(deepcopy(sel[0]), len(sel) if self._count else None)
         return _Res([deepcopy(r) for r in sel], len(sel) if self._count else None)
+
+
+def _rispecchia_v_spese(riga, togli=False):
+    """
+    Riporta su `v_spese` una riga di `spese` cambiata o cancellata.
+
+    In database `v_spese` e' una vista e l'allineamento e' automatico;
+    qui sono due liste, e senza questo passaggio l'anteprima mostrerebbe
+    ancora il valore vecchio — cioe' proprio il tipo di divergenza fra
+    due copie degli stessi dati che questa app ha gia' pagato caro.
+    """
+    vista = DB.setdefault("v_spese", [])
+    rid = riga.get("id")
+    for i, v in enumerate(vista):
+        if v.get("id") == rid:
+            if togli:
+                vista.pop(i)
+            else:
+                vista[i] = _riga_v_spese(riga)
+            return
+    if not togli:
+        vista.append(_riga_v_spese(riga))
 
 
 class _FakeClient:

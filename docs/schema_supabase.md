@@ -2,7 +2,7 @@
 
 Foto dello schema reale su Supabase, presa con la query di [README §8.5](../README.md#85--ispezionare-lo-schema). **Va rigenerata dopo ogni migrazione**: si aggiorna qui, non a mano.
 
-Ultimo aggiornamento: 2026-09-01 (dopo le migrazioni § 8.14, § 8.15, § 8.16 e § 8.17, tutte applicate al database vivo).
+Ultimo aggiornamento: 2026-09-03 (dopo le migrazioni § 8.14, § 8.15, § 8.16, § 8.17 e § 8.18, tutte applicate al database vivo).
 
 
 > **Nota**: questa foto è stata riverificata campo per campo contro il database
@@ -483,16 +483,19 @@ Ultimo aggiornamento: 2026-09-01 (dopo le migrazioni § 8.14, § 8.15, § 8.16 e
 | `created_at` | timestamp without time zone | YES | NO | now() |
 | `metodo_pagamento` | text | YES | NO |  |
 | `categoria_link_id` | uuid | YES | NO |  |
+| `fattura_giroconto_id` | bigint | YES | NO |  |
 
 **Vincoli:**
 
 - `fk_spese_categoria_link`: FOREIGN KEY (categoria_link_id) REFERENCES cfg_categoria_sottocategoria(id) ON DELETE RESTRICT
+- `spese_fattura_giroconto_fkey`: FOREIGN KEY (fattura_giroconto_id) REFERENCES b2f_fatture(id) ON DELETE SET NULL
 - `spese_pkey`: PRIMARY KEY (id)
 - `spese_tipo_check`: CHECK ((tipo = ANY (ARRAY['entrata'::text, 'uscita'::text, 'giroconto'::text])))
 
 **Indici:**
 
 - `CREATE UNIQUE INDEX spese_pkey ON public.spese USING btree (id)`
+- `CREATE INDEX idx_spese_fattura_giroconto ON public.spese USING btree (fattura_giroconto_id) WHERE (fattura_giroconto_id IS NOT NULL)`
 
 
 ---
@@ -816,6 +819,7 @@ WITH param AS (
 | `categoria_link_id` | uuid |
 | `categoria_id` | uuid |
 | `sottocategoria_id` | uuid |
+| `fattura_giroconto_id` | bigint |
 
 ```sql
 SELECT s.id,
@@ -831,7 +835,8 @@ SELECT s.id,
     sc.nome AS sottocategoria,
     s.categoria_link_id,
     l.categoria_id,
-    l.sottocategoria_id
+    l.sottocategoria_id,
+    s.fattura_giroconto_id
    FROM spese s
      LEFT JOIN cfg_categoria_sottocategoria l ON l.id = s.categoria_link_id
      LEFT JOIN cfg_categorie c ON c.id = l.categoria_id

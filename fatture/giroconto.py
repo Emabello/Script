@@ -8,30 +8,50 @@ P.IVA, ma non sono tutti tuoi: INPS e imposta sostitutiva maturano
 all'incasso, e vanno lasciati dove sono. Il resto e' stipendio, e sta
 sul conto personale.
 
-Finora l'app sapeva calcolare la quota (card "Da accantonare") ma la
-scelta dello scenario era solo visiva: nessuna traccia di cosa avessi
-deciso, e il denaro non si muoveva. Qui quel gesto diventa un fatto
-registrato:
-
     incasso lordo sul conto P.IVA        5.000,00
-      - accantonamento (scenario scelto) 1.508,15   resta su P.IVA
-      = giroconto al personale           3.491,85   si sposta
+      - accantonamento (scenario scelto) 2.574,48   resta su P.IVA
+      = da spostare sul personale        2.425,52   lo sposti tu
 
-Due righe, una per conto, scritte insieme:
+DECISIONE E FATTO SONO DUE COSE DIVERSE
+---------------------------------------
+Fino al 03/09/2026 la ripartizione scriveva **una** entrata sul conto
+personale con l'importo deciso e la data della decisione, e la chiamava
+fatta. Ma il bonifico lo fai tu dalla banca: quando vuoi, in quante
+tranche vuoi, e puo' anche tornare indietro. Sulla fattura 2026/001 la
+riga diceva 2.425,52 il 05/08; la banca aveva mosso 2.000,00 il 05/08,
+1.491,85 il 13/08 e -1.068,33 il 02/09, cioe' 2.423,52 netti. Due euro
+di scarto, in silenzio, sul saldo di un conto vero — la stessa forma
+del guasto che sui risparmi era arrivato a 829,78 € (vedi
+`spese/dati.py::saldo_conto`).
 
-  b2f_spese_piva  tipo=giroconto, categoria=giroconto_personale
-                  -> uscita dal conto P.IVA
-  spese           tipo=entrata
-                  -> arrivo sul conto personale
+Da qui in poi le due cose stanno in due posti diversi:
 
-Il giroconto NON e' una spesa deducibile ne' un ricavo: e' denaro che
-cambia conto. Per questo sul lato P.IVA usa `tipo=giroconto`, che i
-calcoli fiscali gia' ignorano (contano solo le uscite), e una categoria
-dedicata.
+  la DECISIONE  ->  sulla fattura: `accantonamento_scenario`,
+                    `accantonamento_importo`, `giroconto_importo`,
+                    `data_giroconto`. Non si muove piu'.
+  il FATTO      ->  le righe di `spese` con categoria "Giroconto P.IVA"
+                    agganciate alla fattura da `fattura_giroconto_id`
+                    (README §8.18). Sono movimenti veri del conto,
+                    arrivati dall'import della banca o registrati a mano:
+                    quanti servono, con le date vere, anche in negativo
+                    se una parte e' rientrata.
+
+**La ripartizione non inventa piu' nessuna riga sul conto personale.**
+Se il bonifico non l'hai ancora fatto, l'app lo dice ("in attesa") e il
+saldo del personale resta quello che dice la banca. Quando il movimento
+arriva, si aggancia da solo: `aggancia()` lo fa a ogni import, a ogni
+ripartizione e ogni volta che premi "Ricontrolla la banca".
+
+Il lato P.IVA e' lo specchio del lato personale, non della decisione:
+`_sincronizza_piva()` tiene l'uscita dal conto P.IVA uguale a quello che
+e' davvero arrivato sul personale. Se sul personale non e' arrivato
+niente, sul conto P.IVA non esce niente — i soldi sono ancora li'.
 
 Rotte JSON:
-  POST   /fatture/api/fatture/<int:fid>/giroconto  -> esegue
-  DELETE /fatture/api/fatture/<int:fid>/giroconto  -> annulla
+  POST   /fatture/api/fatture/<int:fid>/giroconto            -> decide
+  DELETE /fatture/api/fatture/<int:fid>/giroconto            -> annulla
+  POST   /fatture/api/fatture/<int:fid>/giroconto/aggancia   -> ricontrolla
+  POST   /fatture/api/fatture/<int:fid>/giroconto/bonifico   -> registra a mano
 """
 from datetime import date
 
@@ -39,7 +59,8 @@ from flask import request, jsonify
 
 from . import fatture_bp
 from . import accantonamento as acc
-from .costanti import CATEGORIA_GIROCONTO, ha_incassato, normalizza_stato
+from .costanti import (CATEGORIA_GIROCONTO as CATEGORIA_PIVA,
+                       ha_incassato, normalizza_stato)
 from shared.supabase_client import get_client, is_configured
 
 
@@ -121,14 +142,229 @@ def calcola(f: dict, param: dict, scenario: str,
     }
 
 
+# ---------------------------------------------------------------------------
+# Il fatto: i movimenti veri del conto personale
+# ---------------------------------------------------------------------------
+
+def aggancia(sb) -> int:
+    """
+    Attacca a una fattura i movimenti del conto personale che sono
+    davvero il suo giroconto, e restituisce quanti ne ha agganciati.
+
+    Candidato e' una riga di `spese` con categoria "Giroconto P.IVA" e
+    `fattura_giroconto_id` ancora vuoto — non importa da dove arrivi
+    (import della banca, inserimento a mano, "registra il bonifico").
+
+    **La regola quando le fatture sono piu' di una**: ogni movimento va
+    alla fattura ripartita piu' di recente fra quelle la cui data di
+    ripartizione non e' successiva al movimento. Detta al contrario: un
+    bonifico appartiene all'ultima ripartizione decisa prima che il
+    bonifico arrivasse. E' deterministica, non guarda gli importi (che
+    non combaciano quasi mai, e' tutto il punto) e non puo' attribuire
+    denaro a una fattura che allora non era ancora stata ripartita.
+
+    Un movimento anteriore a ogni ripartizione resta senza fattura: non
+    e' un errore, e' un giroconto fatto per conto suo.
+    """
+    try:
+        r = sb.table("b2f_fatture").select("id, data_giroconto").execute()
+        fatture = [x for x in (r.data or []) if x.get("data_giroconto")]
+    except Exception:
+        return 0
+    if not fatture:
+        return 0
+    # Dalla piu' recente: la prima che "sta prima" del movimento vince.
+    fatture.sort(key=lambda x: str(x["data_giroconto"]), reverse=True)
+
+    # La categoria del lato PERSONALE ("Giroconto P.IVA"), che e' un'altra
+    # stringa da quella del lato P.IVA ("giroconto_personale"): la prima
+    # e' un nome scelto dall'utente in `cfg_categorie`, la seconda una
+    # chiave interna di `b2f_spese_piva`.
+    from spese.dati import CATEGORIA_GIROCONTO as CATEGORIA_PERSONALE
+    try:
+        r = (sb.table("v_spese").select("id, data, fattura_giroconto_id")
+             .eq("categoria", CATEGORIA_PERSONALE).execute())
+        liberi = [x for x in (r.data or []) if not x.get("fattura_giroconto_id")]
+    except Exception:
+        return 0
+
+    agganciati = 0
+    for riga in liberi:
+        quando = str(riga.get("data") or "")
+        scelta = next((f for f in fatture
+                       if str(f["data_giroconto"]) <= quando), None)
+        if not scelta:
+            continue
+        try:
+            (sb.table("spese").update({"fattura_giroconto_id": scelta["id"]})
+             .eq("id", riga["id"]).execute())
+            agganciati += 1
+        except Exception:
+            pass
+    return agganciati
+
+
+def movimenti(sb, fid) -> list[dict]:
+    """I movimenti veri del conto personale agganciati a questa fattura."""
+    try:
+        r = (sb.table("v_spese")
+             .select("id, data, tipo, importo, descrizione, metodo_pagamento")
+             .eq("fattura_giroconto_id", fid).order("data").execute())
+        return r.data or []
+    except Exception:
+        return []
+
+
+def arrivato(righe: list[dict]) -> float:
+    """
+    Quanto e' davvero arrivato sul conto personale: entrate meno uscite.
+
+    Le uscite contano perche' una tranche puo' tornare indietro — sulla
+    2026/001 sono rientrati 1.068,33 tre settimane dopo. Un giroconto e'
+    il **netto** di quello che si e' mosso, non la somma degli accrediti.
+    """
+    tot = 0.0
+    for r in righe:
+        try:
+            imp = float(r.get("importo") or 0)
+        except (TypeError, ValueError):
+            continue
+        tot += -imp if r.get("tipo") == "uscita" else imp
+    return round(tot, 2)
+
+
+def stato(sb, f: dict) -> dict:
+    """
+    Il quadro completo di una ripartizione: cosa hai deciso, cosa e'
+    davvero arrivato, e quanto manca.
+
+    E' l'unico posto che mette insieme i due lati; la card di
+    `fatture/storico.py` e le rotte qui sotto leggono da qui, cosi' non
+    esistono due modi di calcolare "manca".
+    """
+    fid = f.get("id")
+    righe = movimenti(sb, fid) if fid else []
+    reale = arrivato(righe)
+    deciso = round(float(f.get("giroconto_importo") or 0), 2)
+    return {
+        "deciso": deciso,
+        "arrivato": reale,
+        "manca": round(deciso - reale, 2),
+        "movimenti": righe,
+        "in_attesa": not righe,
+    }
+
+
+def _sincronizza_piva(sb, f: dict, reale: float) -> int | None:
+    """
+    Tiene l'uscita dal conto P.IVA uguale a quello che e' davvero
+    arrivato sul personale, e restituisce l'id della riga (o None).
+
+    Non e' un dettaglio contabile: e' la stessa somma vista dai due lati
+    dello stesso bonifico. Se sul personale sono arrivati 2.423,52, dal
+    conto P.IVA ne sono usciti 2.423,52 — non i 2.425,52 che avevi
+    deciso di spostare. Finche' non e' arrivato niente, dal conto P.IVA
+    non esce niente: quei soldi sono ancora li', e il saldo deve dirlo.
+    """
+    fid = f.get("id")
+    rid = f.get("giroconto_piva_id")
+    numero = f.get("numero") or f"#{fid}"
+    deciso = round(float(f.get("giroconto_importo") or 0), 2)
+
+    if reale <= 0:
+        if rid:
+            try:
+                sb.table("b2f_spese_piva").delete().eq("id", rid).execute()
+            except Exception:
+                pass
+        return None
+
+    # La rivalsa resta scritta nella riga, non solo calcolata: fra sei mesi,
+    # guardando il movimento, e' l'unico posto in cui quel numero e' ancora
+    # leggibile (README § 4, tabella "dove si vede la rivalsa").
+    rivalsa = round(float(f.get("cassa_importo") or 0), 2)
+    nota = (f"Deciso di spostarne € {deciso:.2f}; sul conto personale "
+            f"ne sono arrivati € {reale:.2f}."
+            + (f" Di cui rivalsa INPS € {rivalsa:.2f}, già inclusa "
+               f"nell'accantonamento." if rivalsa else ""))
+    riga = {
+        "data":        f.get("data_giroconto") or date.today().isoformat(),
+        "tipo":        "giroconto",
+        "importo":     reale,
+        "descrizione": f"Giroconto al personale — fattura {numero}",
+        "categoria":   CATEGORIA_PIVA,
+        "fattura_id":  fid,
+        "note":        nota,
+    }
+    if rid:
+        try:
+            sb.table("b2f_spese_piva").update(riga).eq("id", rid).execute()
+            return rid
+        except Exception:
+            return rid
+    try:
+        ins = sb.table("b2f_spese_piva").insert(riga).execute()
+        return (ins.data or [{}])[0].get("id")
+    except Exception:
+        return None
+
+
+def _rispecchia(sb, f: dict) -> dict:
+    """Rilegge il fatto e allinea il lato P.IVA di UNA fattura."""
+    s = stato(sb, f)
+    rid = _sincronizza_piva(sb, f, s["arrivato"])
+    if rid != f.get("giroconto_piva_id"):
+        try:
+            (sb.table("b2f_fatture").update({"giroconto_piva_id": rid})
+             .eq("id", f.get("id")).execute())
+        except Exception:
+            pass
+        f["giroconto_piva_id"] = rid
+    return s
+
+
+def riconcilia(sb, f: dict) -> dict:
+    """
+    Aggancia quello che c'e' di nuovo, rispecchia il lato P.IVA e
+    restituisce il quadro aggiornato. E' il gesto che chiude il cerchio,
+    e va chiamato ogni volta che sul conto personale puo' essere
+    comparso un movimento: dopo una ripartizione, quando si apre la
+    fattura, o quando l'utente preme "Ricontrolla la banca".
+    """
+    aggancia(sb)
+    return _rispecchia(sb, f)
+
+
+def riconcilia_tutte(sb) -> int:
+    """
+    La stessa cosa, ma per tutte le fatture ripartite: e' quello che
+    serve dopo un import, dove i movimenti arrivano in blocco e non si
+    sa in anticipo a quali fatture appartengano.
+
+    Ritorna quanti movimenti sono stati agganciati.
+    """
+    n = aggancia(sb)
+    try:
+        r = sb.table("b2f_fatture").select("*").execute()
+        fatture = [x for x in (r.data or []) if x.get("data_giroconto")]
+    except Exception:
+        return n
+    for f in fatture:
+        try:
+            _rispecchia(sb, f)
+        except Exception:
+            pass
+    return n
+
+
 @fatture_bp.post("/api/fatture/<int:fid>/giroconto")
 def api_giroconto_esegui(fid):
     """
-    Registra la decisione di accantonamento e sposta la quota tua sul
-    conto personale, con due movimenti collegati.
+    Registra la **decisione** di accantonamento, poi guarda sul conto
+    personale se il bonifico e' gia' arrivato.
 
     Le guardie stanno qui e non solo nell'interfaccia: un doppio invio
-    o una chiamata diretta non devono poter duplicare lo spostamento.
+    o una chiamata diretta non devono poter duplicare la decisione.
     """
     sb, err = _sb_or_503()
     if err:
@@ -141,13 +377,13 @@ def api_giroconto_esegui(fid):
     # A incasso avvenuto, non "in stato incassata": dopo l'incasso la
     # fattura prosegue verso lo studio e lo SDI, e la ripartizione si puo'
     # fare in qualunque momento da li' in poi.
-    stato = normalizza_stato(f.get("stato"))
+    stato_f = normalizza_stato(f.get("stato"))
     if not ha_incassato(f):
         return jsonify({
             "error": ("Il giroconto si fa a incasso avvenuto: fino ad allora "
                       "i soldi non sono ancora sul conto P.IVA. Segna prima "
                       "la fattura come incassata."),
-            "stato": stato,
+            "stato": stato_f,
         }), 409
 
     if f.get("data_giroconto"):
@@ -201,23 +437,14 @@ def api_giroconto_esegui(fid):
         }), 400
 
     numero = f.get("numero") or f"#{fid}"
-    etichetta = acc.ETICHETTE[scenario][0]
-    # Quanto di cio' che resta sul conto P.IVA e' rivalsa INPS: scritto
-    # nella riga, non solo calcolato. Fra sei mesi, guardando il
-    # movimento, e' l'unico posto in cui quel numero e' ancora leggibile.
-    nota_rivalsa = (f" Di cui rivalsa INPS € {calc['rivalsa']:.2f}, "
-                    f"già inclusa nell'accantonamento."
-                    if calc["rivalsa"] else "")
 
-    # --- 0) Il lordo, sul conto P.IVA, se non c'e' gia' -------------------
-    # La ripartizione sposta la tua quota fuori dal conto P.IVA: se il
-    # lordo incassato non ci e' mai arrivato (perche' non si e' passati
-    # da "Registra entrata su P.IVA"), il saldo di quel conto finirebbe
+    # --- 1) Il lordo, sul conto P.IVA, se non c'e' gia' -------------------
+    # La ripartizione muove denaro fuori dal conto P.IVA: se il lordo
+    # incassato non ci e' mai arrivato (perche' non si e' passati da
+    # "Registra entrata su P.IVA"), il saldo di quel conto finirebbe
     # sotto della cifra spostata, come se il cliente non avesse pagato.
-    # Qui la ripartizione si basta da sola, e se l'incasso era gia' stato
-    # registrato a mano non lo duplica.
     id_entrata = f.get("spesa_piva_id")
-    id_entrata_nuova = None   # solo se creata ora: e' quella da disfare in caso di rollback
+    id_entrata_nuova = None   # solo se creata ora: da disfare in caso di rollback
     if not id_entrata:
         from .storico import cliente_label
         riga_entrata = {
@@ -237,79 +464,33 @@ def api_giroconto_esegui(fid):
             return jsonify({"error": f"errore nel registrare l'incasso sul conto "
                                      f"P.IVA: {str(e)[:200]}"}), 500
 
-    # --- 1) Uscita dal conto P.IVA ---------------------------------------
-    riga_piva = {
-        "data":        quando,
-        "tipo":        "giroconto",
-        "importo":     calc["giroconto"],
-        "descrizione": f"Giroconto al personale — fattura {numero}",
-        "categoria":   CATEGORIA_GIROCONTO,
-        "fattura_id":  fid,
-        "note":        (f"Scenario {etichetta}: accantonati "
-                        f"€ {calc['accantonamento']:.2f} di € {calc['lordo']:.2f}."
-                        + nota_rivalsa),
-    }
-    try:
-        ins = sb.table("b2f_spese_piva").insert(riga_piva).execute()
-        id_piva = (ins.data or [{}])[0].get("id")
-        if not id_piva:
-            return jsonify({"error": "insert P.IVA senza id di ritorno"}), 500
-    except Exception as e:
-        return jsonify({"error": f"errore sul conto P.IVA: {str(e)[:200]}"}), 500
-
-    # --- 2) Entrata sul conto personale -----------------------------------
-    # Import qui dentro e non in testa: `fatture` e `spese` sono due
-    # blueprint indipendenti, e legarli al caricamento del modulo
-    # imporrebbe un ordine di import fra i due.
-    from spese import dati as personale
-
-    # `tipo=entrata` e non `giroconto`: v_risparmi_mese conta le entrate,
-    # e un movimento marcato giroconto resterebbe fuori dal budget.
-    esito = personale.crea(sb, {
-        "data":              quando,
-        "tipo":              "entrata",
-        "importo":           calc["giroconto"],
-        "descrizione":       f"Giroconto da P.IVA — fattura {numero}",
-        "metodo_pagamento":  "Giroconto",
-        "categoria_link_id": personale.link_categoria(
-            sb, personale.CATEGORIA_GIROCONTO),
-    })
-    if esito.get("error") or not esito.get("id"):
-        # Rollback: senza la riga sul personale il giroconto sarebbe monco,
-        # e il conto P.IVA risulterebbe svuotato verso il nulla. Se il
-        # lordo era stato registrato qui sopra (non gia' prima), via anche
-        # quello: altrimenti resterebbe un incasso senza ripartizione.
-        for tabella, rid in (("b2f_spese_piva", id_piva), ("b2f_spese_piva", id_entrata_nuova)):
-            try:
-                if rid:
-                    sb.table(tabella).delete().eq("id", rid).execute()
-            except Exception:
-                pass
-        return jsonify({"error": "errore sul conto personale: "
-                                 f'{esito.get("error") or "nessun id di ritorno"}'}), 500
-    id_pers = esito["id"]
-
-    # --- 3) La decisione, sulla fattura -----------------------------------
+    # --- 2) La decisione, sulla fattura -----------------------------------
+    # Prima di guardare la banca, e non dopo: e' `data_giroconto` a dire
+    # ad `aggancia()` da quando i movimenti appartengono a questa fattura.
     upd = {
         "accantonamento_scenario": scenario,
         "accantonamento_importo":  calc["accantonamento"],
         "giroconto_importo":       calc["giroconto"],
         "data_giroconto":          quando,
-        "giroconto_piva_id":       id_piva,
-        "giroconto_personale_id":  id_pers,
         "spesa_piva_id":           id_entrata,
     }
     try:
         sb.table("b2f_fatture").update(upd).eq("id", fid).execute()
     except Exception as e:
-        for tabella, rid in (("b2f_spese_piva", id_piva), ("spese", id_pers),
-                             ("b2f_spese_piva", id_entrata_nuova)):
+        if id_entrata_nuova:
             try:
-                if rid:
-                    sb.table(tabella).delete().eq("id", rid).execute()
+                sb.table("b2f_spese_piva").delete().eq("id", id_entrata_nuova).execute()
             except Exception:
                 pass
         return jsonify({"error": f"aggiornamento fattura fallito: {str(e)[:200]}"}), 500
+
+    # --- 3) Il fatto, dalla banca -----------------------------------------
+    # Qui non si scrive nessuna entrata sul conto personale: si guarda se
+    # il bonifico c'e' gia'. Se non c'e', la fattura resta "in attesa" e
+    # il saldo del personale continua a dire la verita'.
+    f.update(upd)
+    f["id"] = fid
+    s = riconcilia(sb, f)
 
     return jsonify({
         "ok": True,
@@ -319,16 +500,100 @@ def api_giroconto_esegui(fid):
         "rivalsa": calc["rivalsa"],
         "alzato_alla_rivalsa": calc["alzato_alla_rivalsa"],
         "data": quando,
-        "movimento_piva_id": id_piva,
-        "movimento_personale_id": id_pers,
+        "movimento_piva_id": f.get("giroconto_piva_id"),
+        **s,
     })
+
+
+@fatture_bp.post("/api/fatture/<int:fid>/giroconto/aggancia")
+def api_giroconto_aggancia(fid):
+    """
+    "Ricontrolla la banca": riguarda se sono comparsi movimenti di
+    giroconto da agganciare, e riallinea il lato P.IVA.
+    """
+    sb, err = _sb_or_503()
+    if err:
+        return err
+    f, errore = _carica(sb, fid)
+    if errore:
+        return errore
+    if not f.get("data_giroconto"):
+        return jsonify({"error": "questa fattura non è ancora stata ripartita"}), 409
+    return jsonify({"ok": True, **riconcilia(sb, f)})
+
+
+@fatture_bp.post("/api/fatture/<int:fid>/giroconto/bonifico")
+def api_giroconto_bonifico(fid):
+    """
+    Registra a mano il bonifico appena eseguito, quando l'estratto conto
+    non e' ancora stato importato.
+
+    E' comunque un movimento vero del conto personale, non una
+    dichiarazione parallela: finisce in `spese` come tutti gli altri,
+    con la sua data e il suo importo. Se poi l'import della banca porta
+    la stessa riga, il controllo sui doppioni la segnala
+    (`spese/importa.py`) invece di scriverla due volte.
+    """
+    sb, err = _sb_or_503()
+    if err:
+        return err
+    f, errore = _carica(sb, fid)
+    if errore:
+        return errore
+    if not f.get("data_giroconto"):
+        return jsonify({"error": "ripartisci prima l'incasso"}), 409
+
+    body = request.get_json(silent=True) or {}
+    try:
+        importo = round(float(body.get("importo") or 0), 2)
+    except (TypeError, ValueError):
+        return jsonify({"error": "importo non valido"}), 400
+    if importo == 0:
+        return jsonify({"error": "importo mancante"}), 400
+
+    quando = body.get("data") or date.today().isoformat()
+    if str(quando) < str(f.get("data_giroconto")):
+        return jsonify({
+            "error": ("Il bonifico non può essere anteriore alla ripartizione "
+                      f"({f.get('data_giroconto')}): fino a quel giorno quei "
+                      "soldi non erano ancora stati destinati al personale."),
+        }), 400
+
+    # Import qui dentro e non in testa: `fatture` e `spese` sono due
+    # blueprint indipendenti, e legarli al caricamento del modulo
+    # imporrebbe un ordine di import fra i due.
+    from spese import dati as personale
+
+    numero = f.get("numero") or f"#{fid}"
+    verso = "da" if importo > 0 else "a"
+    # `tipo=entrata` e non `giroconto`: v_risparmi_mese conta le entrate,
+    # e un movimento marcato giroconto resterebbe fuori dal budget.
+    esito = personale.crea(sb, {
+        "data":              quando,
+        "tipo":              "entrata" if importo > 0 else "uscita",
+        "importo":           abs(importo),
+        "descrizione":       f"Giroconto {verso} P.IVA — fattura {numero}",
+        "metodo_pagamento":  "Giroconto",
+        "categoria_link_id": personale.link_categoria(
+            sb, personale.CATEGORIA_GIROCONTO),
+    })
+    if esito.get("error") or not esito.get("id"):
+        return jsonify({"error": "errore sul conto personale: "
+                                 f'{esito.get("error") or "nessun id di ritorno"}'}), 500
+
+    return jsonify({"ok": True, "movimento_id": esito["id"], **riconcilia(sb, f)})
 
 
 @fatture_bp.delete("/api/fatture/<int:fid>/giroconto")
 def api_giroconto_annulla(fid):
     """
-    Annulla il giroconto: toglie le due righe dai conti e libera la
-    fattura, cosi' si puo' rifare con un altro scenario.
+    Annulla la **decisione**: libera la fattura, cosi' si puo' rifare la
+    ripartizione con un altro scenario, e toglie l'uscita dal conto P.IVA.
+
+    I movimenti del conto personale **non vengono cancellati**: sono
+    bonifici veri, e un bonifico non si disfa cambiando idea su come
+    ripartire. Vengono solo staccati dalla fattura; alla prossima
+    ripartizione `aggancia()` li rimette al loro posto.
     """
     sb, err = _sb_or_503()
     if err:
@@ -342,20 +607,25 @@ def api_giroconto_annulla(fid):
         return jsonify({"error": "nessun giroconto da annullare"}), 404
 
     problemi = []
-    for tabella, campo in (("b2f_spese_piva", "giroconto_piva_id"),
-                           ("spese", "giroconto_personale_id")):
-        rid = f.get(campo)
-        if not rid:
-            continue
+    staccati = 0
+    try:
+        r = (sb.table("spese").update({"fattura_giroconto_id": None})
+             .eq("fattura_giroconto_id", fid).execute())
+        staccati = len(r.data or [])
+    except Exception as e:
+        problemi.append(f"spese: {str(e)[:80]}")
+
+    rid = f.get("giroconto_piva_id")
+    if rid:
         try:
-            sb.table(tabella).delete().eq("id", rid).execute()
+            sb.table("b2f_spese_piva").delete().eq("id", rid).execute()
         except Exception as e:
-            problemi.append(f"{tabella}: {str(e)[:80]}")
+            problemi.append(f"b2f_spese_piva: {str(e)[:80]}")
 
     if problemi:
         return jsonify({
-            "error": ("Non sono riuscito a togliere tutti i movimenti; la "
-                      "fattura resta collegata per non perderne traccia. "
+            "error": ("Non sono riuscito a disfare tutto; la fattura resta "
+                      "collegata per non perderne traccia. "
                       + " | ".join(problemi)),
         }), 500
 
@@ -367,4 +637,4 @@ def api_giroconto_annulla(fid):
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 500
 
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "movimenti_staccati": staccati})

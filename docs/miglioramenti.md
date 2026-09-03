@@ -94,6 +94,13 @@ come), **Stato**.
 
 ## Fatti (storico — per non riproporli)
 
+### ~~I giroconti dalla P.IVA sono una riga netta, mentre in banca sono tre movimenti~~ → chiusa il 03/09/2026, scarto **0,00**
+**Cosa era**: la ripartizione della fattura 2026/001 aveva scritto sul conto personale **una** entrata da 2.425,52 datata 05/08. In banca quel denaro si era mosso in **tre** volte: +2.000,00 il 05/08, +1.491,85 il 13/08 e −1.068,33 il 02/09, un rientro verso il conto P.IVA. Netto reale 2.423,52; l'app ne aveva 2.425,52.
+**Perché era grave**: `giroconto.py` scriveva l'entrata con l'importo *deciso*, in un colpo solo e con la data della decisione. Il bonifico però lo fa l'utente dalla banca, quando vuole e in quante tranche vuole, e può tornare indietro. Le due cose non avevano nessun vincolo che le tenesse insieme: la riga era una **dichiarazione**, non il movimento. Stessa forma del guasto costato 829,78 € sui risparmi (`spese/dati.py::saldo_conto`) — lì il dichiarato conviveva col bonifico vero, e in diciotto mesi lo scarto era cresciuto in silenzio. Qui valeva 2,00 su una fattura sola, ma il meccanismo non aveva un tetto: ogni tranche, ogni rientro, ogni commissione allargava la forbice, e nessuna pagina la mostrava perché entrambi i lati erano internamente coerenti.
+**Cosa è cambiato** (README § 8.18): decisione e fatto stanno in due posti diversi. La decisione resta sulla fattura; il fatto sono le righe di `spese` con categoria *Giroconto P.IVA* agganciate dalla nuova colonna `fattura_giroconto_id` — quante servono, con le date vere, anche negative. **La ripartizione non scrive più niente sul conto personale**: se il bonifico non c'è, la fattura dice "in attesa" e il saldo resta quello della banca. Il movimento arriva dall'import (che aggancia da solo) o dal bottone "Registra il bonifico". L'uscita dal conto P.IVA vale quanto è *arrivato*, non quanto deciso. E annullare la ripartizione non cancella più i movimenti veri: li stacca.
+**La prova**: corretti i dati esistenti, il saldo del conto personale al 03/09/2026 è **3.742,32** contro i 3.742,32 dell'estratto WeBank. **Scarto 0,00** — il primo giorno in cui i due numeri coincidono al centesimo dal 27/02/2025.
+**Cosa resta da guardare**: se un movimento agganciato viene cancellato o modificato da `/spese/movimenti`, l'uscita dal conto P.IVA resta al valore vecchio finché non si riapre la fattura (che riconcilia) o non si preme "Ricontrolla la banca". Non è silenzioso — la card mostra deciso, arrivato e differenza — ma è l'unico punto in cui i due lati possono stare disallineati per un po'.
+
 ### ~~`spese/risparmi.py`: un apostrofo scritto con un backslash solo spegneva l'intero script della pagina~~ → chiusa il 03/09/2026
 **Cosa era**: `confirm('Registro un\'uscita di € ' + …)` dentro una f-string Python. In una stringa Python non-raw `\'` **è** `'`: nel JS che arriva al browser la stringa si chiudeva a metà frase. Stessa cosa due righe sotto (`'e\' successo.'`) e sull'a-capo (`'.\n\n…'`, che diventava un a-capo vero dentro una stringa JS). Tre errori di sintassi nello stesso `confirm()`.
 **Perché era grave**: un errore di sintassi non rompe *una riga*, fa scartare al browser **l'intero blocco `<script>`**. Su `/spese/risparmi` quel blocco contiene la procedura di fine periodo: il bottone "Esegui" era morto, e con lui tutto il resto del file. E la pagina si disegnava normalmente — nessun segno visibile, nessun errore in rete, solo bottoni che non fanno niente. Il caso concreto: registri il bonifico verso i salvadanai, premi, non succede nulla, e non c'è modo di capire perché.
@@ -275,6 +282,18 @@ Sul secondo pezzo, quello che si vede già dal solo lato banca: nell'anno sono u
 | **saldo app = saldo banca** | | **+829,78** |
 
 Nessuno dei pezzi da solo chiude: applicarne una parte sposta il saldo mostrato senza avvicinarlo al vero. Le 13 righe senza descrizione sono l'unico punto che richiede il giudizio dell'utente (spese in contanti mai passate dal conto, oppure doppioni).
+
+**Terza riconciliazione, 03/09/2026 — gli ultimi 30 giorni (estratto WeBank, 3.742,32 al 03/09).** L'app diceva 3.738,82: **3,50 in meno**. Il punto di partenza del confronto è che al 03/08 i due lati coincidono al centesimo (166,48 su entrambi), quindi tutto lo scarto nasce dentro la finestra, e si scompone così:
+
+| voce | effetto su (app − banca) |
+|---|---|
+| entrata mancante: **secondo** bonifico da 5,50 di Bassanini Chiara (31/08, rif. `MB0B08650543`); l'app aveva solo quello del 27/08 (`PY0CUFW5KMFL`) | −5,50 |
+| giroconto della fattura 2026/001 registrato per 2.425,52 contro 2.423,52 realmente arrivati sul personale | +2,00 |
+| **totale** | **−3,50** |
+
+**Falsa pista da non ripercorrere**: due coppie di McDonald's da 1,10 e 2,70 sembravano doppioni di import. L'estratto ha smentito la prima — il 02/09 ci sono **due** acquisti veri da 1,10 nello stesso giorno. Nessuna riga è stata cancellata perché la verifica è arrivata prima; la lezione è nella voce sull'import qui sotto.
+
+**Correzione applicata il 03/09/2026**: inserita in `spese` la riga **id 1083** (2026-08-31, entrata 5,50, "Bonifico da Bassanini Chiara Terea", metodo "Import banca", stessa categoria del gemello del 27/08), tramite la funzione `insert_spesa_first_free_id` — una `INSERT` diretta fallisce, la sequenza di `spese.id` è disallineata rispetto al `max(id)`. Saldo dell'app: da 3.738,82 a **3.744,32**. Contro la banca resta **+2,00 esatti**, che sono per intero il giroconto: lo scarto residuo non è più un mistero, è una voce aperta con un nome.
 
 
 ---
