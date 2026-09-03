@@ -303,15 +303,32 @@ Nessuna query: prende i parametri, restituisce numeri e HTML.
 > la barra **a righe** — stessa famiglia di colore, perché escono anche loro,
 > ma per l'anno dopo.
 
-### `fatture/giroconto.py` — 352 righe · dall'incasso ai due conti
+### `fatture/giroconto.py` — 640 righe · dall'incasso ai due conti
 
-- `POST /api/fatture/<fid>/giroconto` esegue la ripartizione,
-  `DELETE` la annulla.
-- Scrive **due righe collegate**, e ne aggiunge una terza se serve:
-  1. l'incasso lordo su `b2f_spese_piva` (`tipo=entrata`), *solo se non
-     c'era già*: senza, il conto P.IVA finirebbe sotto della cifra spostata;
-  2. l'uscita `tipo=giroconto` dal conto P.IVA;
-  3. l'entrata sul conto personale, **via `spese/dati.py`** — mai a mano.
+**Decisione e fatto sono due cose diverse** (README § 8.18). La ripartizione
+registra la decisione; l'entrata sul conto personale la porta la banca.
+
+- `POST /api/fatture/<fid>/giroconto` registra la decisione, `DELETE` la
+  annulla; `POST .../giroconto/aggancia` ricontrolla la banca;
+  `POST .../giroconto/bonifico` registra a mano il bonifico appena fatto.
+- Scrive l'incasso lordo su `b2f_spese_piva` (`tipo=entrata`) *solo se non
+  c'era già*: senza, il conto P.IVA finirebbe sotto della cifra spostata.
+- **Non scrive nessuna entrata sul conto personale.** Prima lo faceva, con
+  l'importo deciso e la data della decisione: sulla 2026/001 diceva 2.425,52
+  mentre la banca aveva mosso 2.423,52 in tre tempi. Due euro di scarto in
+  silenzio, la stessa forma del guasto da 829,78 € sui risparmi.
+- `aggancia(sb)` attacca a una fattura le righe di `spese` con categoria
+  *Giroconto P.IVA* e `fattura_giroconto_id` vuoto. **La regola**: ogni
+  movimento va all'ultima ripartizione decisa *prima* che arrivasse. Non
+  guarda gli importi — che non combaciano quasi mai, è tutto il punto.
+- `arrivato()` è il **netto**: entrate meno uscite, perché una tranche può
+  tornare indietro.
+- `_sincronizza_piva()` tiene l'uscita dal conto P.IVA uguale a quanto è
+  davvero arrivato, **non a quanto deciso**. Se non è arrivato niente, dal
+  conto P.IVA non esce niente: quei soldi sono ancora lì.
+- `riconcilia()` (una fattura) e `riconcilia_tutte()` (dopo un import)
+  sono gli unici punti che scrivono: chiamati alla ripartizione, all'apertura
+  della fattura, dal bottone, e in coda a `spese/importa.py`.
 - `tipo=entrata` e non `giroconto` sul lato personale: `v_risparmi_mese`
   conta le entrate, e un movimento marcato altrimenti resterebbe fuori dal
   budget.
@@ -319,8 +336,8 @@ Nessuna query: prende i parametri, restituisce numeri e HTML.
   fattura: quella parte del corrispettivo è contributo previdenziale, non
   un tuo ricavo. Gli scenari la coprono tutti; un importo scritto a mano
   potrebbe scenderci sotto, e viene alzato (`alzato_alla_rivalsa: true`).
-- Rollback esplicito a ogni passo: se il secondo inserimento fallisce si
-  toglie il primo. Un giroconto monco svuoterebbe un conto verso il nulla.
+- **L'annullamento non cancella i movimenti del personale**, li stacca: sono
+  bonifici veri, e un bonifico non si disfa cambiando idea sullo scenario.
 
 ### `fatture/emittente.py` — 220 righe · dati dell'intestazione
 

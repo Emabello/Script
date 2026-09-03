@@ -572,32 +572,51 @@ svuota un giroconto alla volta, e ogni singolo giroconto sembra piccolo.
 ### La ripartizione
 
 Sul dettaglio di una fattura **incassata** compare *Ripartizione dell'incasso*.
-Si sceglie uno scenario e l'app scrive **due movimenti collegati**:
+Si sceglie uno scenario e l'app registra la **decisione**:
 
 ```
 incasso lordo sul conto P.IVA        5.000,00
-  − accantonamento (scenario)        1.508,15   resta sul conto P.IVA
-  = giroconto al personale           3.491,85   si sposta
+  − accantonamento (scenario)        2.574,48   resta sul conto P.IVA
+  = da spostare sul personale        2.425,52   lo bonifichi tu
 ```
 
-| Dove | Riga scritta |
-|---|---|
-| `b2f_spese_piva` | `tipo=giroconto`, categoria `giroconto_personale` → esce dal conto P.IVA |
-| `spese` | `tipo=entrata`, categoria *Giroconto P.IVA* → arriva sul conto personale |
+**Decisione e fatto sono due cose diverse**, e da [§ 8.18](#818--il-giroconto-prende-limporto-vero-dalla-banca--applicata-il-03092026)
+stanno in due posti diversi:
 
-Sulla fattura restano scenario, quota accantonata, quota spostata, data e gli
-id dei due movimenti.
+| | dove | cosa dice |
+|---|---|---|
+| la **decisione** | `b2f_fatture`: scenario, `accantonamento_importo`, `giroconto_importo`, `data_giroconto` | quanto *hai deciso* di spostare, e quando |
+| il **fatto** | le righe di `spese` con categoria *Giroconto P.IVA* e `fattura_giroconto_id` = la fattura | quanto la banca ha *davvero* mosso |
+
+La ripartizione **non scrive nessuna riga sul conto personale**. Il bonifico lo
+fai tu dalla banca: quando vuoi, in quante tranche vuoi, e può anche tornare
+indietro. Finché il movimento non compare, la fattura dice *"in attesa del
+bonifico"* e il saldo del personale resta quello che dice la banca.
+
+Quando il movimento arriva si aggancia da solo, e la card mostra i tre numeri
+che contano: **deciso**, **arrivato**, **quanto manca**, con sotto l'elenco dei
+movimenti veri che fanno quella somma. Tre modi perché arrivi:
+
+- l'**import della banca**, categorizzando la riga come *Giroconto P.IVA*;
+- il bottone **"Registra il bonifico"** sulla fattura, quando l'hai appena
+  fatto e l'estratto non è ancora stato importato (data e importo veri — se è
+  un rientro, importo negativo);
+- **"Ricontrolla la banca"**, che riguarda se nel frattempo è comparso qualcosa.
+
+**L'uscita dal conto P.IVA è lo specchio del lato personale, non della
+decisione**: vale quanto è davvero arrivato. Se non è arrivato niente, dal conto
+P.IVA non esce niente — quei soldi sono ancora lì, e il saldo deve dirlo.
 
 **Le garanzie:**
 
 - la quota accantonata non scende mai sotto la **rivalsa INPS** della
   fattura (vedi [§ 4](#rivalsa-inps));
 - si può fare solo a incasso avvenuto, e una volta sola;
-- se il secondo inserimento fallisce il primo viene tolto (niente spostamenti
-  monchi);
-- il movimento personale nato da un giroconto non si può cancellare da
-  `/spese`: va annullata la ripartizione dalla fattura, così spariscono
-  entrambe le righe;
+- un movimento datato **prima** della ripartizione non può essere il suo
+  bonifico, e viene rifiutato;
+- **"annulla la ripartizione" non cancella i movimenti del conto personale**:
+  sono bonifici veri, e un bonifico non si disfa cambiando idea su come
+  ripartire. Li stacca soltanto, e la ripartizione successiva se li riaggancia;
 - una fattura già ripartita non può tornare **prima** dell'incasso senza aver
   annullato la ripartizione (andare avanti verso lo studio e lo SDI sì: i
   soldi restano arrivati, vedi [§ 6](#6-il-ciclo-di-vita-della-fattura)).
@@ -615,12 +634,18 @@ innescata da qui invece che dall'incasso: l'app scrive anche la riga gemella
 su `spese` (`tipo=entrata`, categoria *Giroconto P.IVA*), collegata tramite
 `b2f_spese_piva.giroconto_personale_id` — vedi [§ 8.4](#84--collegamento-dei-giroconti-manuali).
 
-Le stesse garanzie della ripartizione automatica valgono qui: se il secondo
-inserimento fallisce il primo viene tolto; il movimento su `spese` non si
-cancella da `/spese`, va eliminato il movimento P.IVA che lo ha generato,
+Qui la riga gemella **viene ancora scritta**, e le sue garanzie valgono: se il
+secondo inserimento fallisce il primo viene tolto; il movimento su `spese` non
+si cancella da `/spese`, va eliminato il movimento P.IVA che lo ha generato,
 così spariscono entrambe le righe; da `/fatture/spese-piva` tipo e importo di
-un giroconto (manuale o da fattura) non si possono più cambiare una volta
-registrato, per non disallineare i due conti — va eliminato e rifatto.
+un giroconto manuale non si possono più cambiare una volta registrato, per non
+disallineare i due conti — va eliminato e rifatto.
+
+> **Perché qui sì e nella ripartizione no.** Il giroconto manuale lo registri
+> *dopo* aver fatto il bonifico, guardando l'estratto: la riga nasce già come
+> resoconto di un fatto. La ripartizione invece è una decisione presa *prima*,
+> e scrivere lì l'entrata significava inventarla — vedi
+> [§ 8.18](#818--il-giroconto-prende-limporto-vero-dalla-banca--applicata-il-03092026).
 
 ### La procedura di fine periodo
 
@@ -1852,6 +1877,133 @@ comment on column b2f_parametri_fiscali.acconto_prima_rata_perc is
 > **Va lanciata prima del deploy.** Come per la [§ 8.14](#814--la-tariffa-giornaliera-è-un-parametro-non-una-costante--applicata-il-01092026):
 > il campo entra in `PARAMETRI_CAMPI`, quindi finisce nel `PATCH` dei parametri
 > insieme a tutto il resto, e senza la colonna PostgREST rifiuta la riga intera.
+
+### 8.18 — Il giroconto prende l'importo vero dalla banca ✅ applicata il 03/09/2026
+
+Fino a oggi la ripartizione scriveva **una** entrata sul conto personale con
+l'importo *deciso* e la data della decisione, e la dava per fatta. Ma il
+bonifico lo fai tu dalla banca: quando vuoi, in quante tranche vuoi, e può
+anche tornare indietro. Sulla fattura 2026/001 la riga diceva 2.425,52 il
+05/08; la banca aveva mosso **2.000,00 il 05/08**, **1.491,85 il 13/08** e
+**−1.068,33 il 02/09**, cioè 2.423,52 netti. Due euro di scarto, in silenzio,
+sul saldo di un conto vero — la stessa forma del guasto che sui risparmi era
+arrivato a 829,78 € ([§ 8.11](#811--i-risparmi-diventano-movimenti-veri-necessaria)).
+
+Da qui in poi **decisione e fatto stanno in due posti diversi**:
+
+| | dove | cosa dice |
+|---|---|---|
+| la **decisione** | `b2f_fatture`: `accantonamento_scenario`, `accantonamento_importo`, `giroconto_importo`, `data_giroconto` | quanto *hai deciso* di spostare, e quando l'hai deciso |
+| il **fatto** | le righe di `spese` con categoria "Giroconto P.IVA" e `fattura_giroconto_id` = la fattura | quanto la banca ha *davvero* mosso, con le date vere, anche in negativo |
+
+La ripartizione non inventa più nessuna riga sul conto personale. Se il
+bonifico non l'hai ancora fatto, la fattura dice **"in attesa del bonifico"** e
+il saldo del personale resta quello che dice la banca. Quando il movimento
+arriva — dall'import, o dal bottone "Registra il bonifico" — si aggancia da
+solo: `fatture/giroconto.py::aggancia()` gira a ogni import, a ogni
+ripartizione e quando apri la fattura.
+
+**La regola di attribuzione**, quando le fatture ripartite sono più d'una: ogni
+movimento va all'ultima ripartizione decisa *prima* che il movimento arrivasse.
+Non guarda gli importi — che non combaciano quasi mai, è tutto il punto — e non
+può attribuire denaro a una fattura che allora non era ancora stata ripartita.
+
+L'uscita dal conto P.IVA è lo specchio del lato personale, **non della
+decisione**: vale quanto è davvero arrivato. Se non è arrivato niente, dal conto
+P.IVA non esce niente, perché quei soldi sono ancora lì. E "annulla la
+ripartizione" **non cancella più i movimenti del conto personale**: sono
+bonifici veri, e un bonifico non si disfa cambiando idea su come ripartire — li
+stacca soltanto, e la ripartizione successiva se li riaggancia.
+
+```sql
+-- 1) il legame uno-a-molti fra la fattura e i movimenti VERI del personale
+alter table public.spese
+  add column if not exists fattura_giroconto_id bigint;
+
+do $$
+begin
+  alter table public.spese
+    add constraint spese_fattura_giroconto_fkey
+    foreign key (fattura_giroconto_id) references public.b2f_fatture(id)
+    on delete set null;
+exception
+  when duplicate_object then null;
+end $$;
+
+create index if not exists idx_spese_fattura_giroconto
+  on public.spese (fattura_giroconto_id)
+  where fattura_giroconto_id is not null;
+
+-- 2) la vista deve esporre la colonna, altrimenti il codice che legge da
+--    v_spese non vede mai l'aggancio. La colonna va IN CODA: `create or
+--    replace view` sa aggiungere colonne, non rinominarle.
+create or replace view public.v_spese as
+ SELECT s.id, s.data, s.descrizione, s.importo, s.tipo, s.mese, s.anno,
+    s.metodo_pagamento, s.created_at,
+    c.nome AS categoria, sc.nome AS sottocategoria,
+    s.categoria_link_id, l.categoria_id, l.sottocategoria_id,
+    s.fattura_giroconto_id
+   FROM spese s
+     LEFT JOIN cfg_categoria_sottocategoria l ON l.id = s.categoria_link_id
+     LEFT JOIN cfg_categorie c ON c.id = l.categoria_id
+     LEFT JOIN cfg_sottocategorie sc ON sc.id = l.sottocategoria_id;
+```
+
+**Correzione dei dati esistenti** (idempotente: la guardia sulla riga 600
+la rende rilanciabile a vuoto).
+
+```sql
+do $$
+declare
+  v_link uuid := '1d3e31cf-a77d-4a88-9da2-412c9c297f22';  -- Giroconto P.IVA
+  v_row public.spese;
+begin
+  if exists (select 1 from public.spese
+              where id = 600 and importo = 2425.52
+                and metodo_pagamento = 'Giroconto') then
+
+    delete from public.spese where id = 600;
+    update public.b2f_fatture set giroconto_personale_id = null where id = 1;
+
+    v_row := public.insert_spesa_first_free_id(
+      2026, v_link, date '2026-08-05', 2000.00, 8, 'Giroconto', 'entrata',
+      'Trasferimento da conto *0479 — giroconto fattura 2026/001');
+    update public.spese set fattura_giroconto_id = 1 where id = v_row.id;
+
+    v_row := public.insert_spesa_first_free_id(
+      2026, v_link, date '2026-08-13', 1491.85, 8, 'Giroconto', 'entrata',
+      'Trasferimento da conto *0479 — giroconto fattura 2026/001');
+    update public.spese set fattura_giroconto_id = 1 where id = v_row.id;
+
+    v_row := public.insert_spesa_first_free_id(
+      2026, v_link, date '2026-09-02', 1068.33, 9, 'Giroconto', 'uscita',
+      'Trasferimento a conto *0479 — rientro sul conto P.IVA');
+    update public.spese set fattura_giroconto_id = 1 where id = v_row.id;
+
+    update public.b2f_spese_piva set importo = 2423.52 where id = 7;
+  end if;
+
+  update public.spese set fattura_giroconto_id = 2 where id = 1069
+     and fattura_giroconto_id is null;
+end $$;
+```
+
+> **`insert_spesa_first_free_id` e non una `INSERT`.** La sequenza di
+> `spese.id` è disallineata rispetto a `max(id)`: una `insert into spese`
+> diretta fallisce con `duplicate key ... spese_pkey`. La funzione prende un
+> lock e assegna il primo id libero.
+
+**Risultato**: saldo del conto personale al 03/09/2026 **3.742,32**, contro i
+3.742,32 dell'estratto WeBank. **Scarto 0,00** — il primo giorno in cui i due
+numeri coincidono al centesimo dal 27/02/2025.
+
+**Nota per il prossimo import.** Le tre righe qui sopra sono ricostruite dai
+movimenti letti sull'estratto, non importate: le descrizioni non sono quelle
+letterali della banca. Quando importerai l'estratto che copre 05/08 → 02/09, il
+controllo sui doppioni ([§ 8.12](#812--il-controllo-contro-lestratto-necessaria))
+le segnalerà come **sospette** (stesso importo, stesso tipo, date vicine) senza
+preselezionarle: salta quelle tre, oppure importale e cancella queste — visto che
+l'aggancio va per categoria e non per id, la fattura si riaggancia da sola.
 
 ## 9. Sicurezza
 

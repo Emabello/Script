@@ -647,7 +647,21 @@ def api_importa_salva():
             # scriverla due volte.
             gia_presenti.add(chiave)
 
-    return jsonify({"salvate": salvate, "errori": errori, "duplicati": duplicati})
+    # I movimenti di giroconto appena importati sono il lato vero di una
+    # ripartizione: vanno agganciati alla loro fattura, altrimenti la
+    # fattura continua a dire "in attesa" mentre i soldi sono gia' sul
+    # conto (vedi `fatture/giroconto.py`). Import qui dentro e non in
+    # testa: `spese` e `fatture` sono due blueprint indipendenti.
+    agganciati = 0
+    if salvate:
+        try:
+            from fatture import giroconto as giro
+            agganciati = giro.riconcilia_tutte(client)
+        except Exception:
+            agganciati = 0
+
+    return jsonify({"salvate": salvate, "errori": errori,
+                    "duplicati": duplicati, "agganciati": agganciati})
 
 
 def _render(content: str, breadcrumb=None) -> Response:

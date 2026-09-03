@@ -505,6 +505,11 @@ def fattura_dettaglio(fid):
     # racconta una disponibilita' che in parte non e' spendibile.
     giroconto_fatto = bool(f.get("data_giroconto"))
     giroconto_card = ""
+    # Precompilati del foglio "registra il bonifico": la data di oggi e
+    # quello che manca ancora da vedere sul conto. Definiti qui perche' il
+    # foglio si scrive piu' sotto anche quando la ripartizione non c'e'.
+    oggi_iso = date.today().isoformat()
+    giro_deciso_js = ""
     scelte_giro_html = ""
     lordo_f = float(f.get("totale") or 0)
     rivalsa_f = round(float(f.get("cassa_importo") or 0), 2)
@@ -527,6 +532,58 @@ def fattura_dettaglio(fid):
     if giroconto_fatto:
         scen_scelto = f.get("accantonamento_scenario") or ""
         etichetta_scelta = acc.ETICHETTE.get(scen_scelto, (scen_scelto or "—",))[0]
+        # Decisione e fatto, uno sotto l'altro. Il numero grande e' quello
+        # che e' DAVVERO arrivato sul conto, non quello deciso: e' l'unico
+        # dei due che si puo' spendere (vedi `fatture/giroconto.py`).
+        from . import giroconto as _giro
+        sg = _giro.riconcilia(sb, f)
+        if sg["manca"] > 0.005:
+            giro_deciso_js = f'{sg["manca"]:.2f}'
+
+        righe_mov = []
+        for m in sg["movimenti"]:
+            segno = "neg" if m.get("tipo") == "uscita" else "pos"
+            pre = "−" if m.get("tipo") == "uscita" else "+"
+            righe_mov.append(
+                '<li class="mv-riga"><span class="mv-d">'
+                f'{_fmt_date(m.get("data"))}</span>'
+                f'<span class="mv-t">{_esc(m.get("descrizione") or "—")}</span>'
+                f'<span class="mv-v tnum {segno}">{pre} € '
+                f'{_fmt_eur(m.get("importo"))}</span></li>')
+        lista_mov = (f'<ul class="mv-lista">{"".join(righe_mov)}</ul>'
+                     if righe_mov else "")
+
+        if sg["in_attesa"]:
+            esito = f'''
+            <div class="giro-esito attesa">
+              <div class="ge-top">In attesa del bonifico{_info(
+                "La ripartizione &egrave; una decisione, il bonifico &egrave; un fatto. "
+                "Finch&eacute; il movimento non compare sul conto personale — "
+                "dall&#39;import della banca o registrato qui — l&#39;app non lo d&agrave; "
+                "per avvenuto, e il saldo del personale resta quello vero.")}</div>
+              <div class="ge-sub">Sul conto personale non è ancora arrivato niente.
+                I € {_fmt_eur(sg["deciso"])} sono ancora sul conto P.IVA.</div>
+            </div>'''
+        elif abs(sg["manca"]) < 0.005:
+            esito = f'''
+            <div class="giro-esito ok">
+              <div class="ge-top">Arrivato tutto</div>
+              <div class="ge-sub">Quello che hai deciso di spostare e quello che
+                la banca ha davvero mosso combaciano al centesimo.</div>
+            </div>'''
+        else:
+            verso = "Manca ancora" if sg["manca"] > 0 else "Arrivato in più"
+            esito = f'''
+            <div class="giro-esito scarto">
+              <div class="ge-top">{verso} € {_fmt_eur(abs(sg["manca"]))}{_info(
+                "Differenza fra quanto avevi deciso di spostare e quanto la banca "
+                "ha davvero mosso, al netto di eventuali rientri. Non &egrave; un "
+                "errore da correggere a mano: o il bonifico &egrave; ancora "
+                "incompleto, o l&#39;importo &egrave; stato diverso.")}</div>
+              <div class="ge-sub">Deciso € {_fmt_eur(sg["deciso"])} ·
+                arrivato € {_fmt_eur(sg["arrivato"])}.</div>
+            </div>'''
+
         giroconto_card = f'''
         <div class="card">
           <div class="card-head">
@@ -538,11 +595,22 @@ def fattura_dettaglio(fid):
               "Accantonato per tasse, costi e margine.")}</span>
               <span class="v tnum">€ {_fmt_eur(f.get("accantonamento_importo"))}</span></div>
             {riga_rivalsa_giro}
-            <div class="row"><span class="t">Spostato sul conto personale
-              <span class="sub">giroconto del {_fmt_date(f.get("data_giroconto"))}</span></span>
-              <span class="v tnum pos">€ {_fmt_eur(f.get("giroconto_importo"))}</span></div>
+            <div class="row"><span class="t">Deciso di spostare
+              <span class="sub">ripartizione del {_fmt_date(f.get("data_giroconto"))}</span></span>
+              <span class="v tnum">€ {_fmt_eur(sg["deciso"])}</span></div>
+            <div class="row"><span class="t">Arrivato sul conto personale{_info(
+              "La somma dei movimenti veri del conto, entrate meno uscite: un "
+              "bonifico pu&ograve; arrivare in pi&ugrave; tranche e una parte pu&ograve; "
+              "tornare indietro.")}</span>
+              <span class="v tnum {"pos" if sg["arrivato"] > 0 else ""}">€ {_fmt_eur(sg["arrivato"])}</span></div>
           </div>
+          {esito}
+          {lista_mov}
           <div class="actions mt-4">
+            <button type="button" class="btn ghost"
+                    onclick="onAggancia()">Ricontrolla la banca</button>
+            <button type="button" class="btn ghost"
+                    onclick="openModal('modalBonifico')">Registra il bonifico</button>
             <button type="button" class="btn ghost"
                     onclick="onAnnullaGiroconto()">Annulla la ripartizione</button>
           </div>
@@ -847,7 +915,72 @@ def fattura_dettaglio(fid):
       </div>
     </div>
 
+    <!-- ===== Foglio "registra il bonifico" ===== -->
+    <!-- Serve quando il bonifico l'hai appena fatto e l'estratto conto non
+         e' ancora stato importato: la riga che nasce qui e' un movimento
+         vero del conto personale come tutti gli altri, non una seconda
+         dichiarazione parallela. -->
+    <div class="sheet-ov" id="modalBonifico" role="dialog" aria-modal="true">
+      <div class="sheet">
+        <h3>Registra il bonifico</h3>
+        <div class="sheet-sub">
+          Scrivi quello che si è mosso <em>davvero</em> sul conto personale,
+          non quello che avevi deciso. Se è arrivato in due tranche, registrale
+          una alla volta; se una parte è rientrata sul conto P.IVA, mettila
+          con l'importo negativo.
+        </div>
+        <div class="field">
+          <label>Data del movimento</label>
+          <input type="date" id="b_data" value="{oggi_iso}">
+        </div>
+        <div class="field">
+          <label>Importo (negativo se è un rientro sul conto P.IVA)</label>
+          <input type="number" step="0.01" id="b_imp"
+                 value="{giro_deciso_js}" inputmode="decimal">
+        </div>
+        <div class="actions">
+          <button type="button" class="btn ghost" data-close="modalBonifico">Annulla</button>
+          <button type="button" class="btn" onclick="onBonifico()">Registra</button>
+        </div>
+      </div>
+    </div>
+
     <style>
+      /* Esito della ripartizione: la riga che dice se il denaro deciso e
+         il denaro arrivato sono la stessa cosa. Tre stati, tre colori —
+         il caso "in attesa" non e' un errore, e non deve sembrarlo. */
+      .giro-esito{{margin-top:var(--sp-4);padding:11px 13px;border-radius:12px;
+        border:1px solid var(--line-strong);background:var(--surface-2)}}
+      .giro-esito .ge-top{{font-weight:600;font-size:14px;color:var(--ink);
+        display:flex;align-items:center;gap:2px}}
+      .giro-esito .ge-sub{{font-size:12.5px;color:var(--ink-2);margin-top:3px;
+        line-height:1.45}}
+      .giro-esito.ok{{border-color:color-mix(in srgb,var(--pos) 45%,transparent);
+        background:color-mix(in srgb,var(--pos) 9%,var(--surface))}}
+      .giro-esito.ok .ge-top{{color:var(--pos)}}
+      .giro-esito.attesa{{border-color:color-mix(in srgb,var(--warn) 45%,transparent);
+        background:color-mix(in srgb,var(--warn) 9%,var(--surface))}}
+      .giro-esito.attesa .ge-top{{color:var(--warn)}}
+      .giro-esito.scarto{{border-color:color-mix(in srgb,var(--neg) 45%,transparent);
+        background:color-mix(in srgb,var(--neg) 9%,var(--surface))}}
+      .giro-esito.scarto .ge-top{{color:var(--neg)}}
+
+      /* I movimenti veri, in chiaro: sono la prova di quello che dice la
+         riga sopra, e senza vederli "arrivato € 2.423,52" resterebbe un
+         numero da credere sulla parola. */
+      .mv-lista{{list-style:none;margin:var(--sp-3) 0 0;padding:0;
+        border-top:1px solid var(--line);font-size:12.5px}}
+      .mv-riga{{display:flex;gap:10px;align-items:baseline;padding:7px 0;
+        border-bottom:1px solid var(--line)}}
+      .mv-riga:last-child{{border-bottom:0}}
+      .mv-d{{color:var(--ink-3);flex:none;min-width:64px}}
+      .mv-t{{color:var(--ink-2);flex:1;min-width:0;overflow:hidden;
+        text-overflow:ellipsis;white-space:nowrap}}
+      .mv-v{{flex:none;font-weight:600}}
+      @media (max-width:420px){{
+        .mv-riga{{flex-wrap:wrap}}
+        .mv-t{{white-space:normal;flex-basis:100%;order:3}}
+      }}
       .scelte-giro{{display:flex;flex-direction:column;gap:8px;margin-bottom:var(--sp-4)}}
       .scelta-giro{{display:flex;gap:10px;align-items:flex-start;padding:12px;
         border:1px solid var(--line-strong);border-radius:12px;cursor:pointer;
@@ -1062,15 +1195,60 @@ def fattura_dettaglio(fid):
           }});
           const j = await r.json();
           if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
-          toast('Spostati € ' + j.giroconto.toFixed(2) + ' sul personale', 'ok');
+          // La ripartizione e' una decisione: dice quanto SPOSTERAI, non
+          // quanto e' arrivato. Il messaggio deve dire quale delle due.
+          toast(j.in_attesa
+            ? 'Ripartizione registrata: € ' + j.deciso.toFixed(2)
+              + ' da bonificare sul personale'
+            : 'Ripartizione registrata · arrivati € ' + j.arrivato.toFixed(2),
+            'ok');
+          setTimeout(()=>location.reload(), 900);
+        }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
+      }}
+
+      // "Ricontrolla la banca": riguarda se il movimento e' comparso.
+      async function onAggancia() {{
+        try {{
+          const r = await fetch(
+            `/fatture/api/fatture/${{FATTURA_ID}}/giroconto/aggancia`,
+            {{method: 'POST'}});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
+          if (j.in_attesa) {{
+            toast('Sul conto personale non risulta ancora niente', 'err');
+            return;
+          }}
+          toast('Arrivati € ' + j.arrivato.toFixed(2) + ' sul personale', 'ok');
+          setTimeout(()=>location.reload(), 700);
+        }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
+      }}
+
+      async function onBonifico() {{
+        const importo = Number(document.getElementById('b_imp').value || 0);
+        if (!importo) {{ toast("Scrivi l'importo del bonifico", 'err'); return; }}
+        const body = {{
+          data: document.getElementById('b_data').value,
+          importo,
+        }};
+        try {{
+          const r = await fetch(
+            `/fatture/api/fatture/${{FATTURA_ID}}/giroconto/bonifico`, {{
+            method: 'POST', headers: {{'Content-Type':'application/json'}},
+            body: JSON.stringify(body),
+          }});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
+          toast('Movimento registrato · arrivati € ' + j.arrivato.toFixed(2), 'ok');
           setTimeout(()=>location.reload(), 700);
         }} catch (e) {{ toast('Errore rete: '+e.message, 'err'); }}
       }}
 
       async function onAnnullaGiroconto() {{
         if (!confirm('Annullare la ripartizione?\\n\\n'
-                     + 'Verranno tolti i due movimenti dai conti P.IVA e personale. '
-                     + 'Potrai rifarla con un altro scenario.')) return;
+                     + "L'uscita dal conto P.IVA viene tolta e potrai rifare la "
+                     + 'ripartizione con un altro scenario. I movimenti del conto '
+                     + 'personale NON vengono cancellati: sono bonifici veri, '
+                     + 'vengono solo staccati dalla fattura.')) return;
         try {{
           const r = await fetch(`/fatture/api/fatture/${{FATTURA_ID}}/giroconto`,
                                 {{method: 'DELETE'}});
