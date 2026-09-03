@@ -231,7 +231,7 @@ sbagliato — non c'è nessun altro punto in cui la cosa verrebbe fuori.
 |---|---|
 | `b2f_emittente` | riga unica: i tuoi dati, più nome e mail dello studio |
 | `b2f_clienti` | anagrafica clienti |
-| `b2f_fatture` | i documenti, con stato, date dei passaggi, ripartizione e il mese di ore che raccontano — [§ 8.13](#813--la-fattura-si-ricorda-di-quali-ore-è-fatta-necessaria) |
+| `b2f_fatture` | i documenti, con stato, date dei passaggi, ripartizione e il mese di ore che raccontano — [§ 8.13](#813--la-fattura-si-ricorda-di-quali-ore-è-fatta--applicata-il-03092026) |
 | `b2f_spese_piva` | movimenti del conto P.IVA |
 | `b2f_parametri_fiscali` | riga unica: aliquote, parametri di accantonamento e tariffa giornaliera — [§ 8.14](#814--la-tariffa-giornaliera-è-un-parametro-non-una-costante-necessaria) |
 | `b2f_revolut` | saldi Revolut, uno snapshot per data — [§ 8.10](#810--tabella-dei-saldi-revolut) |
@@ -593,9 +593,9 @@ fai tu dalla banca: quando vuoi, in quante tranche vuoi, e può anche tornare
 indietro. Finché il movimento non compare, la fattura dice *"in attesa del
 bonifico"* e il saldo del personale resta quello che dice la banca.
 
-Quando il movimento arriva si aggancia da solo, e la card mostra i tre numeri
-che contano: **deciso**, **arrivato**, **quanto manca**, con sotto l'elenco dei
-movimenti veri che fanno quella somma. Tre modi perché arrivi:
+Quando il movimento arriva si aggancia da solo, e la card mostra **deciso** e
+**arrivato**, con sotto l'elenco dei movimenti veri che fanno quella somma. Tre
+modi perché arrivi:
 
 - l'**import della banca**, categorizzando la riga come *Giroconto P.IVA*;
 - il bottone **"Registra il bonifico"** sulla fattura, quando l'hai appena
@@ -606,6 +606,22 @@ movimenti veri che fanno quella somma. Tre modi perché arrivi:
 **L'uscita dal conto P.IVA è lo specchio del lato personale, non della
 decisione**: vale quanto è davvero arrivato. Se non è arrivato niente, dal conto
 P.IVA non esce niente — quei soldi sono ancora lì, e il saldo deve dirlo.
+
+#### Lo scarto, e perché il segno conta
+
+Deciso e arrivato quasi mai combaciano al centesimo, e **le due direzioni non
+sono la stessa cosa**:
+
+| | cosa vuol dire | come lo dice la card |
+|---|---|---|
+| arrivato **meno** del deciso | la differenza è rimasta sul conto P.IVA, cioè accantonata | nota neutra: *"Rimasti sul conto P.IVA € X in più del previsto"* |
+| arrivato **più** del deciso | sul personale è finito denaro che era messo da parte per tasse e costi | avviso rosso: *"Spostati € X in più del deciso"* |
+
+La card diceva **"Manca ancora € 2,00"** in rosso su una ripartizione in cui non
+mancava niente: erano 2,00 rimasti dalla parte sicura. Un residuo verso il basso
+è la cosa più normale del mondo — competenze bancarie, arrotondamenti, un
+bonifico fatto a cifra tonda — e non toglie niente a quello che hai da parte.
+L'unica direzione che merita un allarme è l'altra.
 
 **Le garanzie:**
 
@@ -769,7 +785,7 @@ card *Ore fatturate*: giornate, ore, giorni lavorati, la ripartizione per
 cliente, e il link che apre `/ore` direttamente sul riepilogo di quel mese.
 
 Quello che la fattura si porta dietro è una **foto**, non una lettura dal
-vivo (`ore_snapshot`, [§ 8.13](#813--la-fattura-si-ricorda-di-quali-ore-è-fatta-necessaria)),
+vivo (`ore_snapshot`, [§ 8.13](#813--la-fattura-si-ricorda-di-quali-ore-è-fatta--applicata-il-03092026)),
 per due motivi che vale la pena tenere a mente prima di "ottimizzare"
 sostituendola con una query:
 
@@ -1636,7 +1652,7 @@ on conflict (conto, data) do update
 secondi, e sono la differenza fra accorgersi di uno scarto in una
 settimana o in un anno e mezzo.
 
-### 8.13 — La fattura si ricorda di quali ore è fatta (**necessaria**)
+### 8.13 — La fattura si ricorda di quali ore è fatta ✅ applicata il 03/09/2026
 
 Fino a oggi la fattura e il timesheet non si parlavano: le ore stanno sul
 portale XS, la fattura su Supabase, e l'unico ponte era la memoria di chi

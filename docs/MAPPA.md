@@ -323,6 +323,11 @@ registra la decisione; l'entrata sul conto personale la porta la banca.
   guarda gli importi — che non combaciano quasi mai, è tutto il punto.
 - `arrivato()` è il **netto**: entrate meno uscite, perché una tranche può
   tornare indietro.
+- `stato()` ritorna `scarto` (deciso − arrivato) e **il segno conta**: verso
+  il basso la differenza è rimasta accantonata e non è un ammanco; verso
+  l'alto è denaro delle tasse finito sul personale, e solo quello è rosso.
+  Si chiamava `manca`, e la card diceva "Manca ancora € 2,00" su una
+  ripartizione in cui non mancava niente.
 - `_sincronizza_piva()` tiene l'uscita dal conto P.IVA uguale a quanto è
   davvero arrivato, **non a quanto deciso**. Se non è arrivato niente, dal
   conto P.IVA non esce niente: quei soldi sono ancora lì.

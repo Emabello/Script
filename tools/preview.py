@@ -117,7 +117,8 @@ DB = {
         # che la card deve saper mostrare.
         #
         # Fattura 1 (deciso 2.500,00): due tranche e un rientro, netto
-        # 2.423,52 -> la card deve dire "manca ancora".
+        # 2.423,52 -> ne e' arrivato meno del deciso, e la card deve dirlo
+        # senza allarmi: la differenza e' rimasta accantonata.
         {"id": 7, "data": "2026-07-01", "importo": 2000.00, "tipo": "entrata",
          "descrizione": "Trasferimento da conto *0479",
          "metodo_pagamento": "Import banca", "fattura_giroconto_id": 1,

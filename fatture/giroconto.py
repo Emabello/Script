@@ -236,11 +236,27 @@ def arrivato(righe: list[dict]) -> float:
 def stato(sb, f: dict) -> dict:
     """
     Il quadro completo di una ripartizione: cosa hai deciso, cosa e'
-    davvero arrivato, e quanto manca.
+    davvero arrivato, e quanto le due cose differiscono.
 
     E' l'unico posto che mette insieme i due lati; la card di
     `fatture/storico.py` e le rotte qui sotto leggono da qui, cosi' non
-    esistono due modi di calcolare "manca".
+    esistono due modi di calcolare lo scarto.
+
+    **Lo scarto si chiama `scarto` e non `manca`, e il segno conta.** Si
+    chiamava "manca", e la card diceva "Manca ancora € 2,00" in rosso su
+    una ripartizione in cui non mancava niente: sul conto personale erano
+    arrivati 2,00 meno del deciso, quindi 2,00 erano **rimasti sul conto
+    P.IVA** — dalla parte sicura. Un residuo verso il basso e' la cosa
+    piu' normale del mondo (competenze bancarie, arrotondamenti, un
+    bonifico fatto a cifra tonda) e non e' un ammanco.
+
+    Le due direzioni non sono simmetriche:
+
+      scarto > 0  arrivato MENO del deciso -> il resto e' rimasto
+                  accantonato. Nessun danno: semmai il contrario.
+      scarto < 0  arrivato PIU' del deciso -> sul personale e' finito
+                  denaro che la ripartizione aveva messo da parte per
+                  tasse e costi. **Questo** merita un allarme.
     """
     fid = f.get("id")
     righe = movimenti(sb, fid) if fid else []
@@ -249,7 +265,7 @@ def stato(sb, f: dict) -> dict:
     return {
         "deciso": deciso,
         "arrivato": reale,
-        "manca": round(deciso - reale, 2),
+        "scarto": round(deciso - reale, 2),
         "movimenti": righe,
         "in_attesa": not righe,
     }
