@@ -137,6 +137,86 @@ def _accent_swatches() -> str:
     return "".join(out)
 
 
+# ---------------------------------------------------------------------------
+# La "i": il comportamento, uno solo per tutta l'app
+# ---------------------------------------------------------------------------
+# Delegato sul documento, quindi funziona anche sui fumetti che nascono
+# dopo (le card che il JS ridisegna cambiando scenario). Il fumetto e'
+# `position:fixed` e viene piazzato qui: dentro una card con
+# `overflow:hidden`, o vicino al bordo dello schermo, un popover in
+# posizione assoluta verrebbe tagliato.
+_INFO_JS = """<script>
+(function(){
+  var aperto = null;
+
+  function chiudi(){
+    if(!aperto) return;
+    aperto.pop.hidden = true;
+    aperto.btn.setAttribute('aria-expanded','false');
+    aperto = null;
+  }
+
+  function piazza(btn, pop){
+    // Prima lo si mostra invisibile: senza misure reali non si sa quanto
+    // e' alto, e l'altezza decide se sta sotto o sopra il bottone.
+    pop.hidden = false;
+    pop.style.visibility = 'hidden';
+    pop.style.left = '0px';
+    pop.style.top = '0px';
+    var b = btn.getBoundingClientRect();
+    var p = pop.getBoundingClientRect();
+    var M = 8;                        // respiro dal bordo dello schermo
+    var vw = document.documentElement.clientWidth;
+    var vh = document.documentElement.clientHeight;
+
+    // Centrato sul bottone, ma tenuto dentro il viewport.
+    var x = b.left + b.width / 2 - p.width / 2;
+    x = Math.max(M, Math.min(x, vw - p.width - M));
+
+    // Sotto se c'e' posto, sopra altrimenti.
+    var y = b.bottom + 6;
+    if (y + p.height > vh - M) {
+      var sopra = b.top - p.height - 6;
+      y = sopra >= M ? sopra : Math.max(M, vh - p.height - M);
+    }
+
+    pop.style.left = Math.round(x) + 'px';
+    pop.style.top  = Math.round(y) + 'px';
+    pop.style.visibility = '';
+  }
+
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest ? e.target.closest('.info-i') : null;
+    if (btn) {
+      e.preventDefault();
+      e.stopPropagation();
+      var pop = btn.parentNode.querySelector('.info-pop');
+      var eraAperto = aperto && aperto.btn === btn;
+      chiudi();
+      if (!eraAperto && pop) {
+        piazza(btn, pop);
+        btn.setAttribute('aria-expanded','true');
+        aperto = {btn: btn, pop: pop};
+      }
+      return;
+    }
+    // Un click ovunque altrove chiude: e' la regola che l'utente si
+    // aspetta, e vale anche dentro il fumetto stesso — il testo si legge,
+    // non si seleziona a lungo.
+    chiudi();
+  }, true);
+
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') chiudi();
+  });
+  // Se la pagina si muove sotto il fumetto, il fumetto non lo segue:
+  // e' fisso. Meglio chiuderlo che lasciarlo puntare al vuoto.
+  window.addEventListener('scroll', chiudi, true);
+  window.addEventListener('resize', chiudi);
+})();
+</script>"""
+
+
 _APPEARANCE_SHEET = f"""
 <style>
 /* I campioni del selettore accento mostrano il colore reale di ciascun
@@ -374,6 +454,7 @@ def app_shell(section: str, eyebrow: str, title_html: str, content: str,
   {_fab(fab)}
   {extra_body}
   {_APPEARANCE_SHEET}
+{_INFO_JS}
 </body>
 </html>"""
     return _inject_pin_gate(html)
@@ -648,7 +729,8 @@ def inject_app_header(page_html: str, eyebrow: str = "Timesheet",
 </div>
 {_tabbar("ore")}
 {tenda_html()}
-{_APPEARANCE_SHEET}"""
+{_APPEARANCE_SHEET}
+{_INFO_JS}"""
 
     html = page_html.replace(open_marker, shell_open, 1)
 

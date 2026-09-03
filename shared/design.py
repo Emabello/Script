@@ -705,6 +705,47 @@ html[data-theme="light"] .input{background:var(--surface-3)}
 .legend>div{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2)}
 .legend .dot{width:9px;height:9px;border-radius:3px;flex:none}
 
+/* --- La "i": una spiegazione che non occupa spazio finché non la chiedi -----
+   Le descrizioni sotto le righe erano oneste ma rumorose: su una card con
+   dieci voci, dieci sottotitoli grigi raddoppiano l'altezza e si smette di
+   leggerli. Qui la spiegazione resta, ma dietro un bersaglio da 16px che
+   apre un fumetto e lo tiene aperto finché non si clicca altrove.
+
+   Il fumetto e' `position:fixed` e viene piazzato dal JS: dentro una card
+   con `overflow:hidden`, o vicino al bordo dello schermo, un popover in
+   posizione assoluta verrebbe tagliato. Fisso non puo' essere tagliato da
+   nessun antenato, e il JS lo tiene dentro il viewport. */
+.info-w{display:inline-flex;vertical-align:baseline;margin-left:5px}
+.info-i{
+  width:16px;height:16px;flex:none;border-radius:50%;
+  border:1px solid var(--line-strong);background:transparent;
+  color:var(--ink-3);font-size:10px;font-weight:700;line-height:1;
+  font-family:var(--display);font-style:italic;
+  display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:color var(--dur),border-color var(--dur),
+    background-color var(--dur);
+}
+.info-i:hover{color:var(--accent-text);border-color:var(--accent)}
+.info-i[aria-expanded="true"]{background:var(--accent);border-color:var(--accent);
+  color:#fff}
+/* Il bersaglio vero e' piu' grande di quello che si vede: 16px di cerchio
+   sono pochi per un pollice, e questa e' un'app che si usa dal telefono. */
+.info-i::after{content:"";position:absolute;width:34px;height:34px;
+  border-radius:50%}
+.info-w{position:relative}
+
+.info-pop{
+  position:fixed;z-index:200;max-width:280px;
+  padding:10px 12px;border-radius:var(--r-sm);
+  background:var(--surface-2,var(--surface));border:1px solid var(--line-strong);
+  box-shadow:var(--e2);
+  font-size:12.5px;line-height:1.45;color:var(--ink-2);
+  font-weight:400;font-style:normal;text-align:left;text-transform:none;
+  letter-spacing:normal;
+}
+.info-pop strong{color:var(--ink)}
+.info-pop[hidden]{display:none}
+
 /* --- Stato vuoto ---------------------------------------------------------------- */
 .empty{text-align:center;padding:var(--sp-9) var(--sp-5);color:var(--ink-3)}
 .empty svg{width:40px;height:40px;margin:0 auto var(--sp-3);
@@ -931,3 +972,27 @@ def icon(name: str, cls: str = "") -> str:
     return (f'<svg{c} viewBox="0 0 24 24" fill="none" stroke="currentColor" '
             f'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" '
             f'aria-hidden="true">{path}</svg>')
+
+
+def info(testo: str, etichetta: str = "Spiegazione") -> str:
+    """
+    La "i" cliccabile con la sua spiegazione.
+
+    Serve a togliere dalle righe i sottotitoli grigi senza buttare via
+    quello che dicevano: la descrizione resta, ma si apre a richiesta e
+    non ruba due righe di altezza a ogni voce.
+
+    Il testo puo' contenere markup semplice (`<strong>`, `<em>`): arriva
+    da noi, non dall'utente. Il posizionamento del fumetto lo fa il JS
+    globale nella shell, non il CSS — vedi `shared/theme.py::_INFO_JS`.
+    """
+    if not testo:
+        return ""
+    t = str(testo).strip()
+    return (
+        '<span class="info-w">'
+        f'<button type="button" class="info-i" aria-expanded="false" '
+        f'aria-label="{etichetta}">i</button>'
+        f'<span class="info-pop" role="tooltip" hidden>{t}</span>'
+        "</span>"
+    )

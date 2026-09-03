@@ -27,6 +27,7 @@ Ultimo aggiornamento: 2026-08-25 · 36 file di codice e configurazione.
 | Quanto vale una giornata | `b2f_parametri_fiscali.tariffa_giornaliera` |
 | Stati della fattura, rivalsa | `fatture/costanti.py` |
 | Colori, spaziature, icone | `shared/design.py` |
+| Una spiegazione dietro la "i" | `shared/design.py::info()` · comportamento in `shared/theme.py::_INFO_JS` |
 | Struttura di pagina, home | `shared/theme.py` |
 | Formattare euro/date/% | `shared/fmt.py` — **non riscriverli** |
 | Ordinare le voci di un menù | `shared/ordina.py` — alfabetico per descrizione |
@@ -640,6 +641,19 @@ snapshot Revolut.
 > `spese/dati.py` non c'era, quindi tutta l'area Spese rispondeva
 > "Supabase non configurato" invece di mostrare i dati finti. Ora si
 > scorrono i moduli già importati dei pacchetti dell'app.
+
+### `tools/verifica_js.py` — apre tutte le pagine e cerca JS rotto
+
+L'app genera il suo JavaScript da f-string Python: un apostrofo o un a-capo
+scritto con **un backslash solo** se lo mangia Python, la stringa JS si chiude
+a metà frase e il browser scarta **l'intero blocco `<script>`**. Bottoni morti,
+pagina che si disegna lo stesso, nessun segno visibile.
+
+Non è teoria: è successo su `/spese/risparmi` e la procedura di fine periodo
+non funzionava. Questo tool apre le diciotto pagine e fallisce su qualunque
+`pageerror`.
+
+    python3 tools/verifica_js.py
 
 ### `tools/verifica_menu.py` — 182 righe
 
