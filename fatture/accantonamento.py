@@ -398,19 +398,24 @@ def _riga_rivalsa_bollo(s: dict) -> str:
     numero. Non renderizza nulla se la fattura non li ha.
     """
     from shared.fmt import eur
+    from shared.design import info
     rivalsa = s.get("rivalsa", 0)
     bollo = s.get("bollo_addebitato", 0)
     if not rivalsa and not bollo:
         return ""
     righe = ""
     if rivalsa:
-        righe += (f'<div class="row"><span class="t">di cui rivalsa INPS '
-                  f'<span class="sub">inclusa nel lordo, concorre al reddito</span></span>'
-                  f'<span class="v tnum">€ {eur(rivalsa)}</span></div>')
+        righe += ('<div class="row"><span class="t">di cui rivalsa INPS'
+                  + info("Inclusa nel lordo e concorre al reddito: imposta e "
+                         "INPS si calcolano sul totale, non sul compenso.")
+                  + '</span>'
+                  + f'<span class="v tnum">€ {eur(rivalsa)}</span></div>')
     if bollo:
-        righe += (f'<div class="row"><span class="t">di cui bollo addebitato al cliente '
-                  f'<span class="sub">inclusa nel lordo, concorre al reddito</span></span>'
-                  f'<span class="v tnum">€ {eur(bollo)}</span></div>')
+        righe += ('<div class="row"><span class="t">di cui bollo addebitato al cliente'
+                  + info("Incluso nel lordo e concorre al reddito "
+                         "(Risposta Agenzia Entrate 428/2022).")
+                  + '</span>'
+                  + f'<span class="v tnum">€ {eur(bollo)}</span></div>')
     return righe
 
 
@@ -440,7 +445,6 @@ ALBERO_CSS = """
     width:10px;height:1px;background:var(--line-strong)}
   .alb-riga.radice::before{display:none}
   .alb-nome{min-width:0;color:var(--ink-2);line-height:1.35}
-  .alb-sub{display:block;font-size:11px;color:var(--ink-3);margin-top:1px}
   .alb-eur{text-align:right;color:var(--ink-2);white-space:nowrap}
   .alb-pct{text-align:right;font-size:11.5px;color:var(--ink-3);white-space:nowrap}
   .alb-barra{height:7px;border-radius:var(--r-full);background:var(--surface-3);
@@ -537,6 +541,7 @@ def albero_html(s: dict, uid: str, anno_acconto=None, anno_saldo=None,
     fermo.
     """
     from shared.fmt import eur, pct
+    from shared.design import info
 
     lordo = s["lordo"] or 0.0
     pref = s["scenario_preferito"]
@@ -552,9 +557,15 @@ def albero_html(s: dict, uid: str, anno_acconto=None, anno_saldo=None,
         return (v / lordo * 100) if lordo else 0.0
 
     def riga(nome, sub, valore, classi="", chiave=None):
-        """Una riga dell'albero. `chiave` la rende aggiornabile dal JS."""
+        """
+        Una riga dell'albero. `chiave` la rende aggiornabile dal JS.
+
+        La descrizione non sta piu' sotto il nome: dieci sottotitoli grigi
+        su dodici righe raddoppiavano l'altezza dell'albero e si smetteva
+        di leggerli. Ora sta dietro la "i", che la apre a richiesta.
+        """
         attr = f' data-alb="{chiave}" data-alb-uid="{uid}"' if chiave else ""
-        sub_html = f'<span class="alb-sub">{sub}</span>' if sub else ""
+        sub_html = info(sub) if sub else ""
         return (f'<div class="alb-riga {classi}"{attr}>'
                 f'<span class="alb-nome">{nome}{sub_html}</span>'
                 f'<span class="alb-barra"><i style="width:{q(valore):.2f}%"></i></span>'
@@ -621,8 +632,10 @@ def albero_html(s: dict, uid: str, anno_acconto=None, anno_saldo=None,
                g["tuo"], "gruppo g-tuo", "tuo")
         + "</div>"
         + '<div class="alb-totale">'
-        + '<span class="t">Accantoni in tutto<span>resta sul conto P.IVA: '
-          'quello che esce pi&ugrave; il cuscinetto</span></span>'
+        + '<span class="t">Accantoni in tutto'
+        + info("Resta sul conto P.IVA: quello che uscir&agrave; davvero "
+               "pi&ugrave; il cuscinetto.")
+        + '</span>'
         + f'<span class="v tnum" data-alb="accantoni" data-alb-uid="{uid}">'
           f'&euro; {eur(g["accantoni"])}</span>'
         + f'<span class="p tnum" data-alb-pcttot="{uid}">'
@@ -653,6 +666,7 @@ def card_html(s: dict, titolo: str = "Da accantonare",
     quanto resta tuo, e dalla riga gialla del bonus.
     """
     from shared.fmt import eur, pct
+    from shared.design import info
 
     lordo = s["lordo"] or 0.0
     pref = s["scenario_preferito"]
@@ -673,17 +687,19 @@ def card_html(s: dict, titolo: str = "Da accantonare",
         """La riga gialla: cosa ci guadagni a scegliere questo scenario."""
         g = gruppi(s, k)
         if g["fermo"] <= 0:
-            return ("<strong>Copri esatto, senza cuscinetto.</strong> "
-                    "Tasse e costi ci sono tutti, ma un imprevisto o una "
-                    "crescita del fatturato ti trovano scoperto.")
-        return (f"<strong>&euro; {eur(g['fermo'])} sono cuscinetto, non tasse.</strong> "
-                f"Se l'anno va come previsto restano l&aacute;: &egrave; il bonus "
-                f"che ti prendi quando hai pagato tutto.")
+            return ("<strong>Copri esatto, senza cuscinetto.</strong>"
+                    + info("Tasse e costi ci sono tutti, ma un imprevisto o una "
+                           "crescita del fatturato ti trovano scoperto."))
+        return (f"<strong>&euro; {eur(g['fermo'])} sono cuscinetto, non tasse.</strong>"
+                + info("Se l'anno va come previsto restano l&igrave;: &egrave; il "
+                       "bonus che ti prendi quando hai pagato tutto."))
 
     def classe(k):
         return "neg" if gruppi(s, k)["fermo"] <= 0 else "pos"
 
-    ctx = f'<div class="stat-hint muted small">{contesto}</div>' if contesto else ""
+    # Il contesto era una frase lunga sotto la barra: adesso sta dietro la
+    # "i" accanto al titolo della card. Non e' un avviso, e' una nota.
+    ctx = info(contesto) if contesto else ""
 
     import json
     dati = json.dumps({
@@ -753,16 +769,17 @@ def card_html(s: dict, titolo: str = "Da accantonare",
     if s.get("primo_anno"):
         nota_primo = (
             '<div class="notice info small mt-3">'
-            "<strong>Primo anno di attivit&agrave;.</strong> Non hai ancora versato "
-            "contributi, quindi non c'&egrave; niente da dedurre: l'imposta si calcola "
-            "sull'imponibile pieno e il fabbisogno &egrave; pi&ugrave; alto di quello "
-            "degli anni a regime. Dall'anno prossimo scende da s&eacute;."
-            "</div>")
+            "<strong>Primo anno: il fabbisogno &egrave; pi&ugrave; alto.</strong>"
+            + info("Non hai ancora versato contributi, quindi non c'&egrave; niente "
+                   "da dedurre: l'imposta si calcola sull'imponibile pieno. "
+                   "Sono 1,75 punti in pi&ugrave; sul lordo. Dall'anno prossimo "
+                   "scende da s&eacute;.")
+            + "</div>")
 
     return f"""
 <div class="card acc-card" id="{uid}">
   <div class="card-head">
-    <div class="eyebrow">{titolo}</div>
+    <div class="eyebrow">{titolo}{ctx}</div>
     <div class="segmented acc-seg">{seg}</div>
   </div>
 
@@ -788,7 +805,6 @@ def card_html(s: dict, titolo: str = "Da accantonare",
     <span data-acc-frase="{uid}">{frase(pref)}</span>
   </div>
   {nota_primo}
-  {ctx}
   {albero}
 </div>
 

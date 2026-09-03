@@ -474,6 +474,27 @@ Le due date compaiono in tre posti, e sono sempre lo stesso conto:
   la data;
 - la card **Calendario dei versamenti** sulla situazione fiscale.
 
+### La "i": le spiegazioni non occupano più spazio
+
+Ogni riga dell'albero, ogni voce delle card e ogni campo dei parametri aveva
+sotto il suo sottotitolo grigio. Onesto, ma su una card con dodici voci sono
+dodici righe in più: l'altezza raddoppia e si smette di leggerle.
+
+Ora la spiegazione sta dietro una **i** da 16 px accanto all'etichetta. Un
+click la apre, un click altrove (o Esc) la chiude, e ne resta aperta **una
+sola** alla volta. Il bersaglio invisibile è da 34 px, perché è un'app che si
+usa dal telefono.
+
+Il fumetto è `position:fixed` e lo piazza il JS (`shared/theme.py::_INFO_JS`):
+dentro una card con `overflow:hidden`, o vicino al bordo dello schermo, un
+popover in posizione assoluta verrebbe tagliato. Si genera con
+`shared/design.py::info(testo)`.
+
+> **Cosa è passato dietro la i e cosa no.** Le *spiegazioni* sì — "al netto dei
+> contributi, che sono deducibili", "0,40 = 40 % con il saldo di giugno". I
+> *dati* no: "incassata il 10/07/2026", "€ 250,00 cad.", "12,4 % delle uscite"
+> restano visibili, perché sono valori, non commenti.
+
 ### L'albero: dove finiscono quei soldi
 
 La card mostra quanto accantonare. L'**albero** mostra dove va, e lo fa in una
@@ -494,16 +515,32 @@ In fondo, *Accantoni in tutto* = rosso + giallo, cioè quello che resta sul cont
 P.IVA. Le voci fisse non cambiano con lo scenario; cambiano il margine, i tre
 totali di ramo e quanto resta tuo.
 
-### Il calendario dei versamenti
+### Le scadenze, e quanto ho da parte
 
-Sulla situazione fiscale, sotto il fondo. Due blocchi, uno per scadenza, e in
-ciascuno: la data, il totale, le voci che lo compongono e — la parte che serve
-davvero — **quanto resta sul conto P.IVA dopo averla pagata**. Il residuo parte
-dal saldo P.IVA di oggi e scala una scadenza alla volta, così si vede subito se
-la seconda regge dopo la prima.
+Sulla situazione fiscale, sotto il fondo: **un blocco per scadenza**, con la
+data, quanto si paga, le voci che lo compongono, e la **percentuale coperta**
+con la barra di riempimento.
 
-Se il saldo P.IVA non è leggibile la card mostra le scadenze senza la colonna
-del residuo: meglio niente che un residuo inventato.
+Il denaro non si divide in proporzione fra le scadenze, si versa **a cascata
+in ordine di data**: la prima si copre per intero, poi comincia la seconda, poi
+giugno dell'anno dopo. È come si comportano i soldi veri, che non sanno di
+essere destinati a una scadenza piuttosto che a un'altra — sul conto P.IVA c'è
+un mucchio solo, cuscinetto compreso, e la domanda è *fin dove arrivo*. Una
+divisione proporzionale darebbe quattro blocchi tutti mezzi pieni e nessuna
+informazione.
+
+Ogni blocco dice quindi **coperta** oppure **manca il N %, € X da trovare**.
+
+| Da dove escono le scadenze | |
+|---|---|
+| Anno in vista | gli importi esatti già calcolati da `_situazione_data`, gli stessi delle altre card |
+| Altri anni con incassi | `scomponi()` sull'incassato di quell'anno, più il bollo addebitato |
+| Anni futuri senza incassi | **non compaiono**: una stima inventata sarebbe peggio di una riga in meno |
+
+Visibili di default le scadenze **non ancora passate**; le altre stanno dietro
+un bottone che appare solo quando c'è davvero altro da mostrare. Se il saldo
+P.IVA non è leggibile, i blocchi restano senza percentuale invece di inventarne
+una.
 
 ### Il fondo tasse: i soldi ci sono davvero?
 
@@ -1948,6 +1985,7 @@ virgolette (PEP 701), che su 3.11 non compilano.
 | `verifica_layout.py` | cerca overflow orizzontali, che sui browser mobili mandano in shrink-to-fit l'intera pagina |
 | `verifica_contrasti.py` | controlla i contrasti WCAG su tutte le combinazioni di tema |
 | `verifica_facsimile.py` | controlli sul PDF generato |
+| `verifica_js.py` | apre tutte le pagine e fallisce se una ha JavaScript rotto |
 | `verifica_menu.py` | apre tutte le pagine e controlla che ogni tendina di dati sia alfabetica per descrizione (le eccezioni volute sono elencate nel file) |
 
 ### Analisi funzionale continua

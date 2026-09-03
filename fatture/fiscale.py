@@ -39,7 +39,7 @@ from . import accantonamento as acc
 from .costanti import (CATEGORIE_SPESE_PIVA, MESI_NOMI, STATI_EMESSE,
                        TIPI_SPESE_PIVA)
 from shared.theme import render_page
-from shared.design import icon as _icon
+from shared.design import icon as _icon, info as _info
 from shared.supabase_client import get_client, is_configured
 from shared.fmt import eur as _fmt_eur, data_it as _fmt_date, pct
 
@@ -548,129 +548,249 @@ def _fondo_tasse(sb, anno: int, fabbisogno: float) -> dict:
     return dati
 
 
-def _card_calendario(s: dict, anno: int, saldo_oggi: float | None) -> str:
+def _scadenze_tutte(sb, param: dict, s_anno: dict, anno: int) -> list:
     """
-    Il calendario dei versamenti: le due date, cosa si paga a ciascuna, e
-    — la parte che serve davvero — quanto resta sul conto P.IVA dopo.
+    Tutte le scadenze conosciute, in ordine di data.
 
-    Le altre card rispondono a "quanto"; questa risponde a "quando", che
-    e' l'altra meta'. Il fabbisogno dell'anno non serve tutto insieme: a
-    giugno serve il saldo piu' la prima rata degli acconti, a novembre il
-    resto. Avere il totale ma non averlo *a giugno* e' comunque un
-    problema, e finora nessuna pagina lo faceva vedere.
+    Ogni anno con incassi ne genera due: il 30 giugno dell'anno dopo
+    (saldo + prima rata degli acconti, piu' commercialista e bollo di
+    quell'anno) e il 30 novembre (seconda rata). Gli anni futuri non
+    compaiono: senza incassi non c'e' niente da calcolare, e una stima
+    inventata qui sarebbe peggio di una riga in meno.
 
-    `saldo_oggi` e' il saldo P.IVA reale. Se manca, la card mostra le due
-    scadenze senza la colonna del residuo: meglio niente che un residuo
-    inventato.
+    Per l'anno in vista si usano gli importi gia' calcolati da
+    `_situazione_data` — sono gli stessi numeri delle altre card, e due
+    conti diversi sulla stessa scadenza sarebbero un bug in attesa.
     """
-    scadenze = s.get("scadenze") or []
-    if not scadenze or all(sc["importo"] <= 0 for sc in scadenze):
+    from . import accantonamento as acc
+
+    scadenze = []
+    for sc in (s_anno.get("scadenze") or []):
+        if sc["importo"] > 0:
+            scadenze.append({**sc, "anno_comp": anno})
+
+    # Gli altri anni: incassato per anno, dalle fatture non annullate.
+    try:
+        r = (sb.table("b2f_fatture")
+               .select("totale,bollo,bollo_addebitato,data_incasso,stato")
+               .neq("stato", "annullata").execute())
+        righe = r.data or []
+    except Exception:
+        righe = []
+
+    per_anno: dict[int, dict] = {}
+    for f in righe:
+        di = f.get("data_incasso")
+        if not di:
+            continue
+        try:
+            y = int(str(di)[:4])
+        except (TypeError, ValueError):
+            continue
+        if y == anno:
+            continue          # gia' coperto dagli importi precisi sopra
+        v = per_anno.setdefault(y, {"incasso": 0.0, "bollo": 0.0})
+        v["incasso"] += float(f.get("totale") or 0)
+        if f.get("bollo_addebitato"):
+            v["bollo"] += float(f.get("bollo") or 0)
+
+    for y, v in sorted(per_anno.items()):
+        if v["incasso"] <= 0:
+            continue
+        sc = acc.scomponi(v["incasso"], param, fatturato_riferimento=v["incasso"],
+                          anno=y)
+        giugno = round(sc["entro_giugno"] + v["bollo"], 2)
+        if giugno > 0:
+            scadenze.append({
+                "data": f"{y + 1}-06-30", "anno_comp": y,
+                "descrizione": f"Saldo {y} + 1ª rata acconti {y + 1}",
+                "importo": giugno,
+                "voci": [(f"Saldo {y} (INPS + imposta)", sc["saldo"]),
+                         (f"1ª rata acconti {y + 1}", sc["acconto_prima_rata"]),
+                         ("Bollo dell'anno", v["bollo"])],
+            })
+        if sc["entro_novembre"] > 0:
+            scadenze.append({
+                "data": f"{y + 1}-11-30", "anno_comp": y,
+                "descrizione": f"2ª rata acconti {y + 1}",
+                "importo": sc["entro_novembre"],
+                "voci": [(f"2ª rata acconti {y + 1}", sc["entro_novembre"])],
+            })
+
+    scadenze.sort(key=lambda x: x["data"])
+    return scadenze
+
+
+def _cascata(scadenze: list, disponibile: float | None) -> list:
+    """
+    Versa il denaro disponibile nelle scadenze, in ordine di data.
+
+    La prima si riempie fino all'orlo, poi comincia la seconda, e cosi'
+    via: e' come si comportano i soldi veri, che non sanno di essere
+    destinati a una scadenza piuttosto che a un'altra. Il denaro e' uno
+    solo — il saldo del conto P.IVA, cuscinetto compreso — e la domanda a
+    cui questo risponde e' "fin dove arrivo".
+    """
+    resto = None if disponibile is None else max(float(disponibile), 0.0)
+    out = []
+    for sc in scadenze:
+        importo = float(sc["importo"] or 0)
+        if resto is None:
+            coperto = None
+        else:
+            coperto = round(min(resto, importo), 2)
+            resto = round(resto - coperto, 2)
+        manca = None if coperto is None else round(max(importo - coperto, 0.0), 2)
+        quota = (coperto / importo) if (coperto is not None and importo > 0) else None
+        out.append({**sc, "coperto": coperto, "manca": manca, "quota": quota})
+    return out, (resto if resto is not None else None)
+
+
+_MESI_SCAD = ("gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+              "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre")
+
+
+def _card_calendario(sb, s: dict, anno: int, saldo_oggi: float | None) -> str:
+    """
+    Un blocco per scadenza: quanto si paga, quanto ne ho da parte, quanto
+    manca. Il denaro disponibile riempie i blocchi in ordine di data.
+
+    Le altre card rispondono a "quanto"; questa risponde a "quando, e ci
+    arrivo?". Il fabbisogno non serve tutto insieme e non e' destinato in
+    partenza a una scadenza piuttosto che a un'altra: c'e' un mucchio di
+    soldi sul conto P.IVA, e la domanda vera e' fin dove arriva. Per
+    questo il riempimento e' a cascata — la prima scadenza si copre per
+    intero, poi comincia la seconda — e non una divisione proporzionale,
+    che darebbe quattro blocchi tutti mezzi pieni e nessuna informazione.
+
+    Visibili di default le scadenze non ancora passate; le altre stanno
+    dietro il bottone, che appare solo se c'e' davvero altro da mostrare.
+    """
+    scadenze = _scadenze_tutte(sb, param=s["parametri"], s_anno=s, anno=anno)
+    if not scadenze:
         return ""
 
-    residuo = saldo_oggi
+    scadenze, avanzo = _cascata(scadenze, saldo_oggi)
+    oggi = date.today().isoformat()
+    totale = round(sum(x["importo"] for x in scadenze), 2)
+    premessa = _info(
+        "Il denaro sul conto P.IVA non &egrave; destinato in partenza a una "
+        "scadenza piuttosto che a un&apos;altra: &egrave; un mucchio solo, "
+        "cuscinetto compreso. Qui lo si versa nei blocchi <strong>in ordine "
+        "di data</strong> — la prima si copre per intero, poi comincia la "
+        "seconda. La percentuale dice fin dove arrivi.")
+
+    # Quelle passate restano consultabili ma non in mezzo ai piedi.
+    nascoste = [i for i, x in enumerate(scadenze) if x["data"] < oggi]
+
     blocchi = []
     for i, sc in enumerate(scadenze):
-        voci = [(nome, imp) for nome, imp in (sc.get("voci") or []) if imp]
-        voci_html = "".join(
-            f'<div class="cal-voce"><span>{nome}</span>'
-            f'<span class="tnum">&euro; {_fmt_eur(imp)}</span></div>'
-            for nome, imp in voci)
-
-        if residuo is None:
-            resto_html = ""
-            cls = ""
+        y, m, d = sc["data"].split("-")
+        passata = sc["data"] < oggi
+        quota = sc["quota"]
+        if quota is None:
+            cls, pct_txt, barra, riga_stato = "", "", "", ""
         else:
-            residuo = round(residuo - sc["importo"], 2)
-            cls = "pos" if residuo >= 0 else "neg"
-            etichetta = ("resta sul conto P.IVA" if residuo >= 0
-                         else "mancano, da trovare altrove")
-            resto_html = (f'<div class="cal-resto {cls}">'
-                          f'<span>{etichetta}</span>'
-                          f'<span class="tnum">&euro; {_fmt_eur(abs(residuo))}</span>'
-                          f'</div>')
+            cls = "pos" if quota >= 0.999 else ("warn" if quota >= 0.5 else "neg")
+            pct_txt = f"{quota * 100:.0f}".replace(".", ",")
+            barra = (f'<div class="meter"><i class="{cls}" '
+                     f'style="width:{min(quota * 100, 100):.1f}%"></i></div>')
+            if sc["manca"] <= 0:
+                riga_stato = (f'<div class="scb-stato pos">Coperta &mdash; '
+                              f'&euro; {_fmt_eur(sc["coperto"])} da parte</div>')
+            else:
+                manca_pct = f"{(1 - quota) * 100:.0f}".replace(".", ",")
+                riga_stato = (
+                    f'<div class="scb-stato {cls}">Manca il <strong>{manca_pct} %</strong>'
+                    f' &mdash; &euro; {_fmt_eur(sc["manca"])} da trovare</div>')
 
-        mese = "giugno" if i == 0 else "novembre"
-        nota = ("di norma prorogato al 31 luglio" if i == 0
-                else "l'ultima dell'anno")
+        voci = [(n, v) for n, v in (sc.get("voci") or []) if v]
+        voci_html = "".join(
+            f'<div class="scb-voce"><span>{n}</span>'
+            f'<span class="tnum">&euro; {_fmt_eur(v)}</span></div>'
+            for n, v in voci)
+
         blocchi.append(f'''
-        <div class="cal-blocco">
-          <div class="cal-data">
-            <span class="cal-giorno">30</span>
-            <span class="cal-mese">{mese}</span>
-            <span class="cal-anno">{anno + 1}</span>
+        <div class="scb{" passata" if passata else ""}"
+             data-scb="{i}"{' hidden' if i in nascoste else ''}>
+          <div class="scb-head">
+            <div class="scb-data">
+              <span class="scb-giorno">{int(d)}</span>
+              <span class="scb-mese">{_MESI_SCAD[int(m) - 1]}</span>
+              <span class="scb-anno">{y}</span>
+            </div>
+            <div class="scb-cifre">
+              <div class="scb-tot tnum">&euro; {_fmt_eur(sc["importo"])}</div>
+              <div class="scb-desc">{sc["descrizione"]}</div>
+            </div>
+            <div class="scb-pct tnum {cls}">{pct_txt + " %" if pct_txt else ""}</div>
           </div>
-          <div class="cal-corpo">
-            <div class="cal-tot tnum">&euro; {_fmt_eur(sc["importo"])}</div>
-            <div class="cal-nota">{nota}</div>
-            <div class="cal-voci">{voci_html}</div>
-            {resto_html}
-          </div>
+          {barra}
+          {riga_stato}
+          <div class="scb-voci">{voci_html}</div>
         </div>''')
 
-    totale = round(sum(sc["importo"] for sc in scadenze), 2)
+    bottone = ""
+    if nascoste:
+        bottone = (
+            f'<button type="button" class="btn ghost block mt-3" id="scbPiu">'
+            f'{_icon("calendar")}Mostra anche le {len(nascoste)} scadenze gi&agrave; '
+            f'passate</button>'
+            '<script>(function(){'
+            'var b=document.getElementById("scbPiu");if(!b)return;'
+            'b.addEventListener("click",function(){'
+            'document.querySelectorAll("[data-scb][hidden]").forEach(function(e){'
+            'e.hidden=false});b.remove();});})();</script>')
+
     if saldo_oggi is None:
-        verdetto = ""
-    elif residuo is not None and residuo >= 0:
-        verdetto = (f'<div class="small mt-3"><strong class="pos">Ci sono tutti.</strong> '
-                    f'Con quello che c&apos;&egrave; oggi sul conto P.IVA '
-                    f'(&euro; {_fmt_eur(saldo_oggi)}) onori entrambe le scadenze '
-                    f'e ti restano &euro; {_fmt_eur(residuo)}.</div>')
+        coda = ""
+    elif avanzo and avanzo > 0:
+        coda = (f'<div class="small mt-3"><strong class="pos">Coperte tutte, '
+                f'e avanzano &euro; {_fmt_eur(avanzo)}.</strong> Quella parte '
+                f'&egrave; davvero tua.</div>')
     else:
-        verdetto = (f'<div class="small mt-3"><strong class="neg">Non bastano.</strong> '
-                    f'Sul conto P.IVA ci sono &euro; {_fmt_eur(saldo_oggi)}, le due '
-                    f'scadenze chiedono &euro; {_fmt_eur(totale)}: '
-                    f'mancano &euro; {_fmt_eur(abs(residuo))}.</div>')
+        scoperte = [x for x in scadenze if x["manca"] and x["manca"] > 0]
+        mancante = round(sum(x["manca"] for x in scoperte), 2)
+        coda = (f'<div class="small mt-3"><strong class="neg">Mancano '
+                f'&euro; {_fmt_eur(mancante)}</strong> per coprire '
+                f'{"l&apos;ultima scadenza" if len(scoperte) == 1 else f"le ultime {len(scoperte)} scadenze"}.</div>')
 
     return f'''
     <style>
-      .cal{{display:flex;flex-direction:column;gap:var(--sp-3)}}
-      .cal-blocco{{display:flex;gap:var(--sp-3);padding:var(--sp-3);
-        border-radius:var(--r-sm);background:var(--surface-3)}}
-      .cal-data{{flex:none;width:62px;text-align:center;padding-top:2px;
-        border-right:1px solid var(--line);display:flex;
-        flex-direction:column;justify-content:flex-start}}
-      .cal-giorno{{font-family:var(--display);font-size:24px;line-height:1;
-        color:var(--ink)}}
-      .cal-mese{{font-size:11.5px;color:var(--ink-2);margin-top:2px}}
-      .cal-anno{{font-size:11px;color:var(--ink-3)}}
-      .cal-corpo{{flex:1;min-width:0}}
-      .cal-tot{{font-size:19px;font-weight:600;color:var(--ink);line-height:1.1}}
-      .cal-nota{{font-size:11px;color:var(--ink-3);margin-top:1px}}
-      .cal-voci{{margin-top:var(--sp-2);display:flex;flex-direction:column;gap:3px}}
-      .cal-voce{{display:flex;justify-content:space-between;gap:10px;
+      .scb{{padding:var(--sp-3);border-radius:var(--r-sm);
+        background:var(--surface-3);margin-bottom:var(--sp-3)}}
+      .scb:last-of-type{{margin-bottom:0}}
+      .scb.passata{{opacity:.62}}
+      .scb-head{{display:flex;gap:var(--sp-3);align-items:flex-start}}
+      .scb-data{{flex:none;width:58px;text-align:center;
+        display:flex;flex-direction:column;line-height:1.15}}
+      .scb-giorno{{font-family:var(--display);font-size:23px;color:var(--ink)}}
+      .scb-mese{{font-size:11.5px;color:var(--ink-2)}}
+      .scb-anno{{font-size:11px;color:var(--ink-3)}}
+      .scb-cifre{{flex:1;min-width:0}}
+      .scb-tot{{font-size:18px;font-weight:600;color:var(--ink);line-height:1.15}}
+      .scb-desc{{font-size:11.5px;color:var(--ink-3);margin-top:1px}}
+      .scb-pct{{flex:none;font-size:15px;font-weight:600}}
+      .scb-pct.pos{{color:var(--pos)}}
+      .scb-pct.warn{{color:var(--warn)}}
+      .scb-pct.neg{{color:var(--neg)}}
+      .scb .meter{{margin-top:var(--sp-3)}}
+      .scb-stato{{font-size:12px;margin-top:6px}}
+      .scb-stato.pos{{color:var(--pos)}}
+      .scb-stato.warn{{color:var(--warn)}}
+      .scb-stato.neg{{color:var(--neg)}}
+      .scb-voci{{margin-top:var(--sp-2);display:flex;flex-direction:column;gap:3px}}
+      .scb-voce{{display:flex;justify-content:space-between;gap:10px;
         font-size:12px;color:var(--ink-2)}}
-      .cal-resto{{display:flex;justify-content:space-between;gap:10px;
-        margin-top:var(--sp-2);padding-top:var(--sp-2);
-        border-top:1px solid var(--line);font-size:12px;font-weight:500}}
-      .cal-resto.pos{{color:var(--pos)}}
-      .cal-resto.neg{{color:var(--neg)}}
     </style>
     <div class="card">
       <div class="card-head">
-        <div class="eyebrow">Calendario dei versamenti</div>
+        <div class="eyebrow">Le scadenze, e quanto ho da parte{premessa}</div>
         <span class="chip">&euro; {_fmt_eur(totale)} in tutto</span>
       </div>
-      <p class="small muted">
-        Quello che il {anno} ti costa non serve tutto insieme. A giugno il
-        <strong>saldo</strong> dell&apos;anno pi&ugrave; la <strong>prima rata</strong>
-        degli acconti per il {anno + 1}; a novembre la <strong>seconda</strong>.
-        Il residuo qui sotto parte dal saldo P.IVA di oggi e scala una scadenza
-        alla volta.
-      </p>
-      <div class="cal mt-3">{"".join(blocchi)}</div>
-      {verdetto}
-      <details class="explain mt-3">
-        <summary>Perch&eacute; l&apos;imposta compare due volte</summary>
-        <p class="small muted mt-2">
-          A giugno versi il <strong>saldo</strong> dell&apos;anno appena chiuso;
-          fra giugno e novembre l&apos;<strong>acconto</strong> per l&apos;anno in
-          corso &mdash; INPS all&apos;80 % col metodo storico, imposta sostitutiva
-          al 100 %. L&apos;acconto non &egrave; una tassa in pi&ugrave;: si scomputa
-          dal saldo successivo, e a regime l&apos;uscita annua torna a essere una
-          annualit&agrave; sola. Ma quel fondo, la prima volta, va costituito, e in
-          quell&apos;anno devi avere in banca la somma di entrambi.
-        </p>
-      </details>
+      {"".join(blocchi)}
+      {bottone}
+      {coda}
     </div>'''
 
 
@@ -709,27 +829,34 @@ def _card_fondo_tasse(d: dict, anno: int) -> str:
                     f'scegliendo gli scenari.')
 
     righe_dettaglio = f'''
-      <div class="row"><span class="t">Ti serviranno
-        <span class="sub">saldo {anno}, acconti {anno + 1} e costi fissi,
-        calcolati sull'incassato dell'anno</span></span>
+      <div class="row"><span class="t">Ti serviranno{_info(
+          f"Saldo {anno}, acconti {anno + 1} e costi fissi, calcolati "
+          f"sull&apos;incassato dell&apos;anno.")}</span>
         <span class="v tnum">&euro; {_fmt_eur(serve)}</span></div>
-      <div class="row"><span class="t">Sul conto P.IVA, oggi
-        <span class="sub">entrate meno uscite meno giroconti, dall'apertura</span></span>
+      <div class="row"><span class="t">Sul conto P.IVA, oggi{_info(
+          "Entrate meno uscite meno giroconti, dall&apos;apertura della "
+          "partita IVA. &Egrave; il saldo vero del conto, non quello "
+          "dell&apos;anno filtrato.")}</span>
         <span class="v tnum {cls}">&euro; {_fmt_eur(saldo)}</span></div>
-      <div class="row"><span class="t">Di cui deciso di tenere
-        <span class="sub">{d["n_ripartite"]} fattur{"a" if d["n_ripartite"] == 1 else "e"}
-        gi&agrave; ripartit{"a" if d["n_ripartite"] == 1 else "e"}: la quota rimasta
-        sul conto</span></span>
+      <div class="row"><span class="t">Di cui deciso di tenere{_info(
+          f"La quota rimasta sul conto dalle {d['n_ripartite']} fatture "
+          f"gi&agrave; ripartite. &Egrave; un&apos;intenzione: quello che c&apos;&egrave; "
+          f"davvero &egrave; la riga sopra.")}</span>
         <span class="v tnum">&euro; {_fmt_eur(d["deciso"])}</span></div>
-      <div class="row"><span class="t">Incassato non ancora ripartito
-        <span class="sub">{d["n_da_ripartire"]} fattur{"a" if d["n_da_ripartire"] == 1 else "e"}:
-        i soldi sono tutti l&igrave;, la quota tua non &egrave; ancora uscita</span></span>
+      <div class="row"><span class="t">Incassato non ancora ripartito{_info(
+          f"{d['n_da_ripartire']} fatture incassate senza giroconto: i soldi "
+          f"sono tutti sul conto P.IVA, la quota tua non &egrave; ancora uscita. "
+          f"Quando la sposterai, il saldo qui sopra scender&agrave;.")}</span>
         <span class="v tnum">&euro; {_fmt_eur(d["da_ripartire"])}</span></div>'''
 
     return f'''
     <div class="card">
       <div class="card-head">
-        <div class="eyebrow">Fondo tasse {anno}</div>
+        <div class="eyebrow">Fondo tasse {anno}{_info(
+          "Il conto P.IVA porta anche il fondo degli anni prima. Se il saldo "
+          "dell&apos;anno scorso non l&apos;hai ancora versato, una parte di quel "
+          "denaro &egrave; gi&agrave; impegnata e la copertura qui accanto &egrave; "
+          "pi&ugrave; ottimista del vero.")}</div>
         <span class="chip {cls}">{chip}</span>
       </div>
       <div class="stat">
@@ -739,12 +866,7 @@ def _card_fondo_tasse(d: dict, anno: int) -> str:
       <div class="meter mt-3"><i class="{cls}" style="width:{pct_barra:.1f}%"></i></div>
       <div class="small mt-3">{verdetto}</div>
       <div class="rows detail mt-3">{righe_dettaglio}</div>
-      <div class="small muted mt-3">
-        Il conto P.IVA porta anche il fondo degli anni prima. Se il saldo
-        dell'anno scorso non l'hai ancora versato, una parte di quel denaro
-        &egrave; gi&agrave; impegnata e la copertura qui sopra &egrave; pi&ugrave;
-        ottimista del vero.
-      </div>
+
     </div>'''
 
 
@@ -846,7 +968,8 @@ def situazione_dashboard():
 
     # --- Il calendario: le due scadenze, e cosa resta dopo ciascuna ---------
     calendario_card = _card_calendario(
-        s, anno, fondo.get("saldo_piva") if fondo.get("disponibile") else None)
+        sb, s, anno,
+        fondo.get("saldo_piva") if fondo.get("disponibile") else None)
 
     # --- Limite forfettario --------------------------------------------------
     residuo = max(s["limite_ragguagliato"] - t["incasso"], 0)
@@ -1133,8 +1256,7 @@ def parametri_editor():
     # deve lasciare qui tre nomi scritti a mano che invecchiano in
     # silenzio (e' quello che era successo con "minimo" e "sicuro").
     righe_anteprima = "".join(
-        f'''<div class="row"><span class="t">{acc.ETICHETTE[k][0]}
-             <span class="sub">{acc.ETICHETTE[k][1]}</span></span>
+        f'''<div class="row"><span class="t">{acc.ETICHETTE[k][0]}{_info(acc.ETICHETTE[k][1])}</span>
            <span class="v tnum{" accent" if k == p.get("scenario_preferito") else ""}">
              € {_fmt_eur(anteprima["importi"][k])}</span></div>'''
         for k in acc.SCENARI)
@@ -1153,44 +1275,36 @@ def parametri_editor():
             <select id="f_regime">
               <option value="RF19"{" selected" if p["regime"] == "RF19" else ""}>RF19 — Forfettario</option>
             </select></div>
-          <div class="field"><label>Codice ATECO</label>
-            <input value="{p['ateco']} — {p.get('ateco_descrizione') or ''}" disabled>
-            <div class="hint">Modificabile solo da database.</div></div>
+          <div class="field"><label>Codice ATECO{_info("Modificabile solo da database.")}</label>
+            <input value="{p['ateco']} — {p.get('ateco_descrizione') or ''}" disabled></div>
           <div class="field-group">
             <div class="field"><label>Data apertura P.IVA</label>
               <input type="date" id="f_data_apertura" value="{p['data_apertura_piva']}"></div>
-            <div class="field"><label>Fine regime agevolato</label>
-              <input type="number" id="f_anno_fine" value="{p.get('anno_fine_regime_agevolato') or ''}">
-              <div class="hint">Primo anno con aliquota al 15 %.</div></div>
+            <div class="field"><label>Fine regime agevolato{_info("Primo anno con aliquota al 15 %.")}</label>
+              <input type="number" id="f_anno_fine" value="{p.get('anno_fine_regime_agevolato') or ''}"></div>
           </div>
         </div>
 
         <div class="card">
           <div class="card-head"><div class="eyebrow">Aliquote</div></div>
           <div class="field-group">
-            <div class="field"><label>Coefficiente redditività</label>
-              <input type="number" step="0.0001" id="f_coeff" value="{p['coeff_ateco']}">
-              <div class="hint">0,67 per la consulenza informatica.</div></div>
-            <div class="field"><label>Imposta sostitutiva</label>
-              <input type="number" step="0.0001" id="f_aliq_imp" value="{p['aliquota_imposta']}">
-              <div class="hint">0,05 nei primi cinque anni.</div></div>
+            <div class="field"><label>Coefficiente redditività{_info("0,67 per la consulenza informatica.")}</label>
+              <input type="number" step="0.0001" id="f_coeff" value="{p['coeff_ateco']}"></div>
+            <div class="field"><label>Imposta sostitutiva{_info("0,05 nei primi cinque anni.")}</label>
+              <input type="number" step="0.0001" id="f_aliq_imp" value="{p['aliquota_imposta']}"></div>
           </div>
           <div class="field-group">
             <div class="field"><label>INPS gestione separata</label>
               <input type="number" step="0.0001" id="f_aliq_inps" value="{p['aliquota_inps']}"></div>
-            <div class="field"><label>Acconto INPS</label>
-              <input type="number" step="0.0001" id="f_aliq_acc" value="{p['aliquota_acconto']}">
-              <div class="hint">0,80 col metodo storico.</div></div>
+            <div class="field"><label>Acconto INPS{_info("0,80 col metodo storico.")}</label>
+              <input type="number" step="0.0001" id="f_aliq_acc" value="{p['aliquota_acconto']}"></div>
           </div>
           <div class="field-group">
-            <div class="field"><label>Acconto imposta</label>
-              <input type="number" step="0.01" id="f_acc_imp" value="{p.get('acconto_imposta_perc', 1.0)}">
-              <div class="hint">1,00 = 100 % del saldo, nessuna riduzione.</div></div>
-            <div class="field"><label>Acconto — 1ª rata, quota a giugno</label>
+            <div class="field"><label>Acconto imposta{_info("1,00 = 100 % del saldo, nessuna riduzione.")}</label>
+              <input type="number" step="0.01" id="f_acc_imp" value="{p.get('acconto_imposta_perc', 1.0)}"></div>
+            <div class="field"><label>Acconto — 1ª rata, quota a giugno{_info("0,40 = 40 % con il saldo di giugno, il resto al 30/11. A 0 va tutto sulla scadenza di novembre.")}</label>
               <input type="number" step="0.01" id="f_acc_rata"
-                     value="{p.get('acconto_prima_rata_perc', 0.40)}">
-              <div class="hint">0,40 = 40 % con il saldo di giugno, il resto
-                al 30/11. A 0 va tutto sulla scadenza di novembre.</div></div>
+                     value="{p.get('acconto_prima_rata_perc', 0.40)}"></div>
             <div class="field"><label>Limite fatturato annuo (€)</label>
               <input type="number" step="0.01" id="f_limite" value="{p['limite_fatturato_anno']}"></div>
           </div>
@@ -1204,12 +1318,9 @@ def parametri_editor():
 
         <div class="card">
           <div class="card-head"><div class="eyebrow">Tariffa</div></div>
-          <div class="field"><label>Tariffa giornaliera (€)</label>
+          <div class="field"><label>Tariffa giornaliera (€){_info("Quanto vale una giornata da 8 ore. È il prezzo che il timesheet propone quando precompila la fattura di fine mese: giornate × tariffa, una riga sola.")}</label>
             <input type="number" step="0.01" min="0" id="f_tariffa"
-                   value="{p.get('tariffa_giornaliera', 250)}">
-            <div class="hint">Quanto vale una giornata da 8 ore. È il prezzo
-              che il timesheet propone quando precompila la fattura di fine
-              mese: giornate × tariffa, una riga sola.</div></div>
+                   value="{p.get('tariffa_giornaliera', 250)}"></div>
         </div>
 
         <div class="card">
@@ -1219,21 +1330,17 @@ def parametri_editor():
             quanto l'app ti consiglia di mettere da parte.
           </p>
           <div class="field-group">
-            <div class="field"><label>Margine di sicurezza</label>
-              <input type="number" step="0.01" id="f_margine" value="{p.get('margine_sicurezza', 0.10)}">
-              <div class="hint">0,10 = 10 % in più del dovuto.</div></div>
+            <div class="field"><label>Margine di sicurezza{_info("0,10 = 10 % in più del dovuto.")}</label>
+              <input type="number" step="0.01" id="f_margine" value="{p.get('margine_sicurezza', 0.10)}"></div>
             <div class="field"><label>Scenario preferito</label>
               <select id="f_scenario">{scen_opts}</select>
               <div class="hint">Quello mostrato per primo.</div></div>
           </div>
           <div class="field-group">
-            <div class="field"><label>Costi fissi annui (€)</label>
-              <input type="number" step="0.01" id="f_costi" value="{p.get('costi_fissi_annui', 0)}">
-              <div class="hint">Commercialista, PEC, bolli, commissioni.</div></div>
-            <div class="field"><label>Fatturato atteso annuo (€)</label>
-              <input type="number" step="0.01" id="f_atteso" value="{p.get('fatturato_atteso_anno', 0)}">
-              <div class="hint">Su cui spalmare i costi fissi. A zero li stima
-                dall'incassato dell'anno.</div></div>
+            <div class="field"><label>Costi fissi annui (€){_info("Commercialista, PEC, bolli, commissioni.")}</label>
+              <input type="number" step="0.01" id="f_costi" value="{p.get('costi_fissi_annui', 0)}"></div>
+            <div class="field"><label>Fatturato atteso annuo (€){_info("Su cui spalmare i costi fissi. A zero li stima dall'incassato dell'anno.")}</label>
+              <input type="number" step="0.01" id="f_atteso" value="{p.get('fatturato_atteso_anno', 0)}"></div>
           </div>
         </div>
 

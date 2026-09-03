@@ -24,7 +24,7 @@ from .costanti import (
     ha_incassato, indice_percorso,
 )
 from shared.theme import render_page
-from shared.design import icon as _icon
+from shared.design import icon as _icon, info as _info
 from shared.supabase_client import get_client, is_configured
 from shared.fmt import (eur as _fmt_eur, data_it as _fmt_date, mese_anno, pct)
 
@@ -518,10 +518,11 @@ def fattura_dettaglio(fid):
     riga_rivalsa_giro = ""
     if rivalsa_f > 0:
         riga_rivalsa_giro = (
-            f'<div class="row"><span class="t">di cui rivalsa INPS'
-            f'<span class="sub">resta sul conto P.IVA: è già dentro la quota '
-            f'accantonata, non va messa da parte una seconda volta</span></span>'
-            f'<span class="v tnum">€ {_fmt_eur(rivalsa_f)}</span></div>')
+            '<div class="row"><span class="t">di cui rivalsa INPS'
+            + _info("Resta sul conto P.IVA: &egrave; gi&agrave; dentro la quota "
+                    "accantonata, non va messa da parte una seconda volta.")
+            + '</span>'
+            + f'<span class="v tnum">€ {_fmt_eur(rivalsa_f)}</span></div>')
 
     if giroconto_fatto:
         scen_scelto = f.get("accantonamento_scenario") or ""
@@ -533,8 +534,8 @@ def fattura_dettaglio(fid):
             <span class="chip pos">{etichetta_scelta}</span>
           </div>
           <div class="rows detail">
-            <div class="row"><span class="t">Rimasto sul conto P.IVA
-              <span class="sub">accantonato per tasse, costi e margine</span></span>
+            <div class="row"><span class="t">Rimasto sul conto P.IVA{_info(
+              "Accantonato per tasse, costi e margine.")}</span>
               <span class="v tnum">€ {_fmt_eur(f.get("accantonamento_importo"))}</span></div>
             {riga_rivalsa_giro}
             <div class="row"><span class="t">Spostato sul conto personale
@@ -576,10 +577,10 @@ def fattura_dettaglio(fid):
                      {"checked" if k == pref else ""} onchange="aggiornaGiro()">
               <span class="sg-body">
                 <span class="sg-top">
-                  <span class="sg-nome">{titolo_s}</span>
+                  <span class="sg-nome">{titolo_s}{_info(spiega)}</span>
                   <span class="sg-pct tnum">{pct(scomposizione["aliquote"][k])}</span>
                 </span>
-                <span class="sg-descr">{spiega}</span>
+
                 <span class="sg-num">
                   Accantoni <strong class="tnum">€ {_fmt_eur(quota)}</strong>
                   · sposti <strong class="tnum pos">€ {_fmt_eur(resta)}</strong>
@@ -626,7 +627,9 @@ def fattura_dettaglio(fid):
             f'<div class="row"><span class="t">di cui compenso</span>'
             f'<span class="v tnum">€ {_fmt_eur(corrispettivo - rivalsa)}</span></div>'
             f'<div class="row"><span class="t">di cui rivalsa INPS {perc} %'
-            f'<span class="sub">scorporata dal corrispettivo, non aggiunta</span></span>'
+            + _info("Scorporata dal corrispettivo, non aggiunta sopra: il totale "
+                    "che il cliente paga non cambia, &egrave; il compenso a ridursi.")
+            + '</span>'
             f'<span class="v tnum">€ {_fmt_eur(rivalsa)}</span></div>'
         )
     if float(f.get("bollo") or 0) > 0:
@@ -857,7 +860,6 @@ def fattura_dettaglio(fid):
       .sg-top{{display:flex;justify-content:space-between;gap:8px;align-items:baseline}}
       .sg-nome{{font-weight:600;font-size:14.5px;color:var(--ink)}}
       .sg-pct{{font-size:13px;color:var(--accent-text)}}
-      .sg-descr{{font-size:12px;color:var(--ink-3);line-height:1.4}}
       .sg-num{{font-size:12.5px;color:var(--ink-2);margin-top:3px}}
       /* Quanto di questa scelta e' acconto dell'anno prossimo. Sta qui e
          non solo nella card perche' questo e' il foglio in cui i soldi si

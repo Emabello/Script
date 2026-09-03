@@ -424,11 +424,15 @@ def risparmi_pagina():
         const v = Number(document.getElementById('f_imp').value || 0);
         const quando = document.getElementById('f_data').value;
         if (!(v > 0)) {{ toast('Importo non valido', 'err'); return; }}
-        if (!confirm('Registro un\'uscita di € ' + v.toLocaleString('it-IT',
+        // Le virgolette e gli a-capo qui dentro finiscono in JS, non in
+        // Python: servono i doppi backslash. Con uno solo Python li
+        // consuma, la stringa JS si chiude a meta' frase e va in errore
+        // di sintassi TUTTO lo script — compresi i bottoni piu' sotto.
+        if (!confirm("Registro un'uscita di € " + v.toLocaleString('it-IT',
             {{minimumFractionDigits: 2, maximumFractionDigits: 2}}) +
             ' dal conto personale verso i salvadanai, con data ' + quando +
-            '.\n\nIl bonifico vero lo fai tu dalla banca: qui si registra che '
-            + 'e\' successo.')) return;
+            '.\\n\\nIl bonifico vero lo fai tu dalla banca: qui si registra '
+            + "che e' successo.")) return;
         const btn = document.getElementById('btnEsegui');
         btn.disabled = true;
         try {{
