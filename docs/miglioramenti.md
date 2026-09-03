@@ -22,7 +22,7 @@ come), **Stato**.
 **Cosa**: la ripartizione della fattura 2026/001 ha scritto sul conto personale **una** entrata da 2.425,52 datata 05/08. In banca quel denaro si è mosso in **tre** volte: +2.000,00 il 05/08, +1.491,85 il 13/08 (insieme fanno 3.491,85, che è esattamente `giroconto_importo` della fattura) e −1.068,33 il 02/09, un rientro verso il conto P.IVA. Netto reale sul personale: 2.423,52. L'app ne ha 2.425,52.
 **Perché si rompe**: `giroconto.py` scrive l'entrata sul personale con l'importo *deciso*, in un colpo solo e con la data della decisione. Il bonifico vero però lo fai tu dalla banca, quando vuoi e in quante tranche vuoi — e può anche tornare indietro. Le due cose non hanno nessun vincolo che le tenga insieme: la riga nell'app è una **dichiarazione**, non il movimento. È la stessa forma del bug che è costato 829,78 € (`spese/dati.py::saldo_conto`), dove il risparmio dichiarato conviveva col bonifico vero; lì è stata chiusa, qui è rimasta aperta per i giroconti.
 **Impatto**: **2,00 € di scarto reale**, trovati riconciliando l'estratto WeBank del 04/08–03/09 contro il database. Sono pochi, ma il meccanismo non ha un tetto: ogni tranche in più, ogni rientro, ogni commissione sul bonifico allarga la forbice, e nessuna pagina la mostra perché entrambi i lati sono internamente coerenti. Il saldo dell'app al 03/08 combacia al centesimo con la banca (166,48), quindi tutto lo scarto nasce da qui in avanti.
-**Stato**: aperto. La strada che chiude il caso è la stessa già usata per i risparmi: il giroconto non scrive l'entrata sul personale, ma la lascia da riconciliare con il movimento vero che arriva dall'import banca — oppure, versione minima, la registra e poi si fa correggere dall'estratto senza che nessuno debba accorgersene a mano. Va deciso insieme, perché cambia il momento in cui il denaro "risulta" arrivato.
+**Stato**: aperto, e dal 03/09/2026 **misurato**: chiusi tutti gli altri scarti, il conto personale dell'app sta 2,00 sopra la banca, ed e' esattamente questa voce. La strada che chiude il caso è la stessa già usata per i risparmi: il giroconto non scrive l'entrata sul personale, ma la lascia da riconciliare con il movimento vero che arriva dall'import banca — oppure, versione minima, la registra e poi si fa correggere dall'estratto senza che nessuno debba accorgersene a mano. Va deciso insieme, perché cambia il momento in cui il denaro "risulta" arrivato.
 
 ### [2026-09-01] L'elenco degli stati vive in due posti, e uno dei due è il database
 **Cosa**: `fatture/costanti.py::STATI` è la sorgente di verità degli stati della fattura, ma il `CHECK` `b2f_fatture_stato_check` ne tiene una copia — un `stato in ('bozza', ...)` scritto a mano — che vive nel database e si aggiorna solo con una migrazione. La 8.15 ha aggiunto `inviata_nadia` a tutti e due, ma non ha tolto il doppione: ha solo tolto il **terzo**, l'elenco che stava dentro `v_situazione_annuale`, riscrivendo la vista in modo che chieda "non bozza e non annullata" invece di elencare.
@@ -281,6 +281,18 @@ Sul secondo pezzo, quello che si vede già dal solo lato banca: nell'anno sono u
 | **saldo app = saldo banca** | | **+829,78** |
 
 Nessuno dei pezzi da solo chiude: applicarne una parte sposta il saldo mostrato senza avvicinarlo al vero. Le 13 righe senza descrizione sono l'unico punto che richiede il giudizio dell'utente (spese in contanti mai passate dal conto, oppure doppioni).
+
+**Terza riconciliazione, 03/09/2026 — gli ultimi 30 giorni (estratto WeBank, 3.742,32 al 03/09).** L'app diceva 3.738,82: **3,50 in meno**. Il punto di partenza del confronto è che al 03/08 i due lati coincidono al centesimo (166,48 su entrambi), quindi tutto lo scarto nasce dentro la finestra, e si scompone così:
+
+| voce | effetto su (app − banca) |
+|---|---|
+| entrata mancante: **secondo** bonifico da 5,50 di Bassanini Chiara (31/08, rif. `MB0B08650543`); l'app aveva solo quello del 27/08 (`PY0CUFW5KMFL`) | −5,50 |
+| giroconto della fattura 2026/001 registrato per 2.425,52 contro 2.423,52 realmente arrivati sul personale | +2,00 |
+| **totale** | **−3,50** |
+
+**Falsa pista da non ripercorrere**: due coppie di McDonald's da 1,10 e 2,70 sembravano doppioni di import. L'estratto ha smentito la prima — il 02/09 ci sono **due** acquisti veri da 1,10 nello stesso giorno. Nessuna riga è stata cancellata perché la verifica è arrivata prima; la lezione è nella voce sull'import qui sotto.
+
+**Correzione applicata il 03/09/2026**: inserita in `spese` la riga **id 1083** (2026-08-31, entrata 5,50, "Bonifico da Bassanini Chiara Terea", metodo "Import banca", stessa categoria del gemello del 27/08), tramite la funzione `insert_spesa_first_free_id` — una `INSERT` diretta fallisce, la sequenza di `spese.id` è disallineata rispetto al `max(id)`. Saldo dell'app: da 3.738,82 a **3.744,32**. Contro la banca resta **+2,00 esatti**, che sono per intero il giroconto: lo scarto residuo non è più un mistero, è una voce aperta con un nome.
 
 
 ---
