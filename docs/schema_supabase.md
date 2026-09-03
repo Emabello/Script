@@ -169,6 +169,9 @@ Ultimo aggiornamento: 2026-09-03 (dopo le migrazioni § 8.14, § 8.15, § 8.16, 
 | `giroconto_piva_id` | bigint | YES | NO |  |
 | `giroconto_personale_id` | bigint | YES | NO |  |
 | `data_invio_nadia` | date | YES | NO |  |
+| `ore_periodo` | date | YES | NO |  |
+| `ore_snapshot` | jsonb | YES | NO |  |
+| `ore_lette_il` | timestamp with time zone | YES | NO |  |
 
 **Vincoli:**
 

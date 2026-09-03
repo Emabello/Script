@@ -537,8 +537,8 @@ def fattura_dettaglio(fid):
         # dei due che si puo' spendere (vedi `fatture/giroconto.py`).
         from . import giroconto as _giro
         sg = _giro.riconcilia(sb, f)
-        if sg["manca"] > 0.005:
-            giro_deciso_js = f'{sg["manca"]:.2f}'
+        if sg["in_attesa"]:
+            giro_deciso_js = f'{sg["deciso"]:.2f}'
 
         righe_mov = []
         for m in sg["movimenti"]:
@@ -564,22 +564,41 @@ def fattura_dettaglio(fid):
               <div class="ge-sub">Sul conto personale non è ancora arrivato niente.
                 I € {_fmt_eur(sg["deciso"])} sono ancora sul conto P.IVA.</div>
             </div>'''
-        elif abs(sg["manca"]) < 0.005:
+        elif abs(sg["scarto"]) < 0.005:
             esito = f'''
             <div class="giro-esito ok">
               <div class="ge-top">Arrivato tutto</div>
               <div class="ge-sub">Quello che hai deciso di spostare e quello che
                 la banca ha davvero mosso combaciano al centesimo.</div>
             </div>'''
+        elif sg["scarto"] > 0:
+            # Arrivato MENO del deciso: il resto e' rimasto accantonato.
+            # Non e' un ammanco, ed e' sbagliato dipingerlo di rosso —
+            # questa card diceva "Manca ancora € 2,00" su una ripartizione
+            # in cui non mancava niente.
+            esito = f'''
+            <div class="giro-esito meno">
+              <div class="ge-top">Rimasti sul conto P.IVA € {_fmt_eur(sg["scarto"])}
+                in più del previsto{_info(
+                "Sul personale &egrave; arrivato meno di quanto avevi deciso di "
+                "spostare, quindi la differenza &egrave; rimasta dov&#39;era: "
+                "accantonata. Succede con le competenze bancarie, gli "
+                "arrotondamenti o un bonifico fatto a cifra tonda. Non toglie "
+                "niente a quello che hai da parte — semmai il contrario.")}</div>
+              <div class="ge-sub">Deciso € {_fmt_eur(sg["deciso"])} ·
+                arrivato € {_fmt_eur(sg["arrivato"])}. Se invece il bonifico non è
+                finito, registra il resto quando lo fai.</div>
+            </div>'''
         else:
-            verso = "Manca ancora" if sg["manca"] > 0 else "Arrivato in più"
+            # Arrivato PIU' del deciso: questo si', e' un problema.
             esito = f'''
             <div class="giro-esito scarto">
-              <div class="ge-top">{verso} € {_fmt_eur(abs(sg["manca"]))}{_info(
-                "Differenza fra quanto avevi deciso di spostare e quanto la banca "
-                "ha davvero mosso, al netto di eventuali rientri. Non &egrave; un "
-                "errore da correggere a mano: o il bonifico &egrave; ancora "
-                "incompleto, o l&#39;importo &egrave; stato diverso.")}</div>
+              <div class="ge-top">Spostati € {_fmt_eur(abs(sg["scarto"]))} in più
+                del deciso{_info(
+                "Sul conto personale &egrave; arrivato pi&ugrave; di quanto la "
+                "ripartizione aveva destinato a te: la differenza esce dalla quota "
+                "accantonata per tasse e costi, che adesso &egrave; pi&ugrave; "
+                "bassa di quanto lo scenario prevedeva.")}</div>
               <div class="ge-sub">Deciso € {_fmt_eur(sg["deciso"])} ·
                 arrivato € {_fmt_eur(sg["arrivato"])}.</div>
             </div>'''
@@ -601,7 +620,8 @@ def fattura_dettaglio(fid):
             <div class="row"><span class="t">Arrivato sul conto personale{_info(
               "La somma dei movimenti veri del conto, entrate meno uscite: un "
               "bonifico pu&ograve; arrivare in pi&ugrave; tranche e una parte pu&ograve; "
-              "tornare indietro.")}</span>
+              "tornare indietro. Se &egrave; meno del deciso, la differenza &egrave; "
+              "rimasta accantonata sul conto P.IVA: non manca a nessuno.")}</span>
               <span class="v tnum {"pos" if sg["arrivato"] > 0 else ""}">€ {_fmt_eur(sg["arrivato"])}</span></div>
           </div>
           {esito}
@@ -961,6 +981,10 @@ def fattura_dettaglio(fid):
       .giro-esito.attesa{{border-color:color-mix(in srgb,var(--warn) 45%,transparent);
         background:color-mix(in srgb,var(--warn) 9%,var(--surface))}}
       .giro-esito.attesa .ge-top{{color:var(--warn)}}
+      /* Arrivato meno del deciso: la differenza e' rimasta accantonata.
+         Grigio e non rosso — dipingere di rosso un residuo verso il basso
+         e' esattamente l'errore che questa card faceva. */
+      .giro-esito.meno .ge-top{{color:var(--ink)}}
       .giro-esito.scarto{{border-color:color-mix(in srgb,var(--neg) 45%,transparent);
         background:color-mix(in srgb,var(--neg) 9%,var(--surface))}}
       .giro-esito.scarto .ge-top{{color:var(--neg)}}
