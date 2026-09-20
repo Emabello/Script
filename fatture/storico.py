@@ -137,7 +137,7 @@ def _timeline(f: dict, stato: str) -> str:
 # Lista
 # ---------------------------------------------------------------------------
 
-@fatture_bp.get("/storico")
+@fatture_bp.get("/fatture/storico")
 def storico_list():
     sb, err = _supabase_or_error()
     if err:
@@ -352,7 +352,7 @@ def _card_ore(f: dict) -> str:
     </div>'''
 
 
-@fatture_bp.get("/<int:fid>")
+@fatture_bp.get("/fatture/<int:fid>")
 def fattura_dettaglio(fid):
     sb, err = _supabase_or_error()
     if err:
@@ -1322,7 +1322,7 @@ def fattura_dettaglio(fid):
 # API JSON
 # ---------------------------------------------------------------------------
 
-@fatture_bp.get("/api/fatture")
+@fatture_bp.get("/fatture/api/fatture")
 def api_fatture_list():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1337,7 +1337,7 @@ def api_fatture_list():
         return jsonify({"error": str(e)[:200]}), 500
 
 
-@fatture_bp.get("/api/fatture/<int:fid>")
+@fatture_bp.get("/fatture/api/fatture/<int:fid>")
 def api_fattura_get(fid):
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1348,7 +1348,7 @@ def api_fattura_get(fid):
         return jsonify({"error": str(e)[:200]}), 500
 
 
-@fatture_bp.get("/api/next_progressivo")
+@fatture_bp.get("/fatture/api/next_progressivo")
 def api_next_progressivo():
     """Chiama la funzione SQL b2f_next_progressivo(anno)."""
     sb, err = _supabase_or_error()
@@ -1372,7 +1372,7 @@ def api_next_progressivo():
             return jsonify({"error": f"{str(e)[:100]} | fallback: {str(e2)[:100]}"}), 500
 
 
-@fatture_bp.patch("/api/fatture/<int:fid>/stato")
+@fatture_bp.patch("/fatture/api/fatture/<int:fid>/stato")
 def api_fattura_stato(fid):
     """
     Cambia lo stato della fattura, registrando la data del passaggio.
@@ -1474,7 +1474,7 @@ def _carica_fattura(sb, fid):
         return None, (jsonify({"error": f"fattura non trovata: {str(e)[:120]}"}), 404)
 
 
-@fatture_bp.patch("/api/fatture/<int:fid>")
+@fatture_bp.patch("/fatture/api/fatture/<int:fid>")
 def api_fattura_update(fid):
     """
     Aggiorna una fattura ancora modificabile (bozza o inviata a Nadia).
@@ -1536,7 +1536,7 @@ def api_fattura_update(fid):
         return jsonify({"error": str(e)[:250]}), 500
 
 
-@fatture_bp.delete("/api/fatture/<int:fid>")
+@fatture_bp.delete("/fatture/api/fatture/<int:fid>")
 def api_fattura_delete(fid):
     """
     Elimina una bozza. Le fatture uscite non si cancellano: si annullano,
@@ -1573,7 +1573,7 @@ def api_fattura_delete(fid):
         return jsonify({"error": str(e)[:200]}), 500
 
 
-@fatture_bp.post("/api/fatture/<int:fid>/registra-entrata")
+@fatture_bp.post("/fatture/api/fatture/<int:fid>/registra-entrata")
 def api_fattura_registra_entrata(fid):
     """
     Crea riga in tabella `b2f_spese_piva` (tipo=entrata) e collega
@@ -1638,7 +1638,7 @@ def api_fattura_registra_entrata(fid):
     return jsonify({"ok": True, "spesa_piva_id": spesa_piva_id})
 
 
-@fatture_bp.get("/api/fatture-per-ore")
+@fatture_bp.get("/fatture/api/fatture-per-ore")
 def api_fatture_per_ore():
     """
     Le fatture agganciate a un mese di ore. `?periodo=AAAA-MM`.
@@ -1674,7 +1674,7 @@ def api_fatture_per_ore():
     return jsonify({"periodo": periodo, "fatture": righe})
 
 
-@fatture_bp.post("/api/fatture/<int:fid>/ore")
+@fatture_bp.post("/fatture/api/fatture/<int:fid>/ore")
 def api_fattura_ore(fid):
     """
     Aggancia (o riaggancia) una fattura a un mese di ore.
@@ -1734,7 +1734,7 @@ def api_fattura_ore(fid):
     return jsonify({"ok": True, **payload})
 
 
-@fatture_bp.post("/api/fatture")
+@fatture_bp.post("/fatture/api/fatture")
 def api_fattura_create():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503

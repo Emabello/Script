@@ -138,6 +138,26 @@ DB = {
          "categoria": "Giroconto P.IVA", "sottocategoria": None},
         # Fattura 3: ripartita ma il bonifico non e' ancora partito. Non
         # c'e' nessuna riga: e' proprio il punto — l'app non ne inventa una.
+        #
+        # Il bonifico ai salvadanai: un'uscita vera, categoria "Risparmi"
+        # (README §8.11). Serve a far vedere un periodo gia' allineato —
+        # senza, la procedura di fine periodo mostrerebbe sempre e solo lo
+        # stato "da fare" e meta' della pagina Risparmi non si proverebbe.
+        {"id": 11, "data": "2026-07-25", "importo": 400.00, "tipo": "uscita",
+         "descrizione": "Bonifico a Revolut", "metodo_pagamento": "Bonifico",
+         "categoria": "Risparmi", "sottocategoria": None},
+        # Due giroconti in agosto, cioe' DUE periodi di stipendio dentro lo
+        # stesso mese solare — e nessuno dei due allineato. E' il caso che
+        # rende la pagina Risparmi difficile da leggere se il menu elenca
+        # mesi invece di periodi: due voci "Agosto 2026" indistinguibili.
+        {"id": 12, "data": "2026-08-10", "importo": 2076.86, "tipo": "entrata",
+         "descrizione": "Trasferimento da conto *0479",
+         "metodo_pagamento": "Import banca",
+         "categoria": "Giroconto P.IVA", "sottocategoria": None},
+        {"id": 13, "data": "2026-08-24", "importo": 1491.85, "tipo": "entrata",
+         "descrizione": "Trasferimento da conto *0479",
+         "metodo_pagamento": "Import banca",
+         "categoria": "Giroconto P.IVA", "sottocategoria": None},
     ],
     # Saldo di apertura del conto personale: e' da qui che parte il saldo
     # mostrato in home e su /spese.
@@ -278,17 +298,85 @@ DB["v_spese"] = [_riga_v_spese(r) for r in DB["spese"]]
 
 # v_risparmi_mese: i nomi delle colonne hanno spazi e maiuscole come nella
 # vista vera (spese/dati.py::periodi_risparmio li traduce).
-DB["v_risparmi_mese"] = [
-    {"Data bonifico": "2026-07-12", "Data prossimo bonifico": "2026-08-06",
-     "Mese": "luglio", "Importo Bonifico": 1200.00,
-     "Importo Prima Del Bonifico": 4200.00, "Totale Fisso": 42.90,
-     "Totale Personale": 74.40, "Totale Benzina": 0, "Totale Viaggi": 0,
-     "Totale Speso": 117.30, "Totale Altre Entrate": 0,
-     "Totale Rimanente": 1082.70, "Risparmio consigliato (€)": 325.00,
-     "Risparmio effettivo (€)": 300.00, "Totale Rimanente (finale)": 4982.70,
-     "Quota Fondo Emergenze": 120.00, "Quota Viaggi": 60.00,
-     "Quota Fondo Casa": 60.00, "Quota Regali": 30.00, "Quota Altro": 30.00},
-]
+#
+# **Calcolata dai movimenti, non scritta a mano.** Era un elenco fisso, e
+# un elenco fisso non puo' mentire in un modo solo: mentiva in due. I
+# totali non corrispondevano alle righe di `spese`, quindi una pagina che
+# mostra il dettaglio accanto al totale sembrava sbagliata anche quando
+# era giusta; e i casi che contano — due periodi nello stesso mese, un
+# periodo mai allineato, un'uscita che non e' una spesa — non c'erano
+# affatto. Qui le regole di aggregazione sono le stesse della vista vera,
+# copiate dal SQL: se qualcuno tocca i movimenti qui sopra, i periodi si
+# rifanno da soli e restano coerenti.
+def _costruisci_v_risparmi_mese():
+    from datetime import date as _d, timedelta as _td
+
+    oggi = _d.today().isoformat()
+    imp = DB["impostazioni"][0]
+    righe = DB["v_spese"]
+
+    # I periodi: un'entrata di stipendio o giroconto P.IVA ne apre uno, e
+    # il successivo lo chiude (v_periodi_stipendio).
+    aperture = sorted(
+        ((r["data"][:10], float(r["importo"] or 0)) for r in righe
+         if r.get("tipo") == "entrata"
+         and r.get("categoria") in ("Stipendio", "Giroconto P.IVA")),
+        key=lambda x: x[0])
+
+    out, delta_prec = [], 0.0
+    for i, (dal, bonifico) in enumerate(aperture):
+        prossimo = aperture[i + 1][0] if i + 1 < len(aperture) else None
+        if prossimo:
+            y, m, g = (int(x) for x in prossimo.split("-"))
+            al = (_d(y, m, g) - _td(days=1)).isoformat()
+        else:
+            al = oggi
+        dentro = [r for r in righe if dal <= (r.get("data") or "")[:10] <= al]
+
+        def somma(prova):
+            return round(sum(abs(float(r.get("importo") or 0))
+                             for r in dentro if prova(r)), 2)
+
+        cat = lambda r: r.get("categoria") or ""
+        speso = somma(lambda r: r.get("tipo") == "uscita" and cat(r) != "Risparmi")
+        altre = somma(lambda r: r.get("tipo") == "entrata"
+                      and cat(r) not in ("Stipendio", "Giroconto P.IVA", "Risparmi"))
+        effettivo = round(
+            somma(lambda r: cat(r) == "Risparmi" and r.get("tipo") == "uscita")
+            - somma(lambda r: cat(r) == "Risparmi" and r.get("tipo") != "uscita"), 2)
+
+        prima = round(float(imp["saldo_iniziale"]) + delta_prec, 2)
+        base = round(prima + bonifico + altre - speso, 2)
+        consigliato = round(max(base * float(imp["percentuale_risparmio"]), 0), 2)
+        delta_prec = round(delta_prec + bonifico + altre - speso - effettivo, 2)
+
+        quota = lambda campo: round(effettivo * float(imp[campo]), 2)
+        out.append({
+            "Data bonifico": dal, "Data prossimo bonifico": prossimo,
+            # La vista vera ci mette il nome del mese (to_char TMmonth).
+            "Mese": _d(*(int(x) for x in dal.split("-"))).strftime("%B").lower(),
+            "Importo Bonifico": round(bonifico, 2),
+            "Importo Prima Del Bonifico": prima,
+            "Totale Fisso": somma(lambda r: r.get("tipo") == "uscita" and cat(r) == "Fisso"),
+            "Totale Personale": somma(lambda r: r.get("tipo") == "uscita" and cat(r) == "Personale"),
+            "Totale Benzina": somma(lambda r: r.get("tipo") == "uscita" and cat(r) == "Benzina"),
+            "Totale Viaggi": somma(lambda r: r.get("tipo") == "uscita" and cat(r) == "Viaggi"),
+            "Totale Speso": speso, "Totale Altre Entrate": altre,
+            "Totale Rimanente": round(bonifico + altre - speso, 2),
+            "Risparmio consigliato (€)": consigliato,
+            "Risparmio effettivo (€)": effettivo,
+            "Totale Rimanente (finale)": round(base - effettivo, 2),
+            "Quota Fondo Emergenze": quota("perc_fondo_emergenze"),
+            "Quota Viaggi": quota("perc_viaggi"),
+            "Quota Fondo Casa": quota("perc_fondo_casa"),
+            "Quota Regali": quota("perc_regali"),
+            "Quota Altro": quota("perc_altro"),
+            "_Fine periodo (debug)": al,
+        })
+    return out
+
+
+DB["v_risparmi_mese"] = _costruisci_v_risparmi_mese()
 
 
 def _oltre(stato, passo):

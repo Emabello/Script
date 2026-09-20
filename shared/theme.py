@@ -25,13 +25,62 @@ from .caricamento import TENDA_CSS, TENDA_JS, TENDA_BOOT, tenda_html
 # ---------------------------------------------------------------------------
 
 NAV = (
-    # (chiave sezione, etichetta, href, icona)
-    ("home",    "Home",    "/",        "home"),
-    ("ore",     "Ore",     "/ore",     "ore"),
-    ("fatture", "Fatture", "/fatture", "fatture"),
-    ("spese",   "Spese",   "/spese",   "spese"),
-    ("saldi",   "Saldi",   "/saldi",   "wallet"),
+    # (chiave sezione, etichetta, href, icona, figli)
+    #
+    # I CONTI SONO UN ALBERO, PERCHE' LO SONO DAVVERO
+    # -----------------------------------------------
+    # Due banche, e una delle due ha due conti. Prima i tre conti
+    # vivevano in tre posti diversi sotto due sezioni diverse — il conto
+    # P.IVA dentro "Fatture", il personale e Revolut dentro "Spese" —
+    # mentre /saldi li mostrava tutti e tre insieme. La visione unita
+    # esisteva gia': era la navigazione a contraddirla, e "Movimenti
+    # P.IVA" compariva negli elenchi di entrambe le sezioni perche'
+    # nessuna delle due era il posto giusto.
+    #
+    # Sparisce anche "Spese", che non conteneva spese: conteneva il conto
+    # personale (dove meta' delle righe sono entrate), i risparmi, Revolut
+    # e l'import. E sparisce "Saldi", che mostrava lo stesso identico
+    # blocco della home (`_blocco_saldi`, chiamato da tutte e due).
+    #
+    # "Risparmi" resta in cima da sola e non sotto i conti: non e' un
+    # conto, e' il flusso dal personale a Revolut, ed e' la cosa che si
+    # apre una volta al mese. Sotto un conto sarebbe nascosta.
+    ("home",     "Home",     "/",         "home",    ()),
+    ("ore",      "Ore",      "/ore",      "ore",     ()),
+    ("fatture",  "Fatture",  "/fatture",  "fatture", ()),
+    ("conti",    "Conti",    "/conti",    "wallet",  (
+        ("conti-revolut", "Revolut", "/conti/revolut", None, ()),
+        # WeBank non ha una pagina sua: e' il raggruppamento che apre i
+        # suoi due conti. Cliccarla apre la tendina, non naviga.
+        ("conti-webank",  "WeBank",  None,             None, (
+            ("conti-personale", "Personale",   "/conti/webank/personale", None, ()),
+            ("conti-piva",      "Partita IVA", "/conti/webank/piva",      None, ()),
+        )),
+    )),
+    ("risparmi", "Risparmi", "/risparmi", "fiscale", ()),
 )
+
+
+def _discendenti(voci):
+    """Tutte le chiavi sotto un ramo, a qualunque profondita'."""
+    for chiave, _lbl, _href, _ic, figli in voci:
+        yield chiave
+        yield from _discendenti(figli)
+
+
+# chiave di una pagina -> chiave della voce di primo livello che la
+# contiene. Serve alla tab bar del telefono, che mostra solo il primo
+# livello: stando su /conti/revolut deve accendersi "Conti".
+RADICE = {}
+for _k, _l, _h, _i, _figli in NAV:
+    RADICE[_k] = _k
+    for _sotto in _discendenti(_figli):
+        RADICE[_sotto] = _k
+
+
+def radice(section: str) -> str:
+    """La sezione di primo livello a cui appartiene questa pagina."""
+    return RADICE.get(section or "", section or "")
 
 
 # ---------------------------------------------------------------------------
@@ -342,24 +391,57 @@ def _esc(v) -> str:
 _CURRENT = ' aria-current="page"'
 
 
+def _voce_rail(voce, active: str, livello: int = 0) -> str:
+    """
+    Una voce della sidebar, con i suoi figli se ne ha.
+
+    Un ramo con figli diventa un `<details>`: la tendina e' HTML puro,
+    senza una riga di JavaScript da tenere viva. Nasce aperto quando la
+    pagina corrente sta dentro quel ramo — si arriva sui movimenti del
+    conto personale e l'albero e' gia' aperto su quel punto, invece di
+    doverlo riaprire ogni volta.
+    """
+    chiave, label, href, ic, figli = voce
+    attiva = chiave == active
+    dentro = active in set(_discendenti((voce,)))
+    icona = icon(ic) if ic else ""
+    cls = f"rail-link liv{livello}" + (" is-active" if attiva else "")
+
+    if not figli:
+        return (f'<a class="{cls}" href="{href}"'
+                f'{_CURRENT if attiva else ""}>{icona}<span>{label}</span></a>')
+
+    interni = "".join(_voce_rail(f, active, livello + 1) for f in figli)
+    # Un ramo senza href e' solo un'etichetta che apre: il <summary> fa
+    # gia' da bersaglio. Uno con href porta alla sua pagina, e la
+    # freccetta resta il modo per aprire senza navigare.
+    testa = (f'<a class="rail-link liv{livello}{" is-active" if attiva else ""}"'
+             f' href="{href}"{_CURRENT if attiva else ""}>{icona}'
+             f'<span>{label}</span></a>' if href else
+             f'<span class="rail-link liv{livello} sola-etichetta">{icona}'
+             f'<span>{label}</span></span>')
+    return (f'<details class="rail-group"{" open" if dentro else ""}>'
+            f'<summary class="rail-sum">{testa}'
+            f'<span class="rail-chev">{icon("chevron")}</span></summary>'
+            f'<div class="rail-figli">{interni}</div></details>')
+
+
 def _rail(active: str) -> str:
     """Sidebar persistente, visibile solo da 1024px in su."""
-    links = "".join(
-        f'<a class="rail-link{" is-active" if key == active else ""}" href="{href}"'
-        f'{_CURRENT if key == active else ""}>'
-        f'{icon(ic)}<span>{label}</span></a>'
-        for key, label, href, ic in NAV
-    )
+    links = "".join(_voce_rail(v, active) for v in NAV)
     return f"""<aside class="rail">
   <a class="rail-brand" href="/">
     <span class="brand-mark">B2F</span>
     <span>
       <span class="brand-name">Hub</span>
-      <span class="brand-sub">Ore · Fatture · Spese</span>
+      <span class="brand-sub">Ore · Fatture · Conti</span>
     </span>
   </a>
   <nav class="rail-nav" aria-label="Sezioni">{links}</nav>
   <div class="rail-foot">
+    <a class="btn ghost block" href="/impostazioni">
+      {icon("settings")}Impostazioni
+    </a>
     <button type="button" class="btn ghost block" onclick="b2fOpenAppearance()">
       {icon("contrast")}Aspetto
     </button>
@@ -368,12 +450,20 @@ def _rail(active: str) -> str:
 
 
 def _tabbar(active: str) -> str:
-    """Tab bar fissa in basso, nascosta da 1024px in su."""
+    """
+    Tab bar fissa in basso, nascosta da 1024px in su.
+
+    Mostra **solo il primo livello**: cinque bersagli da pollice, non un
+    albero. Stando dentro un ramo si accende la sua radice (vedi
+    `radice()`), e l'albero vero si apre nella pagina — /conti elenca i
+    conti, ed e' la stessa gerarchia resa in un altro modo.
+    """
+    attiva = radice(active)
     tabs = "".join(
-        f'<a class="tab{" is-active" if key == active else ""}" href="{href}"'
-        f'{_CURRENT if key == active else ""}>'
+        f'<a class="tab{" is-active" if key == attiva else ""}" href="{href}"'
+        f'{_CURRENT if key == attiva else ""}>'
         f'{icon(ic)}<span>{label}</span></a>'
-        for key, label, href, ic in NAV
+        for key, label, href, ic, _figli in NAV
     )
     return f'<nav class="tabbar" aria-label="Sezioni">{tabs}</nav>'
 
@@ -393,6 +483,8 @@ def _topbar(eyebrow: str, title_html: str, back: str | None,
   </div>
   <div class="topbar-actions">
     {actions_html}
+    <a class="icon-btn hide-desktop" href="/impostazioni"
+       aria-label="Impostazioni">{icon("settings")}</a>
     <button type="button" class="icon-btn hide-desktop" aria-label="Aspetto"
             onclick="b2fOpenAppearance()">{icon("contrast")}</button>
   </div>
@@ -461,9 +553,11 @@ def app_shell(section: str, eyebrow: str, title_html: str, content: str,
 
 
 _SECTION_BY_PREFIX = (
-    ("/fatture", "fatture"),
-    ("/spese",   "spese"),
-    ("/ore",     "ore"),
+    ("/conti",        "conti"),
+    ("/fatture",      "fatture"),
+    ("/risparmi",     "risparmi"),
+    ("/impostazioni", "impostazioni"),
+    ("/ore",          "ore"),
 )
 
 
@@ -783,6 +877,17 @@ def _kpi(valore: str, etichetta: str, hint: str = "",
     return f'<div class="card">{inner}</div>'
 
 
+def saldo_txt(v: float) -> str:
+    """
+    Un saldo e' un livello, non una variazione: il "+" davanti non
+    aggiunge nulla e si legge come un aumento. Il meno invece serve.
+    """
+    # Import locale come nel resto del file: `shared.fmt` non sta in
+    # testa perche' `theme` viene importato molto presto.
+    from .fmt import eur
+    return ("−" if v < 0 else "") + eur(abs(v))
+
+
 def _blocco_saldi(saldi: dict) -> str:
     """
     I due conti, in cima alla home.
@@ -801,11 +906,6 @@ def _blocco_saldi(saldi: dict) -> str:
             or rev.get("disponibile")):
         return ""
 
-    def saldo_txt(v: float) -> str:
-        """Un saldo e' un livello, non una variazione: il "+" davanti non
-        aggiunge nulla e si legge come un aumento. Il meno invece serve."""
-        return ("−" if v < 0 else "") + eur(abs(v))
-
     def tile(dati: dict, etichetta: str, href: str, hint: str) -> str:
         if not dati.get("disponibile"):
             return (f'<div class="card"><div class="stat">'
@@ -822,10 +922,10 @@ def _blocco_saldi(saldi: dict) -> str:
     rivalsa = float(piva.get("rivalsa_incassata") or 0)
     hint_piva = (f'di cui € {eur(rivalsa)} di rivalsa INPS incassata'
                  if rivalsa > 0 else 'movimenti P.IVA, giroconti già usciti')
-    hint_pers = f'{pers.get("movimenti", 0)} movimenti, al netto dei risparmi'
+    hint_pers = f'{pers.get("movimenti", 0)} movimenti registrati'
 
-    tiles = (tile(piva, "WeBank P.IVA", "/fatture/spese-piva", hint_piva)
-             + tile(pers, "WeBank Personale", "/spese", hint_pers))
+    tiles = (tile(piva, "WeBank P.IVA", "/conti/webank/piva", hint_piva)
+             + tile(pers, "WeBank Personale", "/conti/webank/personale", hint_pers))
 
     # Revolut compare solo se e' stato collegato: una tessera a zero
     # sembrerebbe un conto vuoto invece di un conto mai registrato.
@@ -844,7 +944,7 @@ def _blocco_saldi(saldi: dict) -> str:
             pezzi.append(f'fermo da {giorni} giorni')
         elif quando:
             pezzi.append(f'fotografia del {quando}')
-        tiles += tile(rev, "Revolut", "/spese/revolut", " · ".join(pezzi))
+        tiles += tile(rev, "Revolut", "/conti/revolut", " · ".join(pezzi))
 
     # Il totale ha senso solo se tutti i saldi in gioco sono veri:
     # sommarne una parte darebbe un numero che sembra completo e non lo e'.
@@ -875,7 +975,12 @@ def _blocco_saldi(saldi: dict) -> str:
         <span class="v tnum">€ {eur(rivalsa)}</span></div>'''
     if pers.get("disponibile"):
         risparmiato = float(pers.get("risparmiato") or 0)
-        meno_risp = (f' − risparmi messi via € {eur(risparmiato)}'
+        # "di cui" e non "−": quei bonifici sono gia' dentro `uscite`
+        # da quando la §8.11 li ha resi movimenti veri. Col meno la riga
+        # si leggeva come una quarta sottrazione, e chi rifaceva il conto
+        # con la calcolatrice otteneva un numero diverso da quello a
+        # destra — proprio nel pannello che esiste per poterlo verificare.
+        meno_risp = (f' · di cui € {eur(risparmiato)} finiti nei salvadanai'
                      if risparmiato else "")
         righe += f'''
       <div class="row"><span class="t">WeBank Personale
@@ -894,9 +999,9 @@ def _blocco_saldi(saldi: dict) -> str:
     nota_risparmi = ""
     if float(pers.get("risparmiato") or 0):
         nota_risparmi = (
-            " Il risparmio che registri sulla pagina Risparmi esce dal conto "
-            "personale e finisce nei salvadanai Revolut: per questo viene "
-            "sottratto di qua e compare di là, non è sparito.")
+            " I bonifici verso i salvadanai Revolut sono uscite come tutte "
+            "le altre e stanno già dentro «uscite»: la riga «di cui» li "
+            "nomina soltanto, non li sottrae una seconda volta.")
 
     return f'''
     <div class="grid kpi mb-3">{tiles}</div>
@@ -967,7 +1072,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
             f'<strong>È arrivato lo stipendio del periodo aperto il '
             f'{data_it(av.get("dal"))}</strong> e non hai ancora spostato niente '
             f'nei salvadanai. Il consigliato è <strong>€ {eur(av["consigliato"])}</strong>. '
-            f'<a href="/spese/risparmi">Apri la procedura →</a></div>')
+            f'<a href="/risparmi">Apri la procedura →</a></div>')
 
     # --- Tessere KPI -------------------------------------------------------
     acc = d.get("accantonamento") or {}
@@ -983,7 +1088,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
     if d.get("saldo_spese_mese") is not None:
         s = float(d["saldo_spese_mese"])
         kpi.append(_kpi(f'€ {eur_segno(s, 0)}', "Saldo spese del mese",
-                        classe="pos" if s >= 0 else "neg", href="/spese"))
+                        classe="pos" if s >= 0 else "neg", href="/conti/webank/personale"))
     if d.get("n_fatture_anno") is not None:
         anno = d.get("anno", "")
         kpi.append(_kpi(str(d["n_fatture_anno"]), f"Fatture nel {anno}",
@@ -1027,7 +1132,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
         sinistra.append(f'''<div class="card">
           <div class="card-head">
             <div class="eyebrow">Ultimi movimenti</div>
-            <a class="small" style="color:var(--accent-text)" href="/spese">Tutti ›</a>
+            <a class="small" style="color:var(--accent-text)" href="/conti/webank/personale">Tutti ›</a>
           </div>
           <div class="rows">{righe}</div>
         </div>''')
@@ -1053,7 +1158,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
           <span class="body"><span class="n">Nuova fattura</span></span>
           <span class="chev">{icon("chevron")}</span>
         </a>
-        <a class="item" href="/fatture/spese-piva/nuova">
+        <a class="item" href="/conti/webank/piva/nuova">
           <span class="ico neutral">{icon("wallet")}</span>
           <span class="body"><span class="n">Nuovo movimento P.IVA</span></span>
           <span class="chev">{icon("chevron")}</span>
@@ -1084,7 +1189,7 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
         title_html=saluto,
         title="B2F — Home",
         content="\n".join(blocchi),
-        prefetch=["/ore", "/fatture", "/spese"],
+        prefetch=["/ore", "/fatture", "/conti"],
         extra_body=ricorda_nome + _BIO_SCRIPT,
         tenda=True,
         # La tenda saluta come saluta la home: alzandosi scopre la
@@ -1133,7 +1238,7 @@ def _kpi_conto(saldo: dict, tipo: str) -> str:
             tile_saldo,
             _kpi(f'€ {eur(saldo["entrate"])}', "Entrate", classe="pos"),
             _kpi(f'€ {eur(saldo["uscite"])}', "Uscite", classe="neg"),
-            _kpi(f'€ {eur(saldo.get("risparmiato", 0))}', "Risparmiato",
+            _kpi(f'€ {eur(saldo.get("risparmiato", 0))}', "Di cui risparmiato",
                 hint="uscito verso i salvadanai"),
             _kpi(str(saldo.get("movimenti", 0)), "Movimenti"),
         ]
@@ -1212,16 +1317,51 @@ def _blocco_verifiche(verifiche: dict) -> str:
     </div>'''
 
 
-def render_saldi_page(saldi: dict | None, coerenza_html: str = "",
+def _albero_conti(saldi: dict) -> str:
+    """
+    I tre conti come elenco navigabile: e' l'albero del menu, reso in
+    pagina. Sul telefono la tab bar mostra solo il primo livello, quindi
+    questa *e'* la tendina — e sul desktop ripete la sidebar, che va
+    benissimo: la stessa gerarchia detta due volte non confonde, due
+    gerarchie diverse si'.
+    """
+    def voce(chiave, etichetta, href, dati, dentro=False):
+        d = dati or {}
+        val = (f'€ {saldo_txt(float(d.get("saldo") or 0))}'
+               if d.get("disponibile") else "da collegare")
+        cls = "pos" if float(d.get("saldo") or 0) >= 0 else "neg"
+        return f'''<a class="item{" figlio" if dentro else ""}" href="{href}">
+          <span class="ico">{icon("wallet")}</span>
+          <span class="body"><span class="n">{etichetta}</span></span>
+          <span class="end"><span class="amt tnum {cls if d.get("disponibile") else ""}">{val}</span></span>
+          <span class="chev">{icon("chevron")}</span>
+        </a>'''
+
+    return f'''
+    <div class="card">
+      <div class="card-head"><div class="eyebrow">I conti</div></div>
+      <div class="list">
+        {voce("revolut", "Revolut", "/conti/revolut", saldi.get("revolut"))}
+        <div class="gruppo-conti">
+          <div class="gruppo-testa">{icon("wallet")}<span>WeBank</span></div>
+          {voce("personale", "Personale", "/conti/webank/personale", saldi.get("personale"), True)}
+          {voce("piva", "Partita IVA", "/conti/webank/piva", saldi.get("piva"), True)}
+        </div>
+      </div>
+    </div>'''
+
+
+def render_conti_page(saldi: dict | None, coerenza_html: str = "",
                       verifiche: dict | None = None) -> str:
     """
-    Pagina dedicata "Saldi": la stessa card che compare in cima alla
-    home, ma raggiungibile dal menu senza passare da li' — utile mentre
-    si e' gia' dentro Fatture o Spese e si vuole solo controllare quanto
-    c'e' sui conti, senza perdere il punto in cui si era. In piu' — dove
-    la card di home resta compatta — una riga di KPI di dettaglio per
-    ciascun conto: qui c'e' spazio per vederli come tessere, non solo
-    come righe di un elenco.
+    La panoramica dei conti: quanto c'e' su ciascuno, come si forma ogni
+    saldo, il confronto con l'estratto, e l'elenco per entrarci dentro.
+
+    Era "/saldi", una voce di menu a se' che mostrava **lo stesso**
+    blocco gia' in cima alla home (`_blocco_saldi`, chiamato da tutte e
+    due): due voci su cinque per la stessa cosa. Adesso e' la radice
+    della sezione Conti — il posto da cui si arriva ai tre conti, che
+    prima stavano sparsi fra "Fatture" e "Spese".
 
     `saldi` ha la stessa forma usata da render_launchpad: dict opzionale
     con chiavi piva/personale/revolut (ciascuna dal rispettivo saldo_*()).
@@ -1231,7 +1371,7 @@ def render_saldi_page(saldi: dict | None, coerenza_html: str = "",
     if not saldi:
         corpo = '<div class="empty">Saldi non disponibili.</div>'
     else:
-        blocchi = [_blocco_saldi(saldi)]
+        blocchi = [_blocco_saldi(saldi), _albero_conti(saldi)]
         if verifiche:
             blocchi.append(_blocco_verifiche(verifiche))
         piva = saldi.get("piva") or {}
@@ -1253,12 +1393,55 @@ def render_saldi_page(saldi: dict | None, coerenza_html: str = "",
         corpo = "\n".join(blocchi)
 
     return render_page(
-        section="saldi",
+        section="conti",
         eyebrow="I tuoi conti",
-        title_html='<em>Saldi</em>',
+        title_html='I miei <em>conti</em>',
         content=corpo,
-        breadcrumb=[("Saldi", "")],
+        breadcrumb=[("Conti", "")],
     )
+
+
+def render_impostazioni_page() -> str:
+    """
+    Come e' configurata l'app: chi emette, con che aliquote, con che
+    categorie. Tre cose che si toccano poche volte l'anno e che prima
+    stavano dentro Fatture — i parametri fiscali raggiungibili **solo**
+    passando dalla Situazione fiscale.
+    """
+    def voce(href, ic, titolo, sotto):
+        return f'''<a class="item" href="{href}">
+          <span class="ico">{icon(ic)}</span>
+          <span class="body"><span class="n">{titolo}</span>
+            <span class="m">{sotto}</span></span>
+          <span class="chev">{icon("chevron")}</span>
+        </a>'''
+
+    corpo = f'''
+    <div class="grid split">
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Configurazione</div></div>
+          <div class="list">
+            {voce("/impostazioni/emittente", "clienti", "Dati emittente",
+                  "Nome, P.IVA, IBAN, aliquota della rivalsa INPS")}
+            {voce("/impostazioni/parametri", "fiscale", "Parametri fiscali",
+                  "Coefficiente ATECO, aliquote, accantonamento, tariffa")}
+          </div>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Aspetto</div></div>
+          <p class="small muted">Tema chiaro o scuro e colore d'accento restano
+            su questo dispositivo, non sul database: cambiano qui e basta.</p>
+          <button type="button" class="btn ghost block mt-4"
+                  onclick="b2fOpenAppearance()">{icon("contrast")}Apri l'aspetto</button>
+        </div>
+      </div>
+    </div>'''
+    return render_page(section="impostazioni", eyebrow="Impostazioni",
+                       title_html='Come e\' <em>configurata</em>',
+                       content=corpo, breadcrumb=[("Impostazioni", "")])
 
 
 _BIO_SCRIPT = r"""

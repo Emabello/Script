@@ -59,6 +59,7 @@ from flask import Response, jsonify, request
 from . import dati as D
 from . import spese_bp
 from shared.fmt import eur, data_it
+from shared.design import icon, info
 from shared.theme import render_page
 
 
@@ -511,9 +512,9 @@ def _riquadro_coerenza(c: dict | None) -> str:
     </div>'''
 
 
-@spese_bp.get("/revolut")
+@spese_bp.get("/conti/revolut")
 def revolut_pagina():
-    breadcrumb = [("Spese", "/spese"), ("Revolut", "")]
+    breadcrumb = [("Conti", "/conti"), ("Revolut", "")]
     client = D.sb()
     if client is None:
         return _render('<div class="notice warn">Supabase non configurato.</div>',
@@ -521,18 +522,39 @@ def revolut_pagina():
 
     rev = saldo_revolut(client)
     passato = storico(client)
+    oggi = date.today().isoformat()
 
+    if not rev["disponibile"]:
+        corpo = f'''<div class="empty">{icon("wallet")}
+          <div class="t">Nessun saldo registrato</div>
+          <div class="s">Carica l'estratto conto consolidato che scarichi da
+            Revolut (Menu → Estratti conto → Consolidato, formato Excel) e
+            conferma i numeri: da lì in poi Revolut compare accanto agli
+            altri due conti.</div></div>'''
+        kpi = ""
+    else:
+        kpi = ""
+        corpo = ""
+
+    # --- KPI, come sugli altri conti ------------------------------------
     if rev["disponibile"]:
-        eta = ""
-        if rev.get("giorni") is not None and rev["giorni"] > 0:
-            cls = "warn" if rev["giorni"] > 45 else ""
-            eta = (f'<span class="chip {cls}">{rev["giorni"]} giorni fa</span>')
+        giorni = rev.get("giorni") or 0
+        eta = (f'<span class="chip warn">fermo da {giorni} giorni</span>'
+               if giorni > 45 else
+               f'<span class="chip">al {data_it(rev["data"])}</span>')
         kpi = f'''
         <div class="grid kpi lead mb-3">
           <div class="card"><div class="stat">
             <div class="val tnum accent">€ {eur(rev["saldo"])}</div>
             <div class="lbl">Totale su Revolut</div>
-            <div class="hint">al {data_it(rev["data"])}</div></div></div>
+            <div class="hint">fotografia del {data_it(rev["data"])}, non un saldo dal vivo
+              {info("Gli altri due conti si calcolano dai movimenti, quindi "
+                    "valgono <strong>a oggi</strong>. Questo no: &egrave; il saldo "
+                    "che l&apos;estratto dichiarava il giorno in cui l&apos;hai "
+                    "caricato. Fra quel giorno e adesso il conto si &egrave; "
+                    "mosso, e uno scarto contro l&apos;app di Revolut non &egrave; "
+                    "un errore dell&apos;app.")}</div>
+          </div></div>
           <div class="card"><div class="stat sm">
             <div class="val tnum">€ {eur(rev["conto"])}</div>
             <div class="lbl">Liquidità</div></div></div>
@@ -542,34 +564,96 @@ def revolut_pagina():
           <div class="card"><div class="stat sm">
             <div class="val tnum">€ {eur(rev["investimenti"])}</div>
             <div class="lbl">Investimenti</div>
-            <div class="hint">inserito a mano</div></div></div>
+            <div class="hint">scritto a mano
+              {info("L&apos;estratto consolidato d&agrave; i redditi del periodo "
+                    "(dividendi, vendite, PnL) ma <strong>nessuna "
+                    "valorizzazione delle posizioni</strong>: questo numero si "
+                    "prende dall&apos;app di Revolut e si scrive qui.")}</div>
+          </div></div>
         </div>
         <div class="mb-3">{eta}</div>'''
-        avviso_vuoto = ""
-    else:
-        kpi = ""
-        avviso_vuoto = '''<div class="notice info mb-3">
-          Nessun saldo registrato. Carica l'estratto conto consolidato che
-          scarichi da Revolut (Menu → Estratti conto → Consolidato, formato
-          Excel) e conferma i numeri: da lì in poi Revolut compare in home
-          accanto agli altri due conti.
+
+        # --- La composizione, che deve quadrare -------------------------
+        # Stessa disciplina della pagina Risparmi: le parti stanno sotto
+        # il totale che le raccoglie, e una riga residua chiude sempre la
+        # differenza. Senza, la somma dei secchielli non tornava al
+        # totale del deposito e non c'era modo di vedere di quanto.
+        reali = rev.get("salvadanai") or {}
+        righe_sv = ""
+        somma_sv = 0.0
+        for chiave, _nome_rev, nome_app, _perc, _col, _alias in SALVADANAI:
+            v = float(reali.get(chiave) or 0)
+            somma_sv += v
+            if not v:
+                continue
+            righe_sv += f'''
+          <div class="row voce">
+            <span class="t">{nome_app}</span>
+            <span class="v tnum">€ {eur(v)}</span>
+          </div>'''
+        residuo = round(float(rev["risparmi"]) - somma_sv, 2)
+        if abs(residuo) >= 0.01 or not righe_sv:
+            righe_sv += f'''
+          <div class="row voce">
+            <span class="t">Non ripartiti
+              <span class="sub">{"nel deposito ma non assegnati a un secchiello"
+                if residuo > 0 else "i secchielli sommano più del deposito: "
+                "uno dei due numeri è vecchio"}</span></span>
+            <span class="v tnum {"" if residuo >= 0 else "neg"}">€ {eur(residuo)}</span>
+          </div>'''
+
+        corpo = f'''
+        <div class="card">
+          <div class="card-head">
+            <div class="eyebrow">Com'è composto</div>
+            <span class="chip">€ {eur(rev["saldo"], 0)}</span>
+          </div>
+          <div class="rows detail">
+            <div class="row">
+              <span class="t">Liquidità
+                <span class="sub">il conto corrente Revolut</span></span>
+              <span class="v tnum">€ {eur(rev["conto"])}</span>
+            </div>
+            <div class="row">
+              <span class="t">Risparmi
+                <span class="sub">il «Deposito senza vincoli», che dal 15 aprile 2026
+                  contiene tutti i salvadanai insieme</span></span>
+              <span class="v tnum pos">€ {eur(rev["risparmi"])}</span>
+            </div>
+            {righe_sv}
+            <div class="row">
+              <span class="t">Investimenti
+                <span class="sub">valore del portafoglio, scritto a mano</span></span>
+              <span class="v tnum">€ {eur(rev["investimenti"])}</span>
+            </div>
+            <div class="row tot">
+              <span class="t">Totale su Revolut</span>
+              <span class="v tnum">€ {eur(rev["saldo"])}</span>
+            </div>
+          </div>
         </div>'''
 
     coer = _riquadro_coerenza(coerenza(client, rev))
 
-    # Salvadanai: valori correnti come default del form.
+    # --- Il form: la data parte da OGGI ---------------------------------
+    # Prima partiva dalla data dell'ultimo snapshot, e `salva()` fa un
+    # upsert su quella colonna: aggiornare i salvadanai a mano
+    # SOSTITUIVA la lettura precedente, senza un avviso. Adesso la data
+    # e' quella di oggi — una lettura nuova e' un giorno nuovo — e se il
+    # giorno scelto ha gia' uno snapshot la pagina lo dice prima.
+    date_note = json.dumps([str(x.get("data") or "")[:10] for x in passato])
     correnti = rev.get("salvadanai") or {}
     campi_salvadanai = "".join(f'''
       <div class="field">
         <label>{lbl}</label>
         <input type="number" step="0.01" min="0" inputmode="decimal"
                id="sv_{chiave}" value="{correnti.get(chiave, "")}">
-      </div>''' for chiave, lbl, _, _, _, _ in SALVADANAI)
+      </div>''' for chiave, _r, lbl, _p, _c, _a in SALVADANAI)
 
     righe_storico = "".join(f'''
       <div class="row">
         <span class="k">{data_it(s.get("data"))}</span>
-        <span class="t">{"da estratto" if s.get("fonte") == "estratto" else "a mano"}
+        <span class="t">{"da estratto" if s.get("fonte") == "estratto" else "scritto a mano"}
           <span class="sub">liquidità € {eur(s.get("conto"))} · risparmi
             € {eur(s.get("risparmi"))} · investimenti € {eur(s.get("investimenti"))}</span></span>
         <span class="v tnum">€ {eur(float(s.get("conto") or 0)
@@ -578,19 +662,37 @@ def revolut_pagina():
       </div>''' for s in passato)
     blocco_storico = (f'''
       <div class="card">
-        <div class="card-head"><div class="eyebrow">Snapshot registrati</div></div>
+        <div class="card-head">
+          <div class="eyebrow">Letture registrate</div>
+          <span class="chip">{len(passato)}</span>
+        </div>
         <div class="rows detail">{righe_storico}</div>
+        <p class="small muted mt-3">Ogni riga è una fotografia del conto a
+          quel giorno. La chiave è la data: salvando con una data che c'è
+          già, quella lettura viene sostituita.</p>
       </div>''' if righe_storico else "")
 
     body = f'''
-    {avviso_vuoto}{coer}{kpi}
+    {kpi}{coer}
     <div class="grid split">
       <div class="stack">
+        {corpo}
+        {blocco_storico}
+      </div>
+
+      <div class="stack">
         <div class="card" id="cardImport">
-          <div class="card-head"><div class="eyebrow">Aggiorna dall'estratto</div></div>
+          <div class="card-head">
+            <div class="eyebrow">Nuova lettura</div>
+            <span class="chip">1 di 2</span>
+          </div>
           <p class="small muted">
-            Carica l'estratto conto consolidato .xlsx di Revolut. Non scrive
-            niente: legge i saldi di chiusura, te li mostra, e salvi tu.
+            Carica l'estratto conto consolidato .xlsx di Revolut.
+            {info("Non scrive niente: legge i saldi di chiusura, te li mostra "
+                  "qui sotto, e salvi tu. L&apos;estratto non &egrave; un vero "
+                  "xlsx — &egrave; un CSV dentro un foglio, con gli accenti "
+                  "passati due volte per la codifica sbagliata. Il parser se ne "
+                  "occupa.")}
           </p>
           <div class="field mt-4">
             <label>Estratto consolidato (.xlsx)</label>
@@ -600,57 +702,54 @@ def revolut_pagina():
             <button type="button" class="btn" onclick="onLeggi()">Leggi il file</button>
           </div>
           <div class="notice err mt-3" id="errImport" style="display:none"></div>
-        </div>
-
-        <div class="card" id="cardConferma" style="display:none">
-          <div class="card-head"><div class="eyebrow">Cosa ho trovato</div></div>
+          <div class="rows detail mt-3" id="dettaglioImport"></div>
           <div id="avvisiImport"></div>
-          <div class="rows detail" id="dettaglioImport"></div>
         </div>
-      </div>
 
-      <div class="stack">
         <div class="card">
-          <div class="card-head"><div class="eyebrow">Saldi</div></div>
+          <div class="card-head">
+            <div class="eyebrow">Conferma e salva</div>
+            <span class="chip">2 di 2</span>
+          </div>
           <div class="field-group">
-            <div class="field"><label>Data dei saldi</label>
-              <input type="date" id="f_data" value="{rev.get("data") or date.today().isoformat()}"></div>
+            <div class="field"><label>Data della lettura</label>
+              <input type="date" id="f_data" value="{oggi}" onchange="controllaData()"></div>
             <div class="field"><label>Liquidità (€)</label>
               <input type="number" step="0.01" inputmode="decimal" id="f_conto"
                      value="{rev.get("conto") or 0}"></div>
           </div>
+          <div class="notice warn mt-2" id="avvisoData" style="display:none"></div>
           <div class="field-group">
             <div class="field"><label>Risparmi (€)</label>
               <input type="number" step="0.01" inputmode="decimal" id="f_risparmi"
                      value="{rev.get("risparmi") or 0}"></div>
             <div class="field"><label>Investimenti (€)</label>
               <input type="number" step="0.01" inputmode="decimal" id="f_investimenti"
-                     value="{rev.get("investimenti") or 0}">
-              <div class="hint">Non è nell'estratto: prendilo dall'app.</div></div>
+                     value="{rev.get("investimenti") or 0}"></div>
           </div>
-          <div class="actions">
-            <button type="button" class="btn" onclick="onSalva()">Salva i saldi</button>
-          </div>
-        </div>
 
-        <div class="card">
-          <div class="card-head"><div class="eyebrow">Come sono divisi i risparmi</div></div>
-          <p class="small muted">
-            Facoltativo, e da scrivere a mano: l'estratto dà solo il totale del
-            deposito. Servono alla pagina Risparmi per dire, secchiello per
-            secchiello, quanto c'è contro quanto dovrebbe esserci.
+          <div class="eyebrow mt-4 mb-2">Come sono divisi i risparmi</div>
+          <p class="small muted">Facoltativo, da scrivere a mano.
+            {info("L&apos;estratto d&agrave; solo il totale del deposito: dal 15 "
+                  "aprile 2026 i salvadanai vivono dentro un unico "
+                  "&laquo;Deposito senza vincoli&raquo;. Servono alla pagina "
+                  "Risparmi per dire, secchiello per secchiello, quanto c&apos;&egrave; "
+                  "contro quanto dovrebbe esserci.")}
           </p>
-          <div class="mt-4">{campi_salvadanai}</div>
-          <div class="small muted" id="sommaSalvadanai"></div>
-        </div>
+          <div class="mt-3">{campi_salvadanai}</div>
+          <div class="small muted mt-2" id="sommaSalvadanai"></div>
 
-        {blocco_storico}
+          <div class="actions mt-4">
+            <button type="button" class="btn block" onclick="onSalva()">Salva la lettura</button>
+          </div>
+        </div>
       </div>
     </div>
 
     <div id="toast" class="toast"></div>
     <script>
-      const SALVADANAI = {json.dumps([[s[0], s[1]] for s in SALVADANAI], ensure_ascii=False)};
+      const SALVADANAI = {json.dumps([[s[0], s[2]] for s in SALVADANAI], ensure_ascii=False)};
+      const DATE_NOTE = {date_note};
 
       function toast(msg, cls) {{
         const t = document.getElementById('toast');
@@ -665,6 +764,32 @@ def revolut_pagina():
         const d = document.createElement('div'); d.textContent = s == null ? '' : s;
         return d.innerHTML;
       }}
+      function dataIt(iso) {{
+        if (!iso) return '';
+        const [y, m, g] = iso.slice(0, 10).split('-');
+        return g + '/' + m + '/' + y;
+      }}
+
+      // Salvare con una data gia' presente SOSTITUISCE quella lettura:
+      // `salva()` fa un upsert sulla data. Prima non lo diceva nessuno, e
+      // il campo partiva perfino dalla data dell'ultimo snapshot.
+      function controllaData() {{
+        const d = document.getElementById('f_data');
+        const box = document.getElementById('avvisoData');
+        if (!d || !box) return;
+        if (DATE_NOTE.indexOf(d.value) >= 0) {{
+          // Virgolette doppie, non l'apostrofo sfuggito: in una f-string
+          // Python `\'` diventa `'` e la stringa JS si chiude a meta'
+          // frase, spegnendo TUTTO lo script (vedi verifica_js.py).
+          box.innerHTML = "<strong>C&apos;è già una lettura del " + dataIt(d.value) +
+            ".</strong> Salvando la sostituisci: quella di prima non resta da " +
+            "nessuna parte. Se stai registrando una lettura nuova, metti la " +
+            "data di oggi.";
+          box.style.display = '';
+        }} else {{
+          box.style.display = 'none';
+        }}
+      }}
 
       function sommaSalvadanai() {{
         let s = 0;
@@ -673,15 +798,17 @@ def revolut_pagina():
         const tot = Number(document.getElementById('f_risparmi').value || 0);
         if (!s) {{ box.textContent = ''; return; }}
         const d = Math.round((s - tot) * 100) / 100;
-        box.textContent = 'Somma dei salvadanai € ' + euro(s) + ' · totale risparmi € '
-          + euro(tot) + (Math.abs(d) < 0.01 ? ' — combaciano.'
-                         : ' — differenza € ' + euro(Math.abs(d)) + '.');
+        box.textContent = 'Somma dei secchielli € ' + euro(s) + ' su € ' + euro(tot)
+          + (Math.abs(d) < 0.01 ? ' — combaciano.'
+             : (d < 0 ? ' — ne restano € ' + euro(-d) + ' non ripartiti.'
+                      : ' — € ' + euro(d) + ' in più del deposito.'));
       }}
       for (const [k] of SALVADANAI) {{
         document.getElementById('sv_'+k).addEventListener('input', sommaSalvadanai);
       }}
       document.getElementById('f_risparmi').addEventListener('input', sommaSalvadanai);
       sommaSalvadanai();
+      controllaData();
 
       async function onLeggi() {{
         const inp = document.getElementById('f_file');
@@ -699,16 +826,16 @@ def revolut_pagina():
           document.getElementById('f_conto').value = j.conto;
           document.getElementById('f_risparmi').value = j.risparmi;
           sommaSalvadanai();
+          controllaData();
 
           document.getElementById('avvisiImport').innerHTML =
-            (j.avvisi || []).map(a => '<div class="notice info small mb-2">' + esc(a) + '</div>').join('');
+            (j.avvisi || []).map(a => '<div class="notice info small mt-2">' + esc(a) + '</div>').join('');
           document.getElementById('dettaglioImport').innerHTML =
             (j.dettaglio || []).map(d =>
               '<div class="row"><span class="t">' + esc(d.nome) +
               '<span class="sub">' + (d.sezione === 'risparmi' ? 'deposito' : 'conto corrente') +
               ' · ' + esc(d.valuta) + '</span></span>' +
               '<span class="v tnum">€ ' + euro(d.saldo) + '</span></div>').join('');
-          document.getElementById('cardConferma').style.display = 'block';
           toast('Letto: liquidità € ' + euro(j.conto) + ', risparmi € ' + euro(j.risparmi), 'ok');
         }} catch (e) {{
           err.textContent = 'Errore rete: ' + e.message; err.style.display = 'block';
@@ -721,14 +848,18 @@ def revolut_pagina():
           const v = Number(document.getElementById('sv_'+k).value || 0);
           if (v) salvadanai[k] = v;
         }}
+        const quando = document.getElementById('f_data').value;
+        if (!quando) {{ toast('Manca la data della lettura', 'err'); return; }}
+        if (DATE_NOTE.indexOf(quando) >= 0 &&
+            !confirm('Esiste già una lettura del ' + dataIt(quando) +
+                     '. Salvando la sostituisci. Procedo?')) return;
         const body = {{
-          data: document.getElementById('f_data').value,
+          data: quando,
           conto: Number(document.getElementById('f_conto').value || 0),
           risparmi: Number(document.getElementById('f_risparmi').value || 0),
           investimenti: Number(document.getElementById('f_investimenti').value || 0),
           salvadanai,
-          fonte: document.getElementById('cardConferma').style.display === 'block'
-                 ? 'estratto' : 'manuale',
+          fonte: document.getElementById('dettaglioImport').innerHTML ? 'estratto' : 'manuale',
         }};
         try {{
           const r = await fetch('/spese/api/revolut', {{
@@ -737,7 +868,7 @@ def revolut_pagina():
           }});
           const j = await r.json();
           if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
-          toast('Saldi salvati', 'ok');
+          toast('Lettura salvata', 'ok');
           setTimeout(()=>location.reload(), 700);
         }} catch (e) {{ toast('Errore rete: ' + e.message, 'err'); }}
       }}
@@ -750,7 +881,7 @@ def revolut_pagina():
 # API
 # ---------------------------------------------------------------------------
 
-@spese_bp.post("/api/revolut/leggi")
+@spese_bp.post("/spese/api/revolut/leggi")
 def api_revolut_leggi():
     """Legge l'estratto e restituisce i saldi. Non scrive niente."""
     f = request.files.get("file")
@@ -764,7 +895,7 @@ def api_revolut_leggi():
         return jsonify({"error": f"file non leggibile: {str(e)[:200]}"}), 400
 
 
-@spese_bp.get("/api/revolut")
+@spese_bp.get("/spese/api/revolut")
 def api_revolut_get():
     client = D.sb()
     if client is None:
@@ -772,7 +903,7 @@ def api_revolut_get():
     return jsonify(saldo_revolut(client))
 
 
-@spese_bp.post("/api/revolut")
+@spese_bp.post("/spese/api/revolut")
 def api_revolut_salva():
     client = D.sb()
     if client is None:
@@ -782,7 +913,7 @@ def api_revolut_salva():
 
 
 def _render(content: str, breadcrumb=None) -> Response:
-    return Response(render_page(section="spese", eyebrow="Revolut",
-                                title_html='I miei <em>risparmi</em> su Revolut',
+    return Response(render_page(section="conti-revolut", eyebrow="Revolut",
+                                title_html='Il conto <em>Revolut</em>',
                                 content=content, breadcrumb=breadcrumb),
                     mimetype="text/html")

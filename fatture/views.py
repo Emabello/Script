@@ -48,7 +48,7 @@ def _stats():
     return out
 
 
-@fatture_bp.get("/")
+@fatture_bp.get("/fatture/")
 def index():
     s = _stats()
 
@@ -88,13 +88,12 @@ def index():
             {voce("/fatture/storico", "fatture", f"Storico {anno}", count=n_fat)}
             {voce("/fatture/clienti", "clienti", "Clienti", count=n_cli)}
             {voce("/fatture/situazione", "fiscale", "Situazione fiscale", count_id="kpi-fiscale", count="—")}
-            {voce("/fatture/spese-piva", "wallet", "Movimenti P.IVA")}
           </div>
         </div>
       </div>
 
       <div class="stack">
-        <a href="/fatture/emittente" class="card card-link">
+        <a href="/impostazioni/emittente" class="card card-link">
           <div class="card-head">
             <div class="eyebrow">Emittente</div>
             <span class="small accent">Modifica ›</span>

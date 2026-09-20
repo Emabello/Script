@@ -75,7 +75,7 @@ def _supabase_or_error():
 # Lista clienti
 # ---------------------------------------------------------------------------
 
-@fatture_bp.get("/clienti")
+@fatture_bp.get("/fatture/clienti")
 def clienti_list():
     sb, err = _supabase_or_error()
     if err:
@@ -332,7 +332,7 @@ def _form_html(c: dict | None = None) -> str:
     '''
 
 
-@fatture_bp.get("/clienti/nuovo")
+@fatture_bp.get("/fatture/clienti/nuovo")
 def cliente_new():
     content = _form_html(None)
     return _render(
@@ -343,7 +343,7 @@ def cliente_new():
     )
 
 
-@fatture_bp.get("/clienti/<int:cid>")
+@fatture_bp.get("/fatture/clienti/<int:cid>")
 def cliente_edit(cid):
     sb, err = _supabase_or_error()
     if err:
@@ -384,7 +384,7 @@ def _payload_clean(data: dict) -> dict:
     return out
 
 
-@fatture_bp.get("/api/clienti-picker")
+@fatture_bp.get("/fatture/api/clienti-picker")
 def api_clienti_picker():
     """Lista clienti attivi, ordinata per label, per il picker dell'editor."""
     sb, err = _supabase_or_error()
@@ -402,7 +402,7 @@ def api_clienti_picker():
         return jsonify({"error": str(e)[:200]}), 500
 
 
-@fatture_bp.post("/api/clienti")
+@fatture_bp.post("/fatture/api/clienti")
 def api_cliente_create():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -417,7 +417,7 @@ def api_cliente_create():
         return jsonify({"error": str(e)[:200]}), 500
 
 
-@fatture_bp.patch("/api/clienti/<int:cid>")
+@fatture_bp.patch("/fatture/api/clienti/<int:cid>")
 def api_cliente_update(cid):
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -430,7 +430,7 @@ def api_cliente_update(cid):
         return jsonify({"error": str(e)[:200]}), 500
 
 
-@fatture_bp.delete("/api/clienti/<int:cid>")
+@fatture_bp.delete("/fatture/api/clienti/<int:cid>")
 def api_cliente_delete(cid):
     """Soft delete: pone attivo=false. Non elimina fisicamente."""
     sb, err = _supabase_or_error()

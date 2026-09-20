@@ -283,6 +283,10 @@ ul,ol{margin:0;padding:0;list-style:none}
 .warn{color:var(--warn)}
 /* Utility per testo: usa la variante leggibile, non quella grafica. */
 .accent{color:var(--accent-text)}
+/* Bottone che sta dentro una frase: e' un'azione, ma nel mezzo di un
+   paragrafo si legge e si tocca come un link. */
+.linklike{color:var(--accent-text);font-weight:600;
+  text-decoration:underline;text-underline-offset:2px}
 
 
 /* =====================================================================
@@ -327,6 +331,35 @@ ul,ol{margin:0;padding:0;list-style:none}
   stroke-linecap:round;stroke-linejoin:round}
 .rail-link:hover{background:var(--surface-3);color:var(--ink)}
 .rail-link.is-active{background:var(--accent-soft);color:var(--accent-text)}
+
+/* --- L'albero dei conti nella sidebar --------------------------------
+   Un ramo e' un <details>: la tendina e' HTML puro, nessun JavaScript da
+   tenere vivo, e lo stato iniziale lo decide il server (aperta se la
+   pagina corrente sta dentro il ramo). I figli sono rientrati e senza
+   icona: la gerarchia la dice il rientro, non un secondo simbolo. */
+.rail-group{display:contents}
+.rail-sum{display:flex;align-items:center;gap:4px;cursor:pointer;
+  list-style:none;border-radius:var(--r-sm)}
+.rail-sum::-webkit-details-marker{display:none}
+.rail-sum>.rail-link{flex:1;min-width:0}
+.rail-sum>.sola-etichetta{cursor:pointer}
+.rail-chev{display:grid;place-items:center;width:26px;height:26px;flex:none;
+  color:var(--ink-3);transition:transform var(--dur)}
+.rail-chev svg{width:15px;height:15px;stroke:currentColor;fill:none;
+  stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.rail-group[open]>.rail-sum .rail-chev{transform:rotate(90deg)}
+.rail-sum:hover .rail-chev{color:var(--ink-2)}
+.rail-figli{display:flex;flex-direction:column;gap:2px;margin:2px 0 4px}
+/* Il filo verticale: dice "questi stanno sotto quello sopra" senza
+   ripetere un'icona su ogni riga. */
+.rail-figli{position:relative;padding-left:var(--sp-5)}
+.rail-figli::before{content:"";position:absolute;left:19px;top:2px;bottom:2px;
+  width:1px;background:var(--line)}
+.rail-link.liv1,.rail-link.liv2{font-size:13.5px;padding:8px var(--sp-3)}
+.rail-link.liv2{color:var(--ink-3)}
+.rail-link.liv2:hover{color:var(--ink)}
+.sola-etichetta{display:flex;align-items:center;gap:var(--sp-3);
+  padding:10px var(--sp-3);color:var(--ink-2);font-size:14.5px;font-weight:500}
 
 .rail-foot{display:flex;flex-direction:column;gap:var(--sp-3);
   padding-top:var(--sp-4);border-top:1px solid var(--line)}
@@ -501,6 +534,15 @@ ul,ol{margin:0;padding:0;list-style:none}
   overflow:hidden;text-overflow:ellipsis}
 .row .v{flex:none;text-align:right;font-size:14px;font-weight:500;
   font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Riga che chiude una cascata di addendi: il filo sopra e il peso del
+   testo dicono "qui si tira la somma", senza doverlo scrivere in ogni
+   etichetta. `.row.voce` e' invece un addendo rientrato, per distinguere
+   a colpo d'occhio le parti dal totale che le raccoglie — e' la
+   confusione che rendeva illeggibile il dettaglio dei Risparmi. */
+.rows .row.tot{border-top:1px solid var(--line-strong);border-bottom:0}
+.rows .row.tot .t,.rows .row.tot .v{font-weight:600}
+.rows .row.voce .t{padding-left:var(--sp-3)}
+
 /* Righe esplicative: il testo puo' andare a capo, niente ellissi. */
 .rows.detail .row{align-items:flex-start}
 .rows.detail .row .t{white-space:normal;overflow:visible}
@@ -525,6 +567,22 @@ ul,ol{margin:0;padding:0;list-style:none}
 .item .end{flex:none;text-align:right;display:flex;flex-direction:column;
   align-items:flex-end;gap:4px}
 .item .end .amt{font-size:14.5px;font-weight:500;font-variant-numeric:tabular-nums}
+
+/* Un gruppo dentro una .list: la banca che contiene i suoi conti. Il
+   filo a sinistra dei figli dice "questi stanno sotto quello sopra". */
+.gruppo-conti{display:flex;flex-direction:column;gap:var(--sp-2)}
+.gruppo-testa{display:flex;align-items:center;gap:var(--sp-2);
+  padding:var(--sp-2) var(--sp-3) 0;font-size:12.5px;font-weight:600;
+  color:var(--ink-3);letter-spacing:.02em}
+.gruppo-testa svg{width:15px;height:15px;stroke:currentColor;fill:none;
+  stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.gruppo-conti .item.figlio{margin-left:var(--sp-5);position:relative}
+.gruppo-conti .item.figlio::before{content:"";position:absolute;
+  left:calc(var(--sp-5) * -1 + 10px);top:-6px;bottom:50%;
+  width:1px;background:var(--line)}
+.gruppo-conti .item.figlio::after{content:"";position:absolute;
+  left:calc(var(--sp-5) * -1 + 10px);top:50%;width:11px;height:1px;
+  background:var(--line)}
 
 /* Icona quadrata a sinistra (menu, categorie) */
 .ico{
