@@ -18,6 +18,70 @@ come), **Stato**.
 
 ## Aperti
 
+### [2026-09-20] Le scadenze fiscali si calcolano sull'EMESSO, non sull'INCASSATO — 1.273,77 € di scarto oggi
+**Cosa**: `fatture/fiscale.py::_situazione_data` riempie `fatturato_mese` filtrando le fatture per **data di emissione** (`gte("data", …)`, `mese = int(f["data"][5:7])`), e da lì fa scendere tutta la catena: `imponibile = fatt × coeff`, `inps_saldo`, `imposta`, `inps_acconto`. Quei totali diventano `s["scadenze"]`, che alimentano le «Prossime scadenze» in home e l'intero calendario dei versamenti di `/fatture/situazione`, cascata di copertura compresa. `incasso_mese` — che è l'unico aggregato per **data di incasso** — non entra in nessuno di quei calcoli: serve solo a `netto`, `netto_competenza` e al limite forfettario.
+**Perché si rompe**: il README apre la §4 con «Regime forfettario, **per cassa**: le imposte maturano quando incassi, non quando emetti», e dice che la regola «vale ovunque — dashboard, export Excel, `v_situazione_annuale`». Qui non vale. Sui dati veri di oggi: emesso 2026 = 12.781,25 (le tre fatture), incassato 2026 = 9.281,25 (la 2026/003 da 3.500 è emessa il 01/09 e non ancora incassata).
+
+| | base emesso (app) | base incassato (corretta) | scarto |
+|---|---|---|---|
+| INPS saldo | 2.232,48 | 1.621,14 | +611,34 |
+| Imposta saldo | 316,54 | 229,86 | +86,68 |
+| **30/06/2027** | **3.390,03** | **2.461,71** | **+928,32** |
+| **30/11/2027** | **1.261,51** | **916,06** | **+345,45** |
+| | | | **+1.273,77** |
+
+**Impatto**: due numeri che si contraddicono nella stessa pagina. Su `/fatture/situazione` la card «Da accantonare sul 2026» gira su `t["incasso"]` (cassa, corretto) mentre il calendario sotto gira sull'emesso: 1.273,77 € di differenza sulla stessa obbligazione, e niente lo dice. Il testo esplicativo sotto la tabella mensile avverte che *la tabella* è sull'emesso «per restare allineate al foglio Excel» e che *l'accantonamento* è sull'incassato — del calendario non parla. E l'errore non è sempre prudenziale: una fattura emessa a dicembre e incassata a gennaio paga le tasse nell'anno sbagliato **in entrambe le direzioni** — conta nelle scadenze dell'anno di emissione, e sparisce da quelle dell'anno di incasso (dove il suo denaro è invece imponibile). Oggi sovrastima; a cavallo d'anno sottostima.
+**Stato**: aperto, non toccato — cambia i numeri che guidano quanto tenere liquido, quindi va deciso insieme. È più grande della voce del 12/08/2026, che nominava solo bollo, rivalsa e commercialista dentro `netto_competenza`.
+
+### [2026-09-20] Nessun limite ai tentativi sul PIN
+**Cosa**: `/api/unlock` (`xs_server.py`) confronta il PIN e risponde 401 se sbagliato. Nient'altro: nessun contatore, nessun ritardo, nessun blocco. Provato: **60 tentativi sbagliati di fila, tutti 401, e il 61° con il PIN giusto entra**. `api_unlock` sta in `ALLOW_NO_PIN` — deve starci, è la porta.
+**Perché si rompe**: è l'unica barriera davanti a fatture, IBAN, codici fiscali dei clienti e ogni movimento di due conti correnti, su un URL pubblico. Un PIN numerico di 4 cifre sono 10.000 combinazioni: a dieci richieste al secondo si esaurisce in meno di venti minuti, senza che niente lo segnali né lo rallenti. Il confronto è anche non a tempo costante (`str(a) == str(b)`), ma quello conta poco in confronto.
+**Impatto**: il più serio trovato. La cura sta in poche righe e non richiede dipendenze: l'app gira con **un solo worker** (`gunicorn -w 1`, scelta documentata), quindi un dizionario in memoria per IP con ritardo crescente basta e avanza. Anche solo un `time.sleep` progressivo dopo il terzo errore cambia l'ordine di grandezza.
+**Stato**: aperto.
+
+### [2026-09-20] `/health` e `/api/status` rispondono senza PIN e dicono più del necessario
+**Cosa**: entrambe in `ALLOW_NO_PIN`. `/health` restituisce, a chiunque, il conteggio esatto delle righe di `spese`, `b2f_fatture`, `b2f_clienti`, `b2f_emittente`, `b2f_webauthn_credentials`, più la conferma che Supabase è configurato. `/api/status` restituisce `username`, cioè l'utente del portale ore (`client._user`, popolato da `ensure_login()`).
+**Perché si rompe**: `/health` serve a sapere se l'app è viva, e per quello basta `{"status": "up"}`; i conteggi sono un censimento gratuito per chi passa. `/api/status` serve al gate del browser per sapere se deve chiedere il PIN — `needs_pin` e `unlocked` bastano: `username` ha senso solo a sessione aperta.
+**Impatto**: da solo non apre niente, ma dice a un estraneo che l'app è viva, popolata e di chi è — cioè che vale la pena insistere sul PIN, che non ha limiti (voce qui sopra).
+**Stato**: aperto. Due tagli piccoli.
+
+### [2026-09-20] L'OAuth di Google non ha il parametro `state`
+**Cosa**: `xs_server.py::oauth_start` costruisce l'URL di autorizzazione senza `state`, e `oauth_callback` non ne verifica nessuno: prende `code` dalla query e lo scambia.
+**Perché si rompe**: è la CSRF classica dell'OAuth. Un attaccante avvia il flusso col **proprio** account Google, si ferma sul redirect, e fa aprire quell'URL di callback a te mentre sei sbloccato — un link basta, e `SameSite=Lax` non protegge, perché un callback OAuth è una navigazione GET di primo livello, dove il cookie viene mandato. L'app scambia il codice dell'attaccante e salva **il suo** refresh token in `_gstate`: da quel momento l'import e l'export del timesheet leggono e scrivono sul calendario di un altro.
+**Impatto**: richiede che tu clicchi un link mentre sei dentro. Le ore esportate finirebbero sul calendario dell'attaccante. La cura è quella standard: un `state` casuale messo in sessione allo `start` e confrontato al `callback`.
+**Stato**: aperto.
+
+### [2026-09-20] Tre endpoint vanno in 500 su un payload malformato, invece di rispondere 400
+**Cosa**: trovati dalla nuova passata «payload malformati» di `tools/verifica_rotte.py`. (1) `spese/dati.py::_normalizza` fa `round(abs(float(out["importo"])), 2)` senza `try`: `importo: "abc"` è un `ValueError` che esce come 500. (2) `spese/dati.py::crea` fa `d["mese"] = int(quando[5:7])` sulla data grezza: `data: "non-una-data"` è un altro 500. (3) `fatture/storico.py::api_fattura_create` fa `int(data["anno"])` **prima** del `try`.
+**Perché si rompe**: in (1) e (2) i controlli che esistono — «tipo non valido», «importo mancante» — girano **dopo** le due righe che esplodono, quindi non possono intercettare niente. E un 500 non è un 400 con un messaggio diverso: Flask risponde HTML, il `fetch` del form fa `r.json()`, il parse fallisce, e l'utente legge «Errore rete: Unexpected token '<'» invece di «importo non valido». Il modo giusto è già scritto due funzioni più in là, in `registra_bonifico_risparmio`, che mette il `float()` dentro un `try` e ritorna `{"error": "importo non valido"}`.
+**Impatto**: l'interfaccia manda dati puliti, quindi in uso normale non si vede. Si vede quando qualcosa va storto — ed è esattamente il momento in cui un messaggio chiaro servirebbe.
+**Stato**: aperto.
+
+### [2026-09-20] Il campo «Numero» dell'editor ha due parser diversi, e il facsimile può dire un numero che il database non ha
+**Cosa**: `b2f_fatture.numero` è una colonna **GENERATED ALWAYS** (`anno || '/' || lpad(progressivo,3,'0')`), quindi il numero vero nasce da `anno` e `progressivo`. Il campo `d_num` dell'editor li imposta tramite `onNumeroChange()`, che accetta **solo** `^(\d{4})[\/\-\.](\d+)$`. Ma `buildPdfPayload()` legge lo stesso campo con un'altra regola — `^(\d+)\s*[\/\-\.]\s*(\d+)$` — e se non combacia usa il testo grezzo.
+**Perché si rompe**: caso concreto. Il campo mostra come placeholder «2026/004 (auto)» e tu scrivi soltanto **`17`**. `onNumeroChange` non aggancia (manca il separatore), quindi la fattura si salva come **2026/004**; `buildPdfPayload` invece non trova il separatore e usa il testo grezzo, quindi il **facsimile stampa 17**. Il documento che mandi a Nadia e allo studio porta un numero che l'app non ha. Stessa cosa con `26/17`: il primo parser vuole quattro cifre e lascia perdere, il secondo aggancia e stampa `26`.
+**Impatto**: è la forma di guasto che il facsimile esiste per evitare — documento consegnato e documento registrato che dicono cose diverse — e che ha già morso una volta con la rivalsa (README §4). Nessun numero sbagliato nei conti, ma il numero della fattura è la sua identità.
+**Stato**: aperto. Il minimo è un parser solo, condiviso; meglio ancora, rifiutare in `validate()` un numero che non si sa interpretare invece di ignorarlo a metà.
+
+### [2026-09-20] Gli endpoint del portale ore non gestiscono l'errore: 500 grezzo quando il portale non risponde
+**Cosa**: `/api/catalog`, `/api/range`, `/api/add`, `/api/delete` in `xs_server.py` chiamano `ensure_login()` e il client XS senza `try`. Verificato: senza rete, `/api/catalog` risponde **500** con l'eccezione `RuntimeError: Devi prima fare login()`. `/api/add` e `/api/delete` fanno anche `data["date"]`, `data["client_id"]`… su `get_json(force=True)`: una chiave mancante è un `KeyError`, cioè un altro 500.
+**Perché si rompe**: il portale esterno non risponde per molte ragioni ordinarie — credenziali scadute, portale giù, rete lenta al risveglio del container. Tutto il resto dell'app risponde `{"error": …}` con uno stato sensato; qui no, e la pagina Ore mostra un errore generico senza dire che il problema è il portale e non l'app.
+**Impatto**: nessun dato a rischio, diagnosi difficile. È anche l'unica area rimasta senza la cura che il resto del progetto applica ovunque.
+**Stato**: aperto.
+
+### [2026-09-20] Il nome dell'emittente finisce in pagina senza escape
+**Cosa**: `shared/theme.py::render_launchpad` fa `f'Ciao <em>{who}</em>'` e `fatture/views.py:63` compone `em_line` con nome e cognome, entrambi senza `_esc`. Verificato iniettando `<b>X</b>` in `b2f_emittente.nome`: esce grezzo su `/` e su `/fatture/`. Tutti gli altri campi utente — descrizioni dei movimenti (che arrivano dall'import bancario, quindi da testo scritto da terzi), denominazioni dei clienti, note, numeri — sono correttamente sfuggiti. Nella stessa funzione, `localStorage.setItem("b2f-nome", {json.dumps(who)})` dentro un `<script>`: `json.dumps` sfugge le virgolette ma **non** `</script>`.
+**Perché si rompe**: il nome dell'emittente lo scrivi tu, quindi come attacco non ha vittima — è XSS su se stessi. Ma non serve un attacco: un nome con `&` o `<` rompe il markup, e il punto vero è che è l'**unico** campo rimasto fuori dalla disciplina che tutto il resto dell'app rispetta.
+**Impatto**: basso. Costa due `_esc` e un `.replace("</", "<\\/")`.
+**Stato**: aperto.
+
+### [2026-09-20] Lo snapshot dello schema non registra le colonne generate, e mi ha portato fuori strada
+**Cosa**: `docs/schema_supabase.md` elenca `numero | text | YES | NO | (vuoto)`. Nel database vero quella colonna è `GENERATED ALWAYS AS (anno || '/' || lpad(progressivo,3,'0'))`. La foto riporta tipo, null, identity e default, ma non `is_generated` né `generation_expression`.
+**Perché si rompe**: leggendo soltanto la foto, `numero` sembra una colonna normale, nullable, senza default — e nessun punto del codice la scrive (`api_fattura_create` non la mette nel payload, `api_fattura_update` non la ha fra i `campi`). La conclusione naturale è «ogni fattura nuova ha numero NULL», che è **falsa**: ci sono arrivato durante questa review e ho dovuto interrogare il database vivo per smentirmi. Lo stesso equivoco può portare qualcuno a «sistemare» il bug inesistente scrivendo `numero` a mano, che su una colonna generata è un errore Postgres.
+**Impatto**: nessuno sui dati. Su chi legge, sì — è la foto che esiste per non dover chiedere al database.
+**Stato**: aperto. Una colonna in più nella tabella, e la riga dell'espressione sotto.
+
+
 ### [2026-09-20] «Come si formano questi saldi» mostra una formula che non torna
 **Cosa**: la riga del conto personale, in home e su `/saldi`, si legge `apertura € 4.200,00 + entrate € 9.124,00 − uscite € 1.585,63 − risparmi messi via € 400,00` e a destra `€ 11.738,37`. Ma 4.200 + 9.124 − 1.585,63 fa **esattamente** 11.738,37: i 400 € dei risparmi **non** vengono sottratti, perché sono già dentro `uscite` da quando la §8.11 li ha resi movimenti veri. Il quarto termine porta un meno e non toglie niente. Stessa cosa in tre altri punti: il sottotitolo della tessera (`shared/theme.py:825`, «13 movimenti, **al netto dei risparmi**»), la nota sotto il pannello («per questo viene **sottratto** di qua»), il riquadro `Risparmiato` su `/saldi` (`theme.py:1136`) messo in fila a Saldo/Entrate/Uscite come se fosse un quarto addendo, e l'hint di `/spese` (`spese/views.py:117`).
 **Perché si rompe**: quel pannello esiste **solo** per rendere verificabile il saldo — «un saldo di cui non si vede la formazione non è verificabile», dice il README. Chi lo verifica con la calcolatrice ottiene 11.338,37 e conclude che il saldo è sbagliato di 400 €. È la stessa forma del guasto da 829,78 €, capovolta: lì il codice sottraeva due volte, qui è solo il testo a dirlo — ma l'effetto sulla fiducia nel numero è identico, e chi legge non ha modo di sapere quale dei due è giusto. `spese/dati.py::saldo_conto` lo dice già nel commento («Non entra più nel saldo: è già dentro `uscite` … lo mostrano come "di cui finito nei salvadanai"»): la presentazione non ha seguito.
