@@ -94,7 +94,7 @@ _THEME_BOOTSTRAP = """<script>
   var d=document.documentElement, ls;
   try{ ls=localStorage }catch(e){ ls=null }
   var pref=(ls&&(ls.getItem('b2f-theme')||ls.getItem('xs-theme')))||'auto';
-  var acc=(ls&&ls.getItem('b2f-accent'))||'indigo';
+  var acc=(ls&&ls.getItem('b2f-accent'))||'horizon';
   function resolve(p){
     if(p==='auto'){
       return window.matchMedia&&window.matchMedia('(prefers-color-scheme: light)').matches
@@ -314,7 +314,7 @@ html[data-theme="light"] [data-swatch="graphite"]{{background:#2b2f38}}
   function syncMeta(){{ if(meta) meta.content = COLORS[d.dataset.theme] || COLORS.dark; }}
 
   function paintState(){{
-    var pref=d.dataset.themePref||'auto', acc=d.dataset.accent||'indigo';
+    var pref=d.dataset.themePref||'auto', acc=d.dataset.accent||'horizon';
     document.querySelectorAll('[data-theme-set]').forEach(function(b){{
       b.classList.toggle('is-active', b.dataset.themeSet===pref);
     }});

@@ -2221,6 +2221,26 @@ virgolette (PEP 701), che su 3.11 non compilano.
 - I formattatori stanno in `shared/fmt.py`. Non riscriverli.
 - Gli stili stanno in `shared/design.py`. Le pagine usano le classi, non
   colori inline.
+- **Il tema è SAP Horizon.** La palette porta i valori veri di *Morning
+  Horizon* (chiaro) ed *Evening Horizon* (scuro) presi da
+  [`SAP/theming-base-content`](https://github.com/SAP/theming-base-content)
+  (Apache-2.0), la scala dei raggi di Fiori (campo 4px, bottone 8,
+  elemento 12, tile 16), le sue ombre e il blu SAP come accento
+  predefinito. Le regole di design stanno nella skill di progetto
+  `.claude/skills/fiori/` — leggila prima di toccare l'aspetto di una
+  pagina.
+- **`tools/verifica_contrasti.py` legge i colori dal CSS vero.** Prima ne
+  teneva una copia, e cambiando la palette continuava a misurare quella
+  di prima dicendo «tutto ok»: convertendo il tema ha nascosto tre chip
+  sotto soglia. Nessun valore va riscritto dentro quel file.
+- **Due token per il critico.** `--warn-ind` (`#e76500`, il
+  `sapCriticalColor` ufficiale) è l'indicatore — icone, barre, bordi,
+  dove basta 3:1. `--warn` è il testo, e vale `#b04600` perché
+  l'originale sul bianco fa 3,36:1, sotto la soglia del testo piccolo.
+- I gradienti sono volutamente al limite del percettibile: Horizon è un
+  tema piatto. Ognuno ha **prima** la sua dichiarazione a tinta piena,
+  perché `color-mix()` non è supportato ovunque e una dichiarazione non
+  capita viene scartata.
 - Le guardie stanno negli endpoint, non solo nell'interfaccia: nascondere un
   pulsante non impedisce a nessuno di chiamare l'API.
 - I commenti spiegano **perché**, non cosa.
