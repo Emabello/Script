@@ -247,12 +247,34 @@ def _card_procedura(client, periodo, dal: str, al: str, consigliato: float,
         qui sopra tiene il conto di quello che resta scoperto.
       </div>'''
 
+    # --- Allineare più periodi in una volta ------------------------------
+    # Il bonifico resta UNO, con la sua data vera: non si retrodata niente
+    # e non si inventano movimenti per i periodi passati. Quello che
+    # cambia e' la cifra proposta, e le proposte sensate sono due —
+    # rispondono a due domande diverse (vedi `D.arretrato_risparmio`).
+    scelte = []
+    n_aperti = len(arretrato.get("periodi") or [])
+    if arretrato.get("totale", 0) > 0 and n_aperti > 1:
+        scelte.append((
+            arretrato["totale"],
+            f"i {n_aperti} periodi scoperti",
+            f"€ {eur(arretrato['totale'])}"))
+    mancante = -(arretrato.get("cum_scarto") or 0)
+    if mancante > 1 and abs(mancante - arretrato.get("totale", 0)) > 1:
+        scelte.append((
+            mancante,
+            f"tutto l'arretrato dei {arretrato.get('n_periodi', 0)} periodi",
+            f"€ {eur(mancante)}"))
+
     scorciatoia = ""
-    if arretrato.get("totale", 0) > 0 and len(arretrato.get("periodi") or []) > 1:
+    if scelte:
+        bottoni = " · ".join(
+            f'<button type="button" class="linklike" onclick="metti({v:.2f})">'
+            f'{etichetta} ({cifra})</button>' for v, etichetta, cifra in scelte)
         scorciatoia = f'''
-        <p class="hint mt-2">Per saldare tutti i periodi scoperti in una volta:
-          <button type="button" class="linklike" onclick="metti({arretrato["totale"]:.2f})">usa
-          l'arretrato completo, € {eur(arretrato["totale"])}</button>.</p>'''
+        <p class="hint mt-2">Allinea in una volta: {bottoni}. Resta un bonifico
+          solo, con la data di oggi — i periodi passati non si riaprono, e
+          l'arretrato qui sopra tiene il conto di quello che resta.</p>'''
 
     return f'''
     <div class="card">
@@ -285,6 +307,61 @@ def _card_procedura(client, periodo, dal: str, al: str, consigliato: float,
         Cambialo se hai spostato una cifra diversa: quello che conta è che qui
         ci sia il numero che è uscito davvero dal conto.</p>
       {scorciatoia}
+    </div>'''
+
+
+def _card_posizione(arretrato: dict, periodi: list) -> str:
+    """
+    La posizione complessiva: consigliato contro messo via, da sempre.
+
+    E' il numero che mancava. La pagina rispondeva solo a "il mese scorso
+    l'ho fatto?", e quella domanda guarda gli ultimi periodi: al
+    20/09/2026 dava 2.577,01. Ma sommando tutti i diciannove mesi lo
+    scarto e' 3.630,69 — piu' del doppio, accumulato un pezzo alla volta
+    senza che niente lo mostrasse. Un periodo che chiude in pari non
+    riporta a zero quello che si e' perso prima.
+    """
+    cons = _n(arretrato.get("cum_consigliato"))
+    eff = _n(arretrato.get("cum_effettivo"))
+    scarto = _n(arretrato.get("cum_scarto"))
+    if not cons:
+        return ""
+    primo = periodi[-1] if periodi else {}
+    da_quando = mese_anno(primo.get("data_bonifico")) or "sempre"
+    in_pari = scarto >= -1
+    return f'''
+    <div class="card">
+      <div class="card-head">
+        <div class="eyebrow">La posizione complessiva</div>
+        <span class="chip {"pos" if in_pari else "warn"}">
+          {"in pari" if in_pari else "sotto di € " + eur(abs(scarto), 0)}</span>
+      </div>
+      <div class="rows detail">
+        <div class="row">
+          <span class="t">Consigliato in tutto
+            <span class="sub">{arretrato.get("n_periodi", 0)} periodi,
+              da {da_quando}</span></span>
+          <span class="v tnum">€ {eur(cons)}</span>
+        </div>
+        <div class="row">
+          <span class="t">Messo via davvero
+            <span class="sub">le uscite di categoria «Risparmi», al netto
+              dei rientri</span></span>
+          <span class="v tnum pos">€ {eur(eff)}</span>
+        </div>
+        <div class="row tot">
+          <span class="t">Scarto accumulato</span>
+          <span class="v tnum {"pos" if in_pari else "neg"}">{eur_segno(scarto)}</span>
+        </div>
+      </div>
+      <p class="small muted mt-3">
+        {"Da quando tieni il conto hai messo via quanto consigliato, o di più."
+         if in_pari else
+         f"È un'altra domanda da «il mese scorso l'ho fatto?»: quella guarda "
+         f"gli ultimi periodi scoperti, questa somma tutto. Un periodo chiuso "
+         f"in pari non recupera quello che manca dai periodi prima, e lo "
+         f"scarto resta finché non si mette via di più del consigliato."}
+      </p>
     </div>'''
 
 
@@ -484,11 +561,21 @@ def risparmi_pagina():
         nota_ecc = (f" Nell'ultimo periodo saldato avevi messo via € {eur(ecc)} "
                     f"in più del consigliato: se quel margine copriva già questi, "
                     f"l'arretrato vero è più basso." if ecc > 0 else "")
+        # Il bottone porta alla procedura con la cifra gia' dentro: e'
+        # l'"allinea tutto" — un bonifico solo, con la data di oggi, per
+        # la somma dei periodi scoperti. Non retrodata niente e non
+        # inventa un movimento per ogni periodo: la banca ne vede uno.
+        azione = ("" if not e_corrente else
+                  f'<button type="button" class="btn sm mt-3" '
+                  f'onclick="allineaTutto({arretrato.get("totale", 0):.2f})">'
+                  f'Allinea tutti e {len(aperti)} → € {eur(arretrato.get("totale"))}'
+                  f'</button>' if len(aperti) > 1 else "")
         banner = f'''
     <div class="notice warn mb-3">
       <strong>{len(aperti)} period{"o" if len(aperti) == 1 else "i"} senza
       un bonifico ai salvadanai</strong>, per € {eur(arretrato.get("totale"))}
       di risparmio consigliato in tutto: {link}.{nota_ecc}
+      {azione}
     </div>'''
 
     # --- Quanto dovrebbe esserci in ogni salvadanaio, e quanto c'è ------
@@ -610,16 +697,25 @@ def risparmi_pagina():
         if eff > 0:
             cls_v = "pos" if eff >= cons else "neg"
             valore = eff
-            extra = f' · effettivo € {eur(eff, 0)} ({eur_segno(eff - cons, 0)})'
+            extra = f' · messi via € {eur(eff, 0)} ({eur_segno(eff - cons, 0)})'
         else:
             cls_v = ""
             valore = cons
-            extra = " · mai allineato"
+            # Non "mai allineato": e' un giudizio, e spesso falso — quel
+            # periodo puo' essere coperto da un bonifico successivo, che
+            # per forza sta in un altro periodo. Qui si dice il fatto.
+            extra = " · nessun bonifico in questo periodo"
+        # Gli estremi, come nel menu: in agosto 2026 sono arrivati due
+        # giroconti, quindi "Agosto 2026" compare due volte, e senza il
+        # periodo scritto accanto le due righe sono indistinguibili. Non
+        # sono un doppione: sono due periodi di paga veri.
+        _dal, _al = _estremi(p, oggi)
+        _fine = "oggi" if p is periodi[0] else data_breve(_al)
         qui = ' style="background:var(--surface-2)"' if p is corrente else ""
         return f'''
       <div class="row clickable"{qui}
            onclick="vaiA('{chiave}')">
-        <span class="k">{data_it(p.get("data_bonifico"))}</span>
+        <span class="k">{data_breve(_dal)} → {_fine}</span>
         <span class="t">{mese_anno(p.get("data_bonifico")) or (p.get("mese") or "—").capitalize()}
           <span class="sub">consigliato € {eur(cons, 0)}{extra}</span></span>
         <span class="v tnum {cls_v}">€ {eur(valore, 0)}</span>
@@ -660,12 +756,17 @@ def risparmi_pagina():
       <div class="stack">
         {dettaglio_html}
 
+        {_card_posizione(arretrato, periodi)}
+
         <div class="card">
           <div class="card-head"><div class="eyebrow">Tutti i periodi</div></div>
           <div class="rows detail">{storico}</div>
           <p class="small muted mt-2">Tocca una riga per aprire quel periodo.
-            A destra il consigliato (o l'effettivo, se già registrato); sotto
-            la riga, il confronto fra i due.</p>
+            A sinistra gli estremi: un mese solare può contenere due periodi —
+            in agosto 2026 sono arrivati due giroconti, a luglio 2025 stipendio
+            e tredicesima — e sono periodi di paga distinti, non doppioni.
+            A destra il consigliato, o quanto hai messo via se c'è stato un
+            bonifico.</p>
         </div>
       </div>
 
@@ -727,6 +828,17 @@ def risparmi_pagina():
         el.value = v.toFixed(2);
         aggiornaQuote();
         el.focus();
+      }}
+
+      // "Allinea tutto": non registra da solo: porta alla procedura con
+      // la cifra dentro, e la conferma resta quella di sempre. Un
+      // bonifico da qualche migliaio di euro non deve partire da un
+      // click su un banner.
+      function allineaTutto(v) {{
+        const el = document.getElementById('f_imp');
+        if (!el) return;
+        metti(v);
+        el.closest('.card').scrollIntoView({{behavior: 'smooth', block: 'center'}});
       }}
 
       // Un bonifico appartiene al periodo che contiene la sua data: se la

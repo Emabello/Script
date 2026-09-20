@@ -8,16 +8,35 @@ description: Regole di design SAP Fiori (tema Horizon) applicate a B2F Hub, che 
 `app.py` dichiara «Fiori Launchpad style» fin dal primo commit. Questa
 skill trasforma quell'aspirazione in regole verificabili.
 
-**Il punto di partenza che conta**: questa app ha già un design system in
-`shared/design.py`, con i suoi token, la sua scala di spaziature e un
-sistema di accenti pensato per il contrasto. Fiori **non lo sostituisce**.
-Si adotta la *struttura* di Fiori — i ruoli semantici, le gerarchie, i
-floorplan — dentro i token che ci sono già. Quando un valore Fiori e un
-token del progetto dicono la stessa cosa con numeri diversi, vince il
-token del progetto: cambiare i numeri romperebbe 20 pagine per allinearsi
-a un sistema che non stiamo importando per intero.
+**Lo stato attuale**: dal 20/09/2026 la palette **è** quella di Horizon.
+`shared/design.py` porta i valori veri di Morning Horizon (chiaro) ed
+Evening Horizon (scuro) presi da `SAP/theming-base-content`, la scala dei
+raggi di Fiori (campo 4px, bottone 8, elemento 12, tile 16), le sue ombre
+e il blu SAP come accento predefinito. I bottoni sono rettangoli
+arrotondati, non pillole. Non è più un'ispirazione: è il tema.
 
-Quello che si prende da Fiori è **come si ragiona**, non i pixel.
+**Quello che resta del progetto, e resta apposta**:
+
+- **il serif nei titoli** (`--display`, Instrument Serif). Fiori userebbe
+  il carattere 72. È la firma visiva dell'app: non sostituirlo senza
+  chiederlo — è un cambio d'identità, non un dettaglio tecnico;
+- **i tre livelli di accento** (`--accent`, `--accent-fill`,
+  `--accent-text`). Horizon ha un `sapBrandColor` solo; qui ne servono
+  tre perché un colore non può fare grafica a 3:1 e testo piccolo a
+  4.5:1, e gli accenti sono quattro più quello Horizon;
+- **`--warn` contro `--warn-ind`**. Il critico di Horizon (`#e76500`)
+  vale 3,36:1 sul bianco: sotto la soglia del testo piccolo. In Fiori
+  quel valore è l'*indicatore* (icone, barre, bordi — contesti da 3:1) e
+  il testo critico usa una tinta più scura. Qui la distinzione è
+  esplicita;
+- **la scala delle spaziature** `--sp-1`…`--sp-9`, che Horizon non
+  definisce come token.
+
+Quando aggiungi un colore, il punto di partenza è il token Horizon —
+ma **la soglia di contrasto viene prima**: `verifica_contrasti.py` legge
+i valori dal CSS vero e li misura su entrambi i temi e tutti gli accenti.
+Se un valore ufficiale non passa, si tiene il ruolo e si cambia la tinta,
+come per il critico.
 
 ## I cinque principi, tradotti in questa app
 
@@ -69,9 +88,18 @@ anche «fatta»; una riga rossa deve avere un testo che spiega. È
 accessibilità, ma soprattutto è quello che rende leggibile uno
 screenshot in bianco e nero o un occhio daltonico.
 
-I valori esatti di Horizon (chiaro e scuro) e la mappatura completa sui
-token del progetto stanno in `references/tokens.md`. Leggilo quando devi
-scegliere un colore nuovo o giustificarne uno esistente.
+I valori esatti di Horizon (chiaro e scuro) e la loro resa nei token del
+progetto stanno in `references/tokens.md`. Leggilo quando devi scegliere
+un colore nuovo o giustificarne uno esistente.
+
+**Sui gradienti**: Horizon è un tema piatto. I gradienti qui sono
+volutamente al limite del percettibile — un velo sul fondo delle card,
+un filo di profondità sui bottoni, uno stacco sulla shell — e servono a
+separare le superfici senza alzare le ombre. Spingerli è il modo più
+rapido di smettere di essere Fiori. Ognuno ha **prima** la sua
+dichiarazione a tinta piena: `color-mix()` non è supportato ovunque, e
+una dichiarazione non capita viene scartata — senza il fallback
+resterebbe testo su niente.
 
 ## Tipografia: la scala, non il carattere
 
@@ -80,8 +108,9 @@ Horizon usa il carattere proprietario **72**, con `sapFontSize` a
 1.5rem, 1.25rem, 1rem, .875rem).
 
 Questa app usa **Inter** per il testo e **Instrument Serif** per i
-titoli, e questa è una divergenza **voluta**: il serif nei titoli è la
-firma visiva del progetto, e Fiori non ce l'ha. Non sostituirlo.
+titoli. È l'ultima divergenza rimasta dopo la conversione della palette,
+ed è **voluta**: il serif nei titoli è la firma visiva del progetto, e
+Fiori non ce l'ha. Non sostituirlo di tua iniziativa.
 
 Quello che si prende è la **disciplina della scala**: pochi livelli
 dichiarati, nessuna dimensione inventata sul posto. Se stai per scrivere

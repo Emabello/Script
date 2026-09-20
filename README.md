@@ -178,6 +178,27 @@ Periodi di stipendio (si sceglie quale), il conto del periodo voce per
 voce, risparmio consigliato ed effettivo, arretrato, e quanto c'è
 davvero in ogni salvadanaio.
 
+**Un mese solare può contenere due periodi**, e non è un doppione: il
+periodo va da un'entrata di stipendio o giroconto P.IVA alla successiva.
+In agosto 2026 sono arrivati due giroconti (il 5 e il 13), a dicembre
+2025 tredicesima e stipendio a sei giorni di distanza, ad aprile 2026 due
+stipendi. Per questo ogni riga dello storico porta scritti i suoi
+estremi — «10 ago → 23 ago» — come già faceva il menu.
+
+**Due domande diverse, due numeri.** «Il mese scorso l'ho fatto?» guarda
+i periodi scoperti più recenti e si ferma al primo con un bonifico suo.
+«E da quando tengo il conto?» somma tutto: è la card *La posizione
+complessiva*, e dice una cosa che la prima non può dire — al 20/09/2026
+sono 19.302,76 consigliati contro 15.672,07 messi via, cioè **3.630,69
+di scarto** contro i 2.577,01 dei soli periodi scoperti. Un periodo
+chiuso in pari non recupera quello che manca dai periodi prima.
+
+**Allineare più periodi in una volta** non retrodata niente: resta un
+bonifico solo, con la data vera, e la procedura propone le due cifre
+(i periodi scoperti, oppure tutto l'arretrato). La conferma è quella di
+sempre — un bonifico da qualche migliaio di euro non parte da un click
+su un banner.
+
 ### Impostazioni — `/impostazioni`
 
 Dati emittente e parametri fiscali. Non sono fatture: prima stavano
@@ -2200,6 +2221,26 @@ virgolette (PEP 701), che su 3.11 non compilano.
 - I formattatori stanno in `shared/fmt.py`. Non riscriverli.
 - Gli stili stanno in `shared/design.py`. Le pagine usano le classi, non
   colori inline.
+- **Il tema è SAP Horizon.** La palette porta i valori veri di *Morning
+  Horizon* (chiaro) ed *Evening Horizon* (scuro) presi da
+  [`SAP/theming-base-content`](https://github.com/SAP/theming-base-content)
+  (Apache-2.0), la scala dei raggi di Fiori (campo 4px, bottone 8,
+  elemento 12, tile 16), le sue ombre e il blu SAP come accento
+  predefinito. Le regole di design stanno nella skill di progetto
+  `.claude/skills/fiori/` — leggila prima di toccare l'aspetto di una
+  pagina.
+- **`tools/verifica_contrasti.py` legge i colori dal CSS vero.** Prima ne
+  teneva una copia, e cambiando la palette continuava a misurare quella
+  di prima dicendo «tutto ok»: convertendo il tema ha nascosto tre chip
+  sotto soglia. Nessun valore va riscritto dentro quel file.
+- **Due token per il critico.** `--warn-ind` (`#e76500`, il
+  `sapCriticalColor` ufficiale) è l'indicatore — icone, barre, bordi,
+  dove basta 3:1. `--warn` è il testo, e vale `#b04600` perché
+  l'originale sul bianco fa 3,36:1, sotto la soglia del testo piccolo.
+- I gradienti sono volutamente al limite del percettibile: Horizon è un
+  tema piatto. Ognuno ha **prima** la sua dichiarazione a tinta piena,
+  perché `color-mix()` non è supportato ovunque e una dichiarazione non
+  capita viene scartata.
 - Le guardie stanno negli endpoint, non solo nell'interfaccia: nascondere un
   pulsante non impedisce a nessuno di chiamare l'API.
 - I commenti spiegano **perché**, non cosa.

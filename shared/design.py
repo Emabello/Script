@@ -59,6 +59,7 @@ _FONT_FACES = f"""
 
 # Accenti disponibili nel selettore: (chiave, etichetta)
 ACCENTI = (
+    ("horizon",  "Horizon"),
     ("indigo",   "Indaco"),
     ("blue",     "Blu"),
     ("violet",   "Viola"),
@@ -77,35 +78,52 @@ CSS = _FONT_FACES + r"""
      bianche e stonano. */
   color-scheme:dark;
 
-  /* --- Neutri, tema scuro (default) --------------------------------- */
-  --bg:#0c0d10;
-  --surface:#131519;
-  --surface-2:#181b20;
-  --surface-3:#1f2329;
-  --line:rgba(255,255,255,.075);
-  --line-strong:rgba(255,255,255,.14);
+  /* --- Neutri, tema scuro = SAP Evening Horizon ---------------------
+     Valori presi dal tema `sap_horizon_dark` di SAP/theming-base-content
+     (Apache-2.0), file content/Base/baseLib/<tema>/css_variables.css.
+     La corrispondenza token per token sta in
+     .claude/skills/fiori/references/tokens.md.                        */
+  --bg:#12171c;         /* sapBackgroundColor          */
+  --surface:#1d232a;    /* sapShellColor / sapTile_Background */
+  --surface-2:#232a33;  /* un gradino sopra: Horizon non ce l'ha, serve
+                           a distinguere una card dentro una card       */
+  --surface-3:#242e38;  /* sapNeutralBackground        */
+  --line:rgba(245,246,247,.10);
+  --line-strong:rgba(245,246,247,.18);
 
-  --ink:#f1f2f5;      /* testo primario   */
-  --ink-2:#b7bac2;    /* testo secondario */
-  --ink-3:#868a94;    /* etichette        */
-  --ink-4:#5f636d;    /* decorativo       */
+  --ink:#f5f6f7;      /* sapTextColor          */
+  --ink-2:#c5ced6;    /* testo secondario      */
+  --ink-3:#8396a8;    /* sapContent_LabelColor */
+  --ink-4:#6b7b8c;    /* decorativo            */
 
-  /* --- Semantici (NON usare come accento) --------------------------- */
-  --pos:#35bf8e;      --pos-soft:rgba(53,191,142,.14);
-  --neg:#f2637b;      --neg-soft:rgba(242,99,123,.14);
-  --warn:#e2a54c;     --warn-soft:rgba(226,165,76,.14);
+  /* --- Semantici (NON usare come accento) ---------------------------
+     I fondi sono TINTE PIENE e non rgba, come in Horizon: un chip su
+     fondo pieno resta leggibile anche sopra una card di colore diverso,
+     mentre un rgba cambia resa a seconda di cosa ha sotto.            */
+  --pos:#97dd40;      --pos-soft:#11331a;   /* sapPositiveColor  */
+  --neg:#fa6161;      --neg-soft:#350000;   /* sapNegativeColor  */
+  --warn:#ffdf72;     --warn-soft:#382700;  /* sapCriticalColor  */
+  /* Indicatore critico: barre, icone, bordi — dove basta 3:1 e serve
+     l'arancione riconoscibile di Fiori invece del giallo testuale.    */
+  --warn-ind:#ffdf72;
 
   /* --- Spaziatura (scala 4px) --------------------------------------- */
   --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px;
   --sp-6:24px; --sp-7:32px; --sp-8:40px; --sp-9:56px;
 
   /* --- Raggi --------------------------------------------------------- */
+  /* La scala di Horizon: sapField .25rem, sapButton .5rem,
+     sapElement .75rem, sapTile 1rem. I tre gradini che c'erano gia'
+     combaciavano; mancava solo quello dei campi, che in Fiori sono
+     molto meno arrotondati di tutto il resto — e' il dettaglio che fa
+     leggere un form come un form.                                     */
+  --r-field:4px;
   --r-xs:8px; --r-sm:12px; --r-md:16px; --r-lg:20px; --r-full:999px;
 
   /* --- Elevazione: tre livelli, tutti leggeri ------------------------ */
-  --e1:0 1px 2px rgba(0,0,0,.24);
-  --e2:0 4px 16px -8px rgba(0,0,0,.5);
-  --e3:0 20px 48px -24px rgba(0,0,0,.65);
+  --e1:0 0 2px 0 rgba(0,0,0,.36), 0 2px 4px 0 rgba(0,0,0,.36);
+  --e2:0 0 0 1px rgba(0,0,0,.5), 0 2px 8px 0 rgba(0,0,0,.45);
+  --e3:0 0 0 1px rgba(0,0,0,.5), 0 10px 30px 0 rgba(0,0,0,.5);
 
   /* --- Tipografia ---------------------------------------------------- */
   --sans:Inter,system-ui,-apple-system,sans-serif;
@@ -128,25 +146,33 @@ CSS = _FONT_FACES + r"""
 
 html[data-theme="light"]{
   color-scheme:light;
-  --bg:#f6f7f9;
-  --surface:#ffffff;
+  /* SAP Morning Horizon */
+  --bg:#f5f6f7;         /* sapBackgroundColor              */
+  --surface:#ffffff;    /* sapGroup_ContentBackground      */
   --surface-2:#ffffff;
-  --surface-3:#eef0f3;
-  --line:rgba(12,14,20,.09);
-  --line-strong:rgba(12,14,20,.16);
+  --surface-3:#eff1f2;  /* sapNeutralBackground            */
+  --line:rgba(19,30,41,.10);
+  --line-strong:rgba(19,30,41,.18);
 
-  --ink:#15171c;
-  --ink-2:#474b55;
-  --ink-3:#6d717c;
-  --ink-4:#8a8f9b;
+  --ink:#131e29;      /* sapTextColor          */
+  --ink-2:#3f4f5c;
+  --ink-3:#556b82;    /* sapContent_LabelColor */
+  --ink-4:#758ca4;    /* sapContent_ForegroundBorderColor */
 
-  --pos:#0a7954;      --pos-soft:rgba(10,121,84,.12);
-  --neg:#c82743;      --neg-soft:rgba(200,39,67,.12);
-  --warn:#906111;     --warn-soft:rgba(144,97,17,.12);
+  --pos:#256f3a;      --pos-soft:#f5fae5;   /* sapPositiveColor */
+  --neg:#aa0808;      --neg-soft:#ffeaf4;   /* sapNegativeColor */
+  /* Il critico di Horizon (#e76500) vale 3,36:1 sul bianco e 3,14:1 sul
+     proprio chip: sotto la soglia 4,5 del testo piccolo. In Fiori quel
+     valore e' l'INDICATORE (icone, barre, bordi — contesti da 3:1), e il
+     testo critico usa una tinta piu' scura. Qui la distinzione e'
+     esplicita: --warn per il testo, --warn-ind per l'indicatore.      */
+  --warn:#b04600;     --warn-soft:#fff8d6;
+  --warn-ind:#e76500; /* sapCriticalColor, invariato */
 
-  --e1:0 1px 2px rgba(16,20,30,.06);
-  --e2:0 4px 14px -8px rgba(16,20,30,.18);
-  --e3:0 20px 44px -26px rgba(16,20,30,.26);
+  /* Ombre di Horizon (sapContent_Shadow0/1/2), convertite da rem a px. */
+  --e1:0 0 2px 0 rgba(34,53,72,.2), 0 2px 4px 0 rgba(34,53,72,.2);
+  --e2:0 0 0 1px rgba(34,53,72,.16), 0 2px 8px 0 rgba(34,53,72,.18);
+  --e3:0 0 0 1px rgba(34,53,72,.16), 0 10px 30px 0 rgba(34,53,72,.22);
 }
 
 /* --- Accenti ---------------------------------------------------------
@@ -161,21 +187,37 @@ html[data-theme="light"]{
    Piu' --accent-hi (hover), --accent-soft (tinta), --on-accent.
    Nessuno di questi e' verde o rosso: quei due restano semantici.      */
 
+/* Horizon: il blu di SAP, ed e' il predefinito.
+   `sapBrandColor` vale #0070f2 e sul bianco fa 4,57:1 — passa la soglia
+   del testo piccolo per un soffio, quindi puo' fare da riempimento. Per
+   il testo su card si usa `sapHighlightColor` (#0064d9 chiaro, #4db1ff
+   scuro), che e' anche il colore dei link in Horizon.                 */
 :root,
+html[data-accent="horizon"]{
+  --accent:#4db1ff; --accent-hi:#7cc5ff; --accent-soft:#00144a;
+  --accent-fill:#0070f2; --accent-fill-hi:#0064d9; --accent-text:#4db1ff;
+  --on-accent:#ffffff;
+}
+html[data-theme="light"][data-accent="horizon"],
+html[data-theme="light"]{
+  --accent:#0064d9; --accent-hi:#0057bd; --accent-soft:#e1f4ff;
+  --accent-fill:#0070f2; --accent-fill-hi:#0064d9; --accent-text:#0064d9;
+  --on-accent:#ffffff;
+}
+
 html[data-accent="indigo"]{
-  --accent:#6f5cf0; --accent-hi:#8272ff; --accent-soft:rgba(111,92,240,.15);
+  --accent:#6f5cf0; --accent-hi:#8272ff; --accent-soft:#1a1240;
   --accent-fill:#6f5cf0; --accent-fill-hi:#8272ff; --accent-text:#8b7cf3;
   --on-accent:#ffffff;
 }
-html[data-theme="light"][data-accent="indigo"],
-html[data-theme="light"]{
+html[data-theme="light"][data-accent="indigo"]{
   --accent:#5343cf; --accent-hi:#4535b8; --accent-soft:rgba(83,67,207,.11);
   --accent-fill:#5343cf; --accent-fill-hi:#4535b8; --accent-text:#5343cf;
   --on-accent:#ffffff;
 }
 
 html[data-accent="blue"]{
-  --accent:#3b8ef0; --accent-hi:#5aa2f5; --accent-soft:rgba(59,142,240,.15);
+  --accent:#3b8ef0; --accent-hi:#5aa2f5; --accent-soft:#0a1f3d;
   --accent-fill:#1273e6; --accent-fill-hi:#3b8ef0; --accent-text:#3b8ef0;
   --on-accent:#ffffff;
 }
@@ -185,7 +227,7 @@ html[data-theme="light"][data-accent="blue"]{
 }
 
 html[data-accent="violet"]{
-  --accent:#a06bf0; --accent-hi:#b485f7; --accent-soft:rgba(160,107,240,.15);
+  --accent:#a06bf0; --accent-hi:#b485f7; --accent-soft:#241041;
   --accent-fill:#9052ed; --accent-fill-hi:#a06bf0; --accent-text:#a572f1;
   --on-accent:#ffffff;
 }
@@ -195,7 +237,7 @@ html[data-theme="light"][data-accent="violet"]{
 }
 
 html[data-accent="graphite"]{
-  --accent:#d6d9e0; --accent-hi:#eceef2; --accent-soft:rgba(214,217,224,.12);
+  --accent:#d6d9e0; --accent-hi:#eceef2; --accent-soft:#2b323b;
   --accent-fill:#d6d9e0; --accent-fill-hi:#eceef2; --accent-text:#d6d9e0;
   --on-accent:#14161b;
 }
@@ -306,6 +348,9 @@ ul,ol{margin:0;padding:0;list-style:none}
     padding:var(--sp-6) var(--sp-4);
     border-right:1px solid var(--line);
     background:var(--surface);
+    background:linear-gradient(180deg,
+      color-mix(in srgb,var(--surface) 96%,var(--ink)) 0%,
+      var(--surface) 30%);
   }
 }
 
@@ -330,7 +375,10 @@ ul,ol{margin:0;padding:0;list-style:none}
   stroke:currentColor;fill:none;stroke-width:1.6;
   stroke-linecap:round;stroke-linejoin:round}
 .rail-link:hover{background:var(--surface-3);color:var(--ink)}
-.rail-link.is-active{background:var(--accent-soft);color:var(--accent-text)}
+.rail-link.is-active{background:var(--accent-soft);color:var(--accent-text);
+  position:relative}
+.rail-link.is-active::before{content:"";position:absolute;left:0;top:6px;
+  bottom:6px;width:3px;border-radius:0 2px 2px 0;background:var(--accent)}
 
 /* --- L'albero dei conti nella sidebar --------------------------------
    Un ramo e' un <details>: la tendina e' HTML puro, nessun JavaScript da
@@ -412,7 +460,10 @@ ul,ol{margin:0;padding:0;list-style:none}
   position:fixed;left:0;right:0;bottom:0;z-index:60;
   display:flex;
   padding:var(--sp-1) var(--sp-2) calc(var(--sp-1) + env(safe-area-inset-bottom,0px));
-  background:color-mix(in srgb,var(--surface) 88%,transparent);
+  background:var(--surface);
+  background:linear-gradient(0deg,
+    color-mix(in srgb,var(--surface) 96%,var(--ink)) 0%,
+    color-mix(in srgb,var(--surface) 90%,transparent) 100%);
   backdrop-filter:saturate(180%) blur(18px);
   -webkit-backdrop-filter:saturate(180%) blur(18px);
   border-top:1px solid var(--line);
@@ -488,7 +539,13 @@ ul,ol{margin:0;padding:0;list-style:none}
 /* --- Card ------------------------------------------------------------- */
 .card{
   min-width:0;
+  /* Il velo dall'alto e' quasi invisibile (3% del testo sul fondo della
+     card) e serve a staccare la card dallo sfondo senza alzare l'ombra:
+     in Fiori la profondita' la fa la superficie, non l'ombra.        */
   background:var(--surface);
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--surface) 97%,var(--ink)) 0%,
+    var(--surface) 42%);
   border:1px solid var(--line);
   border-radius:var(--r-md);
   padding:var(--sp-4);
@@ -605,21 +662,39 @@ ul,ol{margin:0;padding:0;list-style:none}
 /* --- Bottoni -------------------------------------------------------------- */
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:var(--sp-2);
-  min-height:44px;padding:11px var(--sp-5);border-radius:var(--r-full);
-  background:var(--accent-fill);color:var(--on-accent);
+  min-height:44px;padding:11px var(--sp-5);border-radius:var(--r-xs);
+  /* Gradiente appena percettibile: Horizon e' un tema piatto, ma un
+     filo di profondita' sul riempimento aiuta a leggere il bottone come
+     premibile. Se lo si spinge smette di essere Fiori.               */
+  background:var(--accent-fill);
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--accent-fill) 92%,#fff) 0%,
+    var(--accent-fill) 100%);
+  color:var(--on-accent);
   font-size:14.5px;font-weight:600;letter-spacing:.005em;
   transition:background-color var(--dur),transform var(--dur),opacity var(--dur);
 }
 .btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;
   stroke-linecap:round;stroke-linejoin:round}
 .btn:active{transform:scale(.98)}
-@media (hover:hover){.btn:hover{background:var(--accent-fill-hi)}}
+@media (hover:hover){.btn:hover{
+  background:var(--accent-fill-hi);
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--accent-fill-hi) 92%,#fff) 0%,
+    var(--accent-fill-hi) 100%);
+}}
 .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line-strong)}
 @media (hover:hover){.btn.ghost:hover{background:var(--surface-3)}}
 .btn.subtle{background:var(--surface-3);color:var(--ink)}
 .btn.danger{background:transparent;color:var(--neg);border:1px solid var(--neg-soft)}
 @media (hover:hover){.btn.danger:hover{background:var(--neg-soft)}}
 .btn.block{width:100%}
+/* Azione secondaria dentro un avviso o accanto a un titolo: piu' bassa
+   del bottone pieno, ma **non** sotto i 36px — e' l'altezza cozy di
+   Fiori, il minimo per un pollice. La classe era gia' usata in
+   spese/movimenti.py senza esistere: il bottone usciva a taglia piena
+   e nessuno se n'era accorto. */
+.btn.sm{min-height:36px;padding:7px var(--sp-4);font-size:13.5px}
 .btn[disabled],.btn.is-disabled{opacity:.45;pointer-events:none}
 
 .actions{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-4)}
@@ -659,7 +734,7 @@ ul,ol{margin:0;padding:0;list-style:none}
 /* --- Chip ------------------------------------------------------------------ */
 .chip{
   display:inline-flex;align-items:center;gap:5px;
-  padding:3px 10px;border-radius:var(--r-full);
+  padding:3px 10px;border-radius:var(--r-field);
   font-size:11.5px;font-weight:500;letter-spacing:.02em;
   background:var(--surface-3);color:var(--ink-2);white-space:nowrap;
 }
@@ -695,7 +770,7 @@ ul,ol{margin:0;padding:0;list-style:none}
 .field input,.field select,.field textarea,.input{
   width:100%;min-height:44px;padding:11px var(--sp-3);
   background:var(--bg);color:var(--ink);
-  border:1px solid var(--line-strong);border-radius:var(--r-sm);
+  border:1px solid var(--line-strong);border-radius:var(--r-field);
   font-size:15px;
   transition:border-color var(--dur),box-shadow var(--dur);
 }
@@ -706,7 +781,7 @@ html[data-theme="light"] .input{background:var(--surface-3)}
 .field input::placeholder,.field textarea::placeholder{color:var(--ink-4)}
 .field input:focus,.field select:focus,.field textarea:focus,.input:focus{
   outline:none;border-color:var(--accent);
-  box-shadow:0 0 0 3px var(--accent-soft);
+  box-shadow:0 0 0 2px var(--accent);
 }
 .field input[disabled],.field select[disabled],.field textarea[disabled]{opacity:.55;cursor:not-allowed}
 .field textarea{min-height:84px;resize:vertical;line-height:1.5}
