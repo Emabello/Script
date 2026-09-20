@@ -906,7 +906,8 @@ def situazione_dashboard():
     )
     toolbar_anno = (
         '<div class="toolbar">'
-        '<select class="select-pill" aria-label="Anno"'
+        '<select class="select-pill" aria-label="Anno" data-etichetta="Anno"'
+        ' data-icona="📆"'
         ' onchange="location.href=\'/fatture/situazione?anno=\'+this.value">'
         f'{anno_opts}</select></div>'
     )
@@ -1271,7 +1272,7 @@ def parametri_editor():
         <div class="card">
           <div class="card-head"><div class="eyebrow">Regime</div></div>
           <div class="field"><label>Regime fiscale</label>
-            <select id="f_regime">
+            <select id="f_regime" data-etichetta="Regime fiscale" data-icona="🏛️">
               <option value="RF19"{" selected" if p["regime"] == "RF19" else ""}>RF19 — Forfettario</option>
             </select></div>
           <div class="field"><label>Codice ATECO{_info("Modificabile solo da database.")}</label>
@@ -1332,7 +1333,9 @@ def parametri_editor():
             <div class="field"><label>Margine di sicurezza{_info("0,10 = 10 % in più del dovuto.")}</label>
               <input type="number" step="0.01" id="f_margine" value="{p.get('margine_sicurezza', 0.10)}"></div>
             <div class="field"><label>Scenario preferito</label>
-              <select id="f_scenario">{scen_opts}</select>
+              <select id="f_scenario" data-etichetta="Scenario di accantonamento"
+                      data-icona="🎯"
+                      data-aiuto="Quanto mettere da parte: dal minimo dovuto al più prudente.">{scen_opts}</select>
               <div class="hint">Quello mostrato per primo.</div></div>
           </div>
           <div class="field-group">
@@ -1533,15 +1536,18 @@ def spese_piva_list():
                      for y in range(anno_default, anno_default - 6, -1))
     toolbar = f'''
     <div class="toolbar">
-      <select class="select-pill" aria-label="Anno"
+      <select class="select-pill" aria-label="Anno" data-etichetta="Anno"
+        data-icona="📆"
         onchange="const u=new URL(location.href);u.searchParams.set('anno',this.value);location.href=u">
         {anno_o}
       </select>
-      <select class="select-pill" aria-label="Categoria"
+      <select class="select-pill" aria-label="Categoria" data-etichetta="Categoria"
+        data-icona="🏷️"
         onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('categoria',this.value)}}else{{u.searchParams.delete('categoria')}};location.href=u">
         <option value="">Tutte le categorie</option>{cat_opts}
       </select>
-      <select class="select-pill" aria-label="Tipo"
+      <select class="select-pill" aria-label="Tipo" data-etichetta="Tipo di movimento"
+        data-icona="↕️"
         onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('tipo',this.value)}}else{{u.searchParams.delete('tipo')}};location.href=u">
         <option value="">Tutti i tipi</option>{tipo_opts}
       </select>
@@ -1668,12 +1674,14 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
           <input type="number" step="0.01" inputmode="decimal" id="f_importo" value="{v('importo', 0)}"{ro}></div>
       </div>
       <div class="field"><label>Tipo</label>
-        <select id="f_tipo"{ro}>{tipo_opts}</select></div>
+        <select id="f_tipo"{ro} data-etichetta="Tipo di movimento"
+                data-icona="↕️">{tipo_opts}</select></div>
       <div class="field"><label>Descrizione</label>
         <input id="f_descrizione" value="{_esc(v('descrizione'))}"{ro}></div>
       <div class="field-group">
         <div class="field"><label>Categoria</label>
-          <select id="f_categoria"{ro}><option value="">—</option>{cat_opts}</select></div>
+          <select id="f_categoria"{ro} data-etichetta="Categoria"
+                  data-icona="🏷️"><option value="">—</option>{cat_opts}</select></div>
         <div class="field"><label>Sottocategoria</label>
           <input id="f_sottocategoria" value="{_esc(v('sottocategoria'))}"{ro}></div>
       </div>

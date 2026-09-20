@@ -329,10 +329,13 @@ _EDITOR_HTML = r"""
   <div class="field-group">
     <div class="field">
       <label>Tipo documento</label>
-      <select id="d_tipo">
-        <option value="TD01">TD01 — Fattura</option>
-        <option value="TD04">TD04 — Nota di credito</option>
-        <option value="TD06">TD06 — Parcella</option>
+      <select id="d_tipo" data-etichetta="Tipo documento" data-icona="📄">
+        <option value="TD01" data-icona="🧾" data-titolo="TD01"
+                data-sub="Fattura">TD01 — Fattura</option>
+        <option value="TD04" data-icona="↩️" data-titolo="TD04"
+                data-sub="Nota di credito">TD04 — Nota di credito</option>
+        <option value="TD06" data-icona="📑" data-titolo="TD06"
+                data-sub="Parcella">TD06 — Parcella</option>
       </select>
     </div>
     <div class="field">
@@ -350,7 +353,8 @@ _EDITOR_HTML = r"""
   </div>
   <div class="field">
     <label>Seleziona cliente</label>
-    <select id="c_pick" onchange="loadCliente()">
+    <select id="c_pick" data-etichetta="Cliente" data-icona="👤"
+            onchange="loadCliente()">
       <option value="">— seleziona —</option>
     </select>
   </div>

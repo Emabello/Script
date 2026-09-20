@@ -234,11 +234,13 @@ def importa_pagina():
         <div class="card-head"><div class="eyebrow">Applica a selezionate</div></div>
         <div class="field-group">
           <div class="field"><label>Categoria</label>
-            <select id="bulk_cat" class="input" onchange="aggiornaBulkSub()">
+            <select id="bulk_cat" class="input" data-etichetta="Categoria"
+                    data-icona="🏷️" onchange="aggiornaBulkSub()">
               <option value="">—</option>{cat_opts}
             </select></div>
           <div class="field"><label>Sottocategoria</label>
-            <select id="bulk_sub" class="input"><option value="">—</option></select></div>
+            <select id="bulk_sub" class="input" data-etichetta="Sottocategoria"
+                    data-icona="🔖"><option value="">—</option></select></div>
         </div>
         <div class="actions">
           <button type="button" class="btn ghost" onclick="applicaBulk()">Applica alle selezionate</button>
@@ -365,6 +367,12 @@ def importa_pagina():
         '.riga-dup{{opacity:.55}} .riga-dup [data-nota]{{color:var(--warn)}}';
       document.head.appendChild(CSS_DUP);
 
+      // I due menu di ogni riga portano `data-nativo`: restano tendine di
+      // sistema invece di diventare il Select Fiori della shell. Qui e'
+      // voluto — la tabella ha una riga per movimento, e un pannello a
+      // tutta larghezza per scegliere la categoria di UNA riga fra cento
+      // costa piu' di quanto renda. Il menu ricco sta sopra, nel blocco
+      // "assegna a tutte le selezionate", dove la scelta si fa una volta.
       function renderTabella() {{
         const tbody = document.getElementById('corpoTabella');
         tbody.innerHTML = MOVS.map((m, i) => {{
@@ -381,11 +389,11 @@ def importa_pagina():
             <td class="num tnum ${{cls}}">${{segno}} € ${{euro(m.importo)}}</td>
             <td><input type="text" class="input" style="min-width:200px" value="${{esc(m.descrizione)}}"
                   ${{dis}} onchange="onDesc(${{i}}, this.value)"></td>
-            <td><select class="input" style="min-width:150px" ${{dis}} onchange="onCat(${{i}}, this.value)">
+            <td><select class="input" style="min-width:150px" data-nativo ${{dis}} onchange="onCat(${{i}}, this.value)">
                   <option value="">— scegli —</option>
                   ${{ALBERO.map(g => `<option value="${{esc(g.categoria)}}" ${{g.categoria === r.categoria ? 'selected' : ''}}>${{esc(g.categoria)}}</option>`).join('')}}
                 </select></td>
-            <td><select class="input sel-sub" style="min-width:150px" data-i="${{i}}" ${{dis}}
+            <td><select class="input sel-sub" style="min-width:150px" data-i="${{i}}" data-nativo ${{dis}}
                   onchange="onSub(${{i}}, this.value)">${{subOptions(r.categoria, r.sottocategoria)}}</select></td>
             <td class="small muted" data-nota>${{
               r.salvata ? '<span class="pos">✔ salvato</span>'

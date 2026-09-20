@@ -78,6 +78,19 @@ STATI = (
     ("annullata",      "Annullata",          "neg",    "Fuori dal giro, non concorre ai calcoli"),
 )
 
+# Un'emoji per stato. Non e' decorazione: in un menu a tendina lungo e'
+# il primo appiglio, si riconosce prima della parola, e in una riga di
+# elenco dice a colpo d'occhio a che punto e' la fattura. Le legge il
+# menu Fiori di shared/theme.py (attributo `data-icona`).
+STATI_EMOJI = {
+    "bozza":          "📝",
+    "inviata_nadia":  "📤",
+    "incassata":      "💰",
+    "inviata_studio": "🏛️",
+    "trasmessa_sdi":  "✅",
+    "annullata":      "🚫",
+}
+
 STATI_CHIAVI = tuple(k for k, _, _, _ in STATI)
 STATI_LABEL = {k: lbl for k, lbl, _, _ in STATI}
 STATI_CLASSE = {k: cls for k, _, cls, _ in STATI}

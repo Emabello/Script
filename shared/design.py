@@ -808,6 +808,175 @@ html[data-theme="light"] .input{background:var(--surface-3)}
   box-shadow:0 0 0 3px var(--accent-soft)}
 .toolbar{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-bottom:var(--sp-3)}
 
+/* --- Menu a tendina in stile Fiori ---------------------------------------
+   La tendina nativa la disegna il sistema operativo, non noi: su Android
+   diventa un elenco a tutta pagina, testo che va a capo a meta' frase,
+   pallini radio e nessun modo di mostrare un importo o uno stato accanto
+   alla voce. In un'app dove le voci sono "Agosto 2026 · 13 ago → 2 set —
+   da allineare" quell'elenco e' illeggibile, e due periodi dello stesso
+   mese sembrano un doppione.
+
+   Qui il `<select>` resta nel DOM — e' lui a tenere il valore, a far
+   partire `onchange` e a funzionare se il JS non gira — ma viene
+   nascosto e affiancato da un bottone piu' un popover che disegniamo
+   noi: icona, titolo, sottotitolo, stato colorato e valore a destra.
+   E' il "Select" di Fiori: su schermo largo una lista ancorata al
+   campo, sul telefono un foglio dal basso.  Il JS sta in
+   shared/theme.py::_SELECT_JS. */
+.fsel{position:relative;display:inline-flex;min-width:0;max-width:100%;
+  vertical-align:middle}
+.fsel.block{display:flex;width:100%}
+.fsel-btn{
+  display:flex;align-items:center;gap:var(--sp-2);
+  width:100%;min-width:0;min-height:40px;padding:8px var(--sp-3);
+  background:var(--surface);
+  background:linear-gradient(180deg,
+    color-mix(in srgb,var(--surface) 96%,#fff) 0%, var(--surface) 100%);
+  color:var(--ink);text-align:left;cursor:pointer;
+  border:1px solid var(--line-strong);border-radius:var(--r-full);
+  font-size:13.5px;
+  transition:border-color var(--dur),box-shadow var(--dur);
+}
+/* Dentro un form si veste come gli altri campi, non come una pillola di
+   filtro: stessa altezza, stesso raggio, stesso fondo. */
+.fsel.is-field{display:flex;width:100%}
+.fsel.is-field .fsel-btn{min-height:44px;padding:11px var(--sp-3);
+  border-radius:var(--r-field);font-size:15px;background:var(--bg)}
+html[data-theme="light"] .fsel.is-field .fsel-btn{background:var(--surface-3)}
+.fsel-emo{flex:none;font-size:15px;line-height:1.2}
+.fsel-val{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;font-weight:500}
+.fsel-chev{flex:none;width:8px;height:8px;margin-left:2px;
+  border-right:1.7px solid var(--ink-3);border-bottom:1.7px solid var(--ink-3);
+  transform:rotate(45deg) translateY(-2px);
+  transition:transform var(--dur)}
+.fsel.is-open .fsel-btn{border-color:var(--accent);
+  box-shadow:0 0 0 2px var(--accent-soft)}
+.fsel.is-open .fsel-chev{transform:rotate(-135deg) translateY(-2px)}
+.fsel-btn:focus-visible{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 2px var(--accent)}
+.fsel.is-disabled{opacity:.55}
+.fsel.is-disabled .fsel-btn{cursor:not-allowed}
+/* Il select vero resta: tiene il valore e fa scattare `onchange`. Non
+   `display:none`, che lo toglierebbe anche ai lettori di schermo e alla
+   validazione del form. */
+.fsel-native{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+  border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+.fsel-veil{position:fixed;inset:0;z-index:600;
+  background:rgba(6,7,10,.6);
+  backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);
+  opacity:0;transition:opacity var(--dur)}
+.fsel-veil.show{opacity:1}
+html[data-theme="light"] .fsel-veil{background:rgba(30,34,44,.32)}
+/* Su schermo largo il velo resta, ma invisibile: serve solo a
+   raccogliere il click fuori dal pannello. Oscurare l'intera pagina per
+   cambiare un filtro e' un peso che Fiori mette solo sui dialoghi veri;
+   sul telefono il foglio dal basso *e'* un dialogo, e li' il velo si
+   vede. */
+@media (min-width:720px){
+  .fsel-veil,html[data-theme="light"] .fsel-veil{
+    background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none}
+}
+
+.fsel-pop{
+  position:fixed;z-index:610;display:flex;flex-direction:column;
+  min-width:240px;max-width:calc(100vw - 24px);
+  max-height:min(64vh,540px);
+  background:var(--surface);border:1px solid var(--line-strong);
+  border-radius:var(--r-sm);box-shadow:var(--e3);overflow:hidden;
+}
+.fsel-pop[hidden]{display:none}
+.fsel-head{display:flex;align-items:center;gap:var(--sp-3);
+  padding:12px var(--sp-4) 11px;border-bottom:1px solid var(--line);
+  background:var(--surface-2);
+  background:linear-gradient(180deg,var(--surface-2) 0%,
+    color-mix(in srgb,var(--surface-2) 70%,var(--surface)) 100%)}
+.fsel-tit{flex:1;min-width:0;font-size:12px;font-weight:600;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
+.fsel-x{flex:none;width:30px;height:30px;border-radius:var(--r-full);
+  display:grid;place-items:center;color:var(--ink-3);font-size:17px;
+  line-height:1;cursor:pointer}
+@media (hover:hover){.fsel-x:hover{background:var(--surface-3);color:var(--ink)}}
+.fsel-aiuto{padding:9px var(--sp-4);border-bottom:1px solid var(--line);
+  background:var(--surface-2);font-size:12px;line-height:1.45;color:var(--ink-3)}
+.fsel-cerca{padding:10px var(--sp-3);border-bottom:1px solid var(--line)}
+.fsel-cerca input{width:100%;min-height:38px;padding:9px var(--sp-3);
+  background:var(--bg);color:var(--ink);font-size:14px;
+  border:1px solid var(--line-strong);border-radius:var(--r-field)}
+html[data-theme="light"] .fsel-cerca input{background:var(--surface-3)}
+.fsel-cerca input:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 2px var(--accent-soft)}
+.fsel-lista{overflow-y:auto;-webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain}
+.fsel-opt{
+  display:flex;align-items:flex-start;gap:var(--sp-3);
+  width:100%;padding:11px var(--sp-4);text-align:left;cursor:pointer;
+  border-left:3px solid transparent;
+  transition:background-color var(--dur);
+}
+.fsel-opt+.fsel-opt{border-top:1px solid var(--line)}
+@media (hover:hover){.fsel-opt:hover{background:var(--surface-2)}}
+.fsel-opt.is-att{background:var(--surface-2)}
+.fsel-opt.is-sel{background:var(--accent-soft);border-left-color:var(--accent)}
+.fsel-oemo{flex:none;width:22px;text-align:center;font-size:17px;line-height:1.3}
+.fsel-ot{flex:1;min-width:0}
+.fsel-otit{display:block;font-size:14px;font-weight:500;color:var(--ink);
+  line-height:1.3}
+.fsel-opt.is-sel .fsel-otit{color:var(--accent-text);font-weight:600}
+.fsel-osub{display:block;font-size:12px;color:var(--ink-3);line-height:1.4;
+  margin-top:2px}
+.fsel-onota{display:inline-block;margin-top:4px;padding:2px 8px;
+  border-radius:var(--r-field);font-size:11px;font-weight:500;
+  background:var(--surface-3);color:var(--ink-2)}
+.fsel-onota.pos{background:var(--pos-soft);color:var(--pos)}
+.fsel-onota.neg{background:var(--neg-soft);color:var(--neg)}
+.fsel-onota.warn{background:var(--warn-soft);color:var(--warn)}
+.fsel-onota.accent{background:var(--accent-soft);color:var(--accent-text)}
+.fsel-oinfo{flex:none;font-size:13.5px;font-weight:500;color:var(--ink-2);
+  font-variant-numeric:tabular-nums;white-space:nowrap;padding-top:1px}
+.fsel-vuoto{padding:var(--sp-6) var(--sp-4);text-align:center;
+  font-size:13px;color:var(--ink-3)}
+
+/* Sul telefono e' un foglio dal basso: il pollice arriva, e la lista ha
+   la larghezza intera invece di una colonnina ancorata al campo. */
+@media (max-width:719px){
+  .fsel-pop.sheet{left:0;right:0;bottom:0;top:auto;
+    width:100%;max-width:100%;max-height:82dvh;
+    border-radius:var(--r-lg) var(--r-lg) 0 0;border-bottom:0;
+    padding-bottom:env(safe-area-inset-bottom,0px);
+    animation:fsel-su .22s var(--ease)}
+}
+@keyframes fsel-su{from{transform:translateY(10%);opacity:.5}
+  to{transform:none;opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .fsel-pop.sheet{animation:none}
+}
+
+/* --- Emoji di stato --------------------------------------------------------
+   Non decorazione: sono il primo appiglio di una lista lunga. Dimensione
+   fissa e `font-style:normal` perche' dentro un <em> o una <label> in
+   corsivo un'emoji si deforma. */
+.emo{font-style:normal;font-weight:400;font-size:15px;line-height:1;
+  margin-right:3px;vertical-align:-1px}
+
+/* Riga di un periodo di paga: emoji di stato, mese, estremi, stato. */
+.row.per{padding-left:var(--sp-2);padding-right:var(--sp-2);
+  border-radius:var(--r-field)}
+.row.per.is-qui{background:var(--surface-2);
+  box-shadow:inset 3px 0 0 var(--accent)}
+.per-emo{flex:none;width:22px;text-align:center;font-size:17px;line-height:1.3;
+  font-style:normal}
+.rows.detail .row.per .t .sub{display:flex;flex-wrap:wrap;align-items:center;
+  gap:6px;margin-top:3px}
+.per-st{padding:1px 7px;border-radius:var(--r-field);font-size:11px;
+  font-weight:500;background:var(--surface-3);color:var(--ink-2)}
+.per-st.pos{background:var(--pos-soft);color:var(--pos)}
+.per-st.warn{background:var(--warn-soft);color:var(--warn)}
+.per-st.accent{background:var(--accent-soft);color:var(--accent-text)}
+.per-est{font-variant-numeric:tabular-nums}
+.per-num{flex-basis:100%}
+
 /* Controllo segmentato */
 .segmented{
   display:inline-flex;padding:3px;gap:2px;

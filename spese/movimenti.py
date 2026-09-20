@@ -110,25 +110,37 @@ def movimenti_lista():
     categorie = ordina({v["categoria"] for v in voci_cat})
     sottocategorie = ordina({v["sottocategoria"] for v in voci_cat if v["sottocategoria"]})
 
-    def opzioni(valori, corrente, etichetta_vuota):
+    ICONE_TIPO = {"entrata": "🟢", "uscita": "🔴"}
+
+    def opzioni(valori, corrente, etichetta_vuota, icone=None):
+        # `data-icona` la legge il menu Fiori di shared/theme.py per
+        # disegnare la voce; il `<select>` nativo la ignora, quindi
+        # aggiungerla non cambia niente se il JS non gira.
+        icone = icone or {}
         out = [f'<option value="">{etichetta_vuota}</option>']
         for val, lbl in valori:
             sel = " selected" if str(val) == str(corrente) else ""
-            out.append(f'<option value="{val}"{sel}>{lbl}</option>')
+            ic = icone.get(val)
+            ic = f' data-icona="{ic}"' if ic else ""
+            out.append(f'<option value="{val}"{sel}{ic}>{lbl}</option>')
         return "".join(out)
 
     toolbar = f'''
     <div class="toolbar">
-      <select class="select-pill" aria-label="Anno" onchange="filtra('anno', this.value)">
+      <select class="select-pill" aria-label="Anno" data-etichetta="Anno"
+              data-icona="📆" onchange="filtra('anno', this.value)">
         {"".join(f'<option value="{a}"{" selected" if a == anno else ""}>{a}</option>' for a in anni)}
       </select>
-      <select class="select-pill" aria-label="Mese" onchange="filtra('mese', this.value)">
+      <select class="select-pill" aria-label="Mese" data-etichetta="Mese"
+              data-icona="🗓️" onchange="filtra('mese', this.value)">
         {opzioni([(i + 1, MESI[i]) for i in range(12)], mese or "", "Tutto l'anno")}
       </select>
-      <select class="select-pill" aria-label="Tipo" onchange="filtra('tipo', this.value)">
-        {opzioni(D.TIPI, tipo, "Tutti i tipi")}
+      <select class="select-pill" aria-label="Tipo" data-etichetta="Tipo di movimento"
+              data-icona="↕️" onchange="filtra('tipo', this.value)">
+        {opzioni(D.TIPI, tipo, "Tutti i tipi", icone=ICONE_TIPO)}
       </select>
-      <select class="select-pill" aria-label="Categoria" onchange="filtra('categoria', this.value)">
+      <select class="select-pill" aria-label="Categoria" data-etichetta="Categoria"
+              data-icona="🏷️" onchange="filtra('categoria', this.value)">
         {opzioni([(c, c) for c in categorie], categoria, "Tutte le categorie")}
       </select>
       <input class="select-pill" style="min-width:150px" placeholder="Cerca…"
@@ -140,6 +152,7 @@ def movimenti_lista():
       <div class="field-group mt-2">
         <div class="field"><label>Sottocategoria</label>
           <select class="input" aria-label="Sottocategoria"
+                  data-etichetta="Sottocategoria" data-icona="🔖"
                   onchange="filtra('sottocategoria', this.value)">
             {opzioni([(s, s) for s in sottocategorie], sottocategoria, "Tutte")}
           </select></div>
@@ -423,8 +436,10 @@ def _form(client, m: dict | None = None) -> str:
                  value="{abs(float(m.get("importo") or 0)) or ""}"></div>
       </div>
       <div class="field"><label>Tipo</label>
-        <select id="f_tipo"{ro}>
-          {"".join(f'<option value="{k}"{" selected" if k == tipo_corrente else ""}>{lbl}</option>' for k, lbl in D.TIPI)}
+        <select id="f_tipo"{ro} data-etichetta="Tipo di movimento" data-icona="↕️">
+          {"".join(f'<option value="{k}"{" selected" if k == tipo_corrente else ""}'
+                   f' data-icona="{"🟢" if k == "entrata" else "🔴"}">{lbl}</option>'
+                   for k, lbl in D.TIPI)}
         </select>
         <div class="hint">L'importo è sempre positivo: la direzione la dà il tipo.</div>
       </div>
@@ -432,11 +447,13 @@ def _form(client, m: dict | None = None) -> str:
         <input id="f_descrizione"{ro} value="{_esc(m.get("descrizione"))}"></div>
       <div class="field-group">
         <div class="field"><label>Categoria</label>
-          <select id="f_categoria"{ro} onchange="aggiornaSub()">
+          <select id="f_categoria"{ro} data-etichetta="Categoria" data-icona="🏷️"
+                  onchange="aggiornaSub()">
             <option value="">—</option>{cat_opts}
           </select></div>
         <div class="field"><label>Sottocategoria</label>
-          <select id="f_sottocategoria"{ro}><option value="">—</option></select></div>
+          <select id="f_sottocategoria"{ro} data-etichetta="Sottocategoria"
+                  data-icona="🔖"><option value="">—</option></select></div>
       </div>
       <div class="field"><label>Metodo di pagamento</label>
         <input id="f_metodo"{ro} list="metodi" value="{_esc(m.get("metodo_pagamento"))}">

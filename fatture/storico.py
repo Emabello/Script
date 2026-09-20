@@ -19,7 +19,7 @@ from . import fatture_bp
 from . import accantonamento as acc
 from .costanti import (
     CATEGORIE_SPESE_PIVA, STATI, STATI_CHIAVI, STATI_LABEL, STATI_CLASSE,
-    STATI_DESCR, STATI_PERCORSO, STATI_EMESSE, DATE_STATO,
+    STATI_DESCR, STATI_EMOJI, STATI_PERCORSO, STATI_EMESSE, DATE_STATO,
     normalizza_stato, prossimo_stato, modificabile, motivo_blocco,
     ha_incassato, indice_percorso,
 )
@@ -169,21 +169,30 @@ def storico_list():
     da_incassare = round(tot_fatturato - tot_incassato, 2)
 
     # Toolbar
+    # `data-icona`, `data-sub` e `data-stato` le legge il menu Fiori
+    # (shared/theme.py): nella tendina ogni stato porta la sua emoji e la
+    # riga che spiega che cosa vuol dire, invece di una parola sola che
+    # va indovinata. Il `<select>` nativo le ignora.
     stato_opts = "".join(
-        f'<option value="{k}"{" selected" if stato == k else ""}>{lbl}</option>'
-        for k, lbl, _, _ in STATI
+        f'<option value="{k}"{" selected" if stato == k else ""}'
+        f' data-icona="{STATI_EMOJI.get(k, "")}"'
+        f' data-sub="{STATI_DESCR.get(k, "")}" data-stato="{cls}">{lbl}</option>'
+        for k, lbl, cls, _ in STATI
     )
     anno_opts = "".join(f'<option value="{y}"{" selected" if y == anno else ""}>{y}</option>'
                         for y in range(anno_default, anno_default - 6, -1))
     toolbar = f'''
     <div class="toolbar">
-      <select class="select-pill" aria-label="Anno"
+      <select class="select-pill" aria-label="Anno" data-etichetta="Anno"
+        data-icona="📆"
         onchange="const u=new URL(location.href);u.searchParams.set('anno',this.value);location.href=u">
         {anno_opts}
       </select>
-      <select class="select-pill" aria-label="Stato"
+      <select class="select-pill" aria-label="Stato" data-etichetta="Stato della fattura"
+        data-icona="🔎"
+        data-aiuto="L’incasso non è l’ultimo passo: una fattura pagata e poi mandata allo studio resta incassata."
         onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('stato',this.value)}}else{{u.searchParams.delete('stato')}};location.href=u">
-        <option value="">Tutti gli stati</option>
+        <option value="" data-icona="📄">Tutti gli stati</option>
         {stato_opts}
       </select>
     </div>
@@ -777,8 +786,10 @@ def fattura_dettaglio(fid):
         )
 
     opzioni_stato = "".join(
-        f'<option value="{k}"{" selected" if k == stato_corrente else ""}>{lbl}</option>'
-        for k, lbl, _, _ in STATI
+        f'<option value="{k}"{" selected" if k == stato_corrente else ""}'
+        f' data-icona="{STATI_EMOJI.get(k, "")}"'
+        f' data-sub="{STATI_DESCR.get(k, "")}" data-stato="{cls}">{lbl}</option>'
+        for k, lbl, cls, _ in STATI
     )
     # Precalcolati fuori dalla f-string: dentro, le graffe doppie servono
     # a produrre graffe letterali e romperebbero le espressioni Python.
@@ -898,7 +909,8 @@ def fattura_dettaglio(fid):
         </div>
         <div class="field">
           <label>Nuovo stato</label>
-          <select id="statoSel" onchange="onStatoChange()">{opzioni_stato}</select>
+          <select id="statoSel" data-etichetta="Nuovo stato" data-icona="🔁"
+                  onchange="onStatoChange()">{opzioni_stato}</select>
         </div>
         <div class="field" id="fldDataStato" style="display:none">
           <label id="lblDataStato">Data</label>
@@ -1051,7 +1063,8 @@ def fattura_dettaglio(fid):
         </div>
         <div class="field-group">
           <div class="field"><label>Categoria</label>
-            <select id="e_cat">{cat_options}</select></div>
+            <select id="e_cat" data-etichetta="Categoria"
+                    data-icona="🏷️">{cat_options}</select></div>
           <div class="field"><label>Sottocategoria</label>
             <input id="e_scat" placeholder="facoltativa"></div>
         </div>

@@ -185,6 +185,18 @@ In agosto 2026 sono arrivati due giroconti (il 5 e il 13), a dicembre
 stipendi. Per questo ogni riga dello storico porta scritti i suoi
 estremi — «10 ago → 23 ago» — come già faceva il menu.
 
+**Un periodo si considera solo quando è chiuso.** Chiuso vuol dire che
+dopo di lui è già arrivato un altro stipendio (o giroconto dalla P.IVA):
+solo allora entrate e uscite sono tutte quelle che saranno mai, la base
+del calcolo è ferma e il *risparmio consigliato* è un importo su cui
+agire. Nel periodo ancora aperto quella stessa formula dà un numero che
+cambia a ogni spesa — al mattino consiglia più di quanto consiglierà la
+sera — quindi la pagina lo chiama **stima**: niente chip «da allineare»,
+niente riga nell'arretrato, niente avviso in home, e la procedura non lo
+precompila. Il bonifico ai salvadanai si esegue comunque oggi, quindi per
+data cade nel periodo aperto: quello che salda sono i periodi chiusi
+rimasti scoperti, ed è quella la cifra che la procedura propone.
+
 **Due domande diverse, due numeri.** «Il mese scorso l'ho fatto?» guarda
 i periodi scoperti più recenti e si ferma al primo con un bonifico suo.
 «E da quando tengo il conto?» somma tutto: è la card *La posizione
@@ -742,7 +754,11 @@ in cui il denaro si muove davvero.
    basso del vero.
 2. **Quanto ne metti via.** Il consigliato è la percentuale di
    `impostazioni` applicata alla **base del calcolo** — lo stesso numero
-   della colonna *Risparmio consigliato* di `v_risparmi_mese`. Si
+   della colonna *Risparmio consigliato* di `v_risparmi_mese` — ma vale
+   solo sui periodi **chiusi**; sul periodo in corso la procedura
+   propone invece l'arretrato dei chiusi, e se non ce n'è non propone
+   niente (vedi sopra: la vista non conosce la differenza fra aperto e
+   chiuso, la fa `spese/dati.py::periodo_chiuso`). Si
    può correggere, e mentre lo si scrive l'anteprima mostra quanto
    finisce in ciascuno dei cinque salvadanai. Alla conferma l'app
    registra **un'uscita vera** dal conto personale, categoria *Risparmi*,
@@ -2252,6 +2268,23 @@ virgolette (PEP 701), che su 3.11 non compilano.
   menù in cui l'ordine *è* informazione — mesi, anni, stati della fattura,
   scenari di accantonamento — che restano nella loro sequenza naturale.
   `tools/verifica_menu.py` controlla la regola su tutte le pagine.
+- **Ogni `<select>` diventa un Select in stile Fiori, da solo.** Il
+  componente sta in `shared/theme.py::_SELECT_JS` (+ le classi `.fsel*`
+  di `design.py`) ed è innestato su tutti i menù della shell, anche su
+  quelli creati dal JS dopo il caricamento. Il motivo: la tendina di un
+  `<select>` la disegna il sistema operativo, non la pagina, e su Android
+  è un elenco a tutta altezza dove «Agosto 2026 · 13 ago → 2 set — da
+  allineare» va a capo due volte. Il `<select>` vero **resta nel DOM** e
+  tiene il valore: gli `onchange` già scritti nelle pagine scattano come
+  prima (evento sintetico), e senza JavaScript resta la tendina di
+  sempre. Per arricchire una voce si aggiungono `data-*` facoltative
+  sulle `<option>` — `data-icona` (emoji), `data-titolo`, `data-breve`
+  (che cosa scrivere nel campo chiuso), `data-sub`, `data-nota` con
+  `data-stato` (`pos`/`warn`/`neg`/`accent`), `data-info` (il numero a
+  destra) — e sul `<select>` `data-etichetta`, `data-icona`,
+  `data-aiuto`. `data-nativo` rinuncia all'innesto dove un pannello per
+  riga sarebbe peggio della tendina (le tabelle dense di
+  `spese/importa.py`).
 
 ### Utilità in `tools/`
 

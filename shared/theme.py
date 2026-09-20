@@ -266,6 +266,388 @@ _INFO_JS = """<script>
 </script>"""
 
 
+# ---------------------------------------------------------------------------
+# I menu a tendina, in stile Fiori
+# ---------------------------------------------------------------------------
+# La tendina di un `<select>` non la disegna la pagina: la disegna il
+# sistema operativo. Su Android diventa un elenco a tutta altezza con i
+# pallini radio, il testo che va a capo a meta' frase e nessun posto dove
+# mettere uno stato o un importo. Su una lista di periodi di paga —
+# "Agosto 2026 · 13 ago → 2 set — da allineare" — e' illeggibile, e due
+# periodi dello stesso mese sembrano un doppione.
+#
+# Qui il `<select>` resta: tiene il valore, fa scattare gli `onchange`
+# gia' scritti nelle pagine, e se il JS non gira resta la tendina di
+# sempre, funzionante. Sopra ci mettiamo il "Select" di Fiori — un campo
+# che si apre in una lista con icona, titolo, sottotitolo, stato colorato
+# e valore a destra; su schermo stretto un foglio dal basso, su schermo
+# largo una lista ancorata al campo.
+#
+# Le `data-*` sulle `<option>` sono opzionali e servono a dire cosa
+# mostrare: `data-icona` (emoji), `data-titolo` (il nome nella lista),
+# `data-breve` (che cosa scrivere nel campo chiuso), `data-sub`,
+# `data-nota` (lo stato), `data-stato`
+# (pos/warn/neg/accent, il colore), `data-info` (il numero a destra).
+# Sul `<select>`: `data-etichetta` (titolo del pannello), `data-icona`,
+# `data-aiuto` (una riga di spiegazione), `data-nativo` per rinunciare
+# del tutto all'innesto — le tabelle dense di `spese/importa.py` lo usano,
+# li' un pannello per riga sarebbe peggio della tendina.
+_SELECT_JS = """<script>
+(function(){
+  if (!window.matchMedia || !document.querySelectorAll) return;
+
+  var aperto = null;      // {sel, w, pop, opts, idx}
+  var velo = null;
+  var seq = 0;
+
+  function testo(el){ return (el.textContent || '').replace(/\\s+/g,' ').trim(); }
+  function esc(v){
+    return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function stretto(){ return window.matchMedia('(max-width:719px)').matches; }
+
+  function scelto(sel){
+    var i = sel.selectedIndex;
+    return i >= 0 ? sel.options[i] : null;
+  }
+
+  // Che cosa scrivere nel campo chiuso. `data-breve` esiste perche' il
+  // testo completo di un'opzione porta anche lo stato ("— da allineare")
+  // e nel campo quella coda e' rumore: lo stato lo dice gia' l'emoji.
+  function etichetta(sel){
+    var o = scelto(sel);
+    if (!o) return sel.getAttribute('data-vuoto') || '—';
+    return o.getAttribute('data-breve') || testo(o) || '—';
+  }
+
+  function emoji(sel){
+    var o = scelto(sel);
+    return (o && o.getAttribute('data-icona')) ||
+           sel.getAttribute('data-icona') || '';
+  }
+
+  function aggiorna(w){
+    var sel = w.__sel;
+    var e = emoji(sel);
+    w.__emo.textContent = e;
+    w.__emo.hidden = !e;
+    w.__val.textContent = etichetta(sel);
+    w.classList.toggle('is-disabled', !!sel.disabled);
+    w.__btn.disabled = !!sel.disabled;
+  }
+
+  function rigaOpzione(o, i, attivo){
+    var sub = o.getAttribute('data-sub') || '';
+    var nota = o.getAttribute('data-nota') || '';
+    var stato = o.getAttribute('data-stato') || '';
+    var info = o.getAttribute('data-info') || '';
+    var ic = o.getAttribute('data-icona') || '';
+    // `data-titolo` e' il nome nella lista, `data-breve` quello nel campo
+    // chiuso: nel campo serve anche l'intervallo per distinguere due
+    // periodi dello stesso mese, nella lista no — l'intervallo sta gia'
+    // nella riga sotto, e ripeterlo la rende illeggibile.
+    var tit = o.getAttribute('data-titolo') || o.getAttribute('data-breve') ||
+              testo(o) || '—';
+    var cls = 'fsel-opt' + (o.selected ? ' is-sel' : '') +
+              (i === attivo ? ' is-att' : '');
+    var h = '<button type="button" class="' + cls + '" role="option" ' +
+            'aria-selected="' + (o.selected ? 'true' : 'false') + '" ' +
+            'data-i="' + i + '">';
+    if (ic) h += '<span class="fsel-oemo">' + esc(ic) + '</span>';
+    h += '<span class="fsel-ot"><span class="fsel-otit">' + esc(tit) + '</span>';
+    if (sub) h += '<span class="fsel-osub">' + esc(sub) + '</span>';
+    if (nota) h += '<span class="fsel-onota ' + esc(stato) + '">' + esc(nota) + '</span>';
+    h += '</span>';
+    if (info) h += '<span class="fsel-oinfo">' + esc(info) + '</span>';
+    return h + '</button>';
+  }
+
+  function disegnaLista(){
+    if (!aperto) return;
+    var q = (aperto.filtro || '').toLowerCase();
+    var html = '', visti = 0;
+    for (var i = 0; i < aperto.opts.length; i++) {
+      var o = aperto.opts[i];
+      if (o.disabled) continue;
+      if (q) {
+        var ago = (testo(o) + ' ' + (o.getAttribute('data-sub') || '') + ' ' +
+                   (o.getAttribute('data-nota') || '')).toLowerCase();
+        if (ago.indexOf(q) < 0) continue;
+      }
+      html += rigaOpzione(o, i, aperto.idx);
+      visti++;
+    }
+    aperto.lista.innerHTML = visti ? html :
+      '<div class="fsel-vuoto">Nessuna voce corrisponde.</div>';
+  }
+
+  function chiudi(){
+    if (!aperto) return;
+    var a = aperto;
+    aperto = null;
+    a.pop.hidden = true;
+    a.w.classList.remove('is-open');
+    a.w.__btn.setAttribute('aria-expanded', 'false');
+    if (velo) { velo.classList.remove('show'); velo.hidden = true; }
+    try { a.w.__btn.focus({preventScroll:true}); } catch(e) { a.w.__btn.focus(); }
+  }
+
+  function piazza(w, pop){
+    // Foglio dal basso su schermo stretto: niente posizione calcolata, ci
+    // pensa il CSS. Su schermo largo la lista sta sotto al campo, o sopra
+    // se sotto non ci sta.
+    if (stretto()) {
+      pop.classList.add('sheet');
+      pop.style.left = pop.style.top = pop.style.width = '';
+      return;
+    }
+    pop.classList.remove('sheet');
+    var b = w.getBoundingClientRect();
+    pop.style.width = Math.max(b.width, 260) + 'px';
+    pop.style.left = '0px';
+    pop.style.top = '0px';
+    var r = pop.getBoundingClientRect();
+    var M = 8;
+    var vw = document.documentElement.clientWidth;
+    var vh = document.documentElement.clientHeight;
+    var x = Math.max(M, Math.min(b.left, vw - r.width - M));
+    var y = b.bottom + 4;
+    if (y + r.height > vh - M) {
+      var sopra = b.top - r.height - 4;
+      y = sopra >= M ? sopra : Math.max(M, vh - r.height - M);
+    }
+    pop.style.left = Math.round(x) + 'px';
+    pop.style.top = Math.round(y) + 'px';
+  }
+
+  function apri(w){
+    if (aperto && aperto.w === w) { chiudi(); return; }
+    chiudi();
+    var sel = w.__sel;
+    if (sel.disabled) return;
+    var opts = Array.prototype.slice.call(sel.options);
+    if (!opts.length) return;
+
+    if (!velo) {
+      velo = document.createElement('div');
+      velo.className = 'fsel-veil';
+      velo.hidden = true;
+      velo.addEventListener('click', chiudi);
+      document.body.appendChild(velo);
+    }
+
+    var pop = w.__pop;
+    if (!pop) {
+      pop = document.createElement('div');
+      pop.className = 'fsel-pop';
+      pop.hidden = true;
+      pop.setAttribute('role', 'listbox');
+      pop.id = 'fselpop' + (++seq);
+      document.body.appendChild(pop);
+      w.__pop = pop;
+    }
+
+    var titolo = sel.getAttribute('data-etichetta') ||
+                 sel.getAttribute('aria-label') || 'Scegli';
+    var aiuto = sel.getAttribute('data-aiuto') || '';
+    var cerca = opts.length >= 8;
+    var h = '<div class="fsel-head"><span class="fsel-tit">' + esc(titolo) +
+            '</span><button type="button" class="fsel-x" aria-label="Chiudi">' +
+            '&times;</button></div>';
+    if (aiuto) h += '<div class="fsel-aiuto">' + esc(aiuto) + '</div>';
+    if (cerca) h += '<div class="fsel-cerca"><input type="search" ' +
+      'placeholder="Cerca\\u2026" aria-label="Cerca fra le voci"></div>';
+    h += '<div class="fsel-lista"></div>';
+    pop.innerHTML = h;
+
+    aperto = {w: w, sel: sel, pop: pop, opts: opts,
+              idx: sel.selectedIndex, filtro: '',
+              lista: pop.querySelector('.fsel-lista')};
+    disegnaLista();
+
+    velo.hidden = false;
+    pop.hidden = false;
+    piazza(w, pop);
+    w.classList.add('is-open');
+    w.__btn.setAttribute('aria-expanded', 'true');
+    w.__btn.setAttribute('aria-controls', pop.id);
+    // Il velo si accende un tick dopo: senza, la transizione non parte.
+    window.requestAnimationFrame(function(){
+      if (velo) velo.classList.add('show');
+    });
+
+    var campo = pop.querySelector('.fsel-cerca input');
+    // La tastiera che si apre da sola su un telefono copre meta' lista:
+    // il fuoco al campo di ricerca solo dove c'e' un puntatore.
+    if (campo && !stretto()) campo.focus();
+    var attiva = pop.querySelector('.fsel-opt.is-sel');
+    if (attiva && attiva.scrollIntoView) attiva.scrollIntoView({block:'nearest'});
+  }
+
+  function scegli(i){
+    if (!aperto) return;
+    var sel = aperto.sel;
+    if (i < 0 || i >= sel.options.length) return;
+    var cambiato = sel.selectedIndex !== i;
+    sel.selectedIndex = i;
+    var w = aperto.w;
+    chiudi();
+    aggiorna(w);
+    if (cambiato) {
+      // `onchange` scritto a mano nelle pagine e' un normale listener:
+      // un evento sintetico lo fa scattare come farebbe l'utente. Anche
+      // `input`, perche' qualche pagina ascolta quello.
+      sel.dispatchEvent(new Event('input', {bubbles: true}));
+      sel.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+  }
+
+  function muovi(d){
+    if (!aperto) return;
+    var righe = aperto.lista.querySelectorAll('.fsel-opt');
+    if (!righe.length) return;
+    var pos = -1;
+    for (var i = 0; i < righe.length; i++) {
+      if (parseInt(righe[i].getAttribute('data-i'), 10) === aperto.idx) pos = i;
+    }
+    pos = pos < 0 ? (d > 0 ? 0 : righe.length - 1)
+                  : Math.max(0, Math.min(righe.length - 1, pos + d));
+    aperto.idx = parseInt(righe[pos].getAttribute('data-i'), 10);
+    disegnaLista();
+    var att = aperto.lista.querySelector('.fsel-opt.is-att');
+    if (att && att.scrollIntoView) att.scrollIntoView({block:'nearest'});
+  }
+
+  // --- Innesto --------------------------------------------------------
+  function innesta(sel){
+    if (sel.__fsel || sel.multiple || sel.hasAttribute('data-nativo')) return;
+    if (sel.closest && sel.closest('.fsel')) return;
+    sel.__fsel = true;
+
+    var w = document.createElement('div');
+    w.className = 'fsel';
+    // Il vestito lo decide il posto: pillola nelle toolbar di filtro
+    // (larghezza del contenuto), campo pieno dentro un form.
+    if (!sel.classList.contains('select-pill')) w.classList.add('is-field');
+    if (sel.style && sel.style.minWidth) w.style.minWidth = sel.style.minWidth;
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fsel-btn';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    var etich = sel.getAttribute('data-etichetta') || sel.getAttribute('aria-label');
+    if (etich) btn.setAttribute('aria-label', etich);
+    btn.innerHTML = '<span class="fsel-emo" hidden></span>' +
+                    '<span class="fsel-val"></span><span class="fsel-chev"></span>';
+
+    sel.parentNode.insertBefore(w, sel);
+    w.appendChild(sel);
+    w.appendChild(btn);
+    sel.classList.add('fsel-native');
+    sel.setAttribute('tabindex', '-1');
+    sel.setAttribute('aria-hidden', 'true');
+
+    w.__sel = sel; w.__btn = btn; w.__emo = btn.firstChild;
+    w.__val = btn.querySelector('.fsel-val');
+    aggiorna(w);
+
+    btn.addEventListener('click', function(e){ e.preventDefault(); apri(w); });
+    btn.addEventListener('keydown', function(e){
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); apri(w); }
+    });
+    // Se la pagina cambia il valore da sola (un altro menu che ricarica
+    // le sottocategorie, un reset del form) il campo deve seguirlo.
+    sel.addEventListener('change', function(){ aggiorna(w); });
+    if (window.MutationObserver) {
+      new MutationObserver(function(){
+        aggiorna(w);
+        if (aperto && aperto.w === w) {
+          aperto.opts = Array.prototype.slice.call(sel.options);
+          disegnaLista();
+        }
+      }).observe(sel, {childList: true, subtree: true,
+                       attributes: true, attributeFilter: ['disabled']});
+    }
+  }
+
+  function scansiona(radice){
+    var sels = (radice || document).querySelectorAll('select');
+    for (var i = 0; i < sels.length; i++) innesta(sels[i]);
+  }
+
+  // --- Eventi globali --------------------------------------------------
+  document.addEventListener('click', function(e){
+    if (!aperto) return;
+    var t = e.target;
+    if (!t.closest) return;
+    if (t.closest('.fsel-x')) { e.preventDefault(); chiudi(); return; }
+    var opt = t.closest('.fsel-opt');
+    if (opt && aperto.pop.contains(opt)) {
+      e.preventDefault();
+      scegli(parseInt(opt.getAttribute('data-i'), 10));
+      return;
+    }
+    // Un click fuori dal pannello e fuori dal campo chiude. Il velo lo
+    // intercetta gia' quasi sempre, ma non quando il click parte da un
+    // elemento sopra di lui.
+    if (!aperto.pop.contains(t) && !aperto.w.contains(t)) chiudi();
+  });
+
+  document.addEventListener('input', function(e){
+    if (!aperto) return;
+    var c = e.target;
+    if (c && c.closest && c.closest('.fsel-cerca') && aperto.pop.contains(c)) {
+      aperto.filtro = c.value || '';
+      disegnaLista();
+    }
+  });
+
+  document.addEventListener('keydown', function(e){
+    if (!aperto) return;
+    if (e.key === 'Escape') { e.preventDefault(); chiudi(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); muovi(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); muovi(-1); }
+    else if (e.key === 'Home') { e.preventDefault(); muovi(-999); }
+    else if (e.key === 'End') { e.preventDefault(); muovi(999); }
+    else if (e.key === 'Enter') { e.preventDefault(); scegli(aperto.idx); }
+  });
+
+  // Il pannello e' `position:fixed`: se la pagina scorre sotto di lui non
+  // lo segue. Meglio chiuderlo che lasciarlo puntare al vuoto.
+  window.addEventListener('resize', chiudi);
+  window.addEventListener('scroll', function(e){
+    if (aperto && !aperto.pop.contains(e.target)) chiudi();
+  }, true);
+
+  function via(){
+    scansiona(document);
+    // Le pagine che si ridisegnano da sole (le righe dell'import, i menu
+    // a cascata) creano `<select>` dopo il caricamento: senza osservatore
+    // resterebbero nativi, e la stessa pagina avrebbe due stili di menu.
+    if (window.MutationObserver) {
+      new MutationObserver(function(muta){
+        for (var i = 0; i < muta.length; i++) {
+          var agg = muta[i].addedNodes;
+          for (var j = 0; j < agg.length; j++) {
+            var nodo = agg[j];
+            if (nodo.nodeType !== 1) continue;
+            if (nodo.tagName === 'SELECT') innesta(nodo);
+            else if (nodo.querySelectorAll) scansiona(nodo);
+          }
+        }
+      }).observe(document.body, {childList: true, subtree: true});
+    }
+  }
+
+  if (document.readyState === 'loading')
+    document.addEventListener('DOMContentLoaded', via);
+  else via();
+})();
+</script>"""
+
+
 _APPEARANCE_SHEET = f"""
 <style>
 /* I campioni del selettore accento mostrano il colore reale di ciascun
@@ -547,6 +929,7 @@ def app_shell(section: str, eyebrow: str, title_html: str, content: str,
   {extra_body}
   {_APPEARANCE_SHEET}
 {_INFO_JS}
+{_SELECT_JS}
 </body>
 </html>"""
     return _inject_pin_gate(html)
@@ -824,7 +1207,8 @@ def inject_app_header(page_html: str, eyebrow: str = "Timesheet",
 {_tabbar("ore")}
 {tenda_html()}
 {_APPEARANCE_SHEET}
-{_INFO_JS}"""
+{_INFO_JS}
+{_SELECT_JS}"""
 
     html = page_html.replace(open_marker, shell_open, 1)
 
@@ -1067,12 +1451,15 @@ def render_launchpad(greet_name: str | None = None, dati: dict | None = None) ->
     # sapere se vale la pena aprirla.
     av = d.get("avviso_risparmio") or {}
     if av.get("consigliato"):
+        fino = f' al {data_it(av.get("al"))}' if av.get("al") else ""
         blocchi.append(
             f'<div class="notice mb-3">'
-            f'<strong>È arrivato lo stipendio del periodo aperto il '
-            f'{data_it(av.get("dal"))}</strong> e non hai ancora spostato niente '
-            f'nei salvadanai. Il consigliato è <strong>€ {eur(av["consigliato"])}</strong>. '
-            f'<a href="/risparmi">Apri la procedura →</a></div>')
+            f'<span class="emo">💰</span> '
+            f'<strong>Il periodo dal {data_it(av.get("dal"))}{fino} è chiuso</strong> '
+            f'— è arrivato lo stipendio dopo, quindi il conto non cambia più — '
+            f'e non hai ancora spostato niente nei salvadanai. '
+            f'Il consigliato è <strong>€ {eur(av["consigliato"])}</strong>. '
+            f'<a href="/risparmi?periodo={av.get("dal")}">Apri la procedura →</a></div>')
 
     # --- Tessere KPI -------------------------------------------------------
     acc = d.get("accantonamento") or {}
