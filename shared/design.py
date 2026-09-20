@@ -283,6 +283,10 @@ ul,ol{margin:0;padding:0;list-style:none}
 .warn{color:var(--warn)}
 /* Utility per testo: usa la variante leggibile, non quella grafica. */
 .accent{color:var(--accent-text)}
+/* Bottone che sta dentro una frase: e' un'azione, ma nel mezzo di un
+   paragrafo si legge e si tocca come un link. */
+.linklike{color:var(--accent-text);font-weight:600;
+  text-decoration:underline;text-underline-offset:2px}
 
 
 /* =====================================================================
@@ -501,6 +505,15 @@ ul,ol{margin:0;padding:0;list-style:none}
   overflow:hidden;text-overflow:ellipsis}
 .row .v{flex:none;text-align:right;font-size:14px;font-weight:500;
   font-variant-numeric:tabular-nums;white-space:nowrap}
+/* Riga che chiude una cascata di addendi: il filo sopra e il peso del
+   testo dicono "qui si tira la somma", senza doverlo scrivere in ogni
+   etichetta. `.row.voce` e' invece un addendo rientrato, per distinguere
+   a colpo d'occhio le parti dal totale che le raccoglie — e' la
+   confusione che rendeva illeggibile il dettaglio dei Risparmi. */
+.rows .row.tot{border-top:1px solid var(--line-strong);border-bottom:0}
+.rows .row.tot .t,.rows .row.tot .v{font-weight:600}
+.rows .row.voce .t{padding-left:var(--sp-3)}
+
 /* Righe esplicative: il testo puo' andare a capo, niente ellissi. */
 .rows.detail .row{align-items:flex-start}
 .rows.detail .row .t{white-space:normal;overflow:visible}

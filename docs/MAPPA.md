@@ -373,10 +373,17 @@ passa da qui.
   saldo) e `saldo_conto()` — apertura + entrate − uscite, paginato.
 - Totali: `totali()`, `per_categoria()`.
 - Risparmi: `periodi_risparmio()` (traduce i nomi con spazi e maiuscole
-  della vista in chiavi normali), `risparmio_del_periodo()` ("il bonifico
-  di questo periodo l'ho già registrato?"), `registra_bonifico_risparmio()`
-  (**scrive** l'uscita verso i salvadanai), `avviso_risparmio()` (quello
-  che la home mostra, o `None`), `impostazioni()`.
+  della vista in chiavi normali), `confini_periodo()` (primo e ultimo
+  giorno, **come li intende la vista**: il giorno prima del bonifico
+  successivo, o oggi per il periodo aperto), `risparmio_del_periodo()`
+  ("il bonifico di questo periodo l'ho già registrato?" — con `al`, o
+  guardando un periodo passato conta anche i bonifici di quelli dopo),
+  `dettaglio_periodo()` (le uscite categoria per categoria, con i totali
+  che tornano a quelli della vista), `arretrato_risparmio()` (i periodi
+  rimasti scoperti, camminando all'indietro fino al primo saldato),
+  `registra_bonifico_risparmio()` (**scrive** l'uscita verso i
+  salvadanai), `avviso_risparmio()` (quello che la home mostra, o
+  `None`), `impostazioni()`.
 
 > **Le tre regole della tabella `spese`**, e sono tutte trappole silenziose:
 > 1. `mese` e `anno` sono NOT NULL senza default: vanno ricavati dalla data
@@ -430,19 +437,51 @@ dell'anno, ultimi movimenti, quanto è arrivato dalla P.IVA.
 
 ### `spese/risparmi.py` — periodi, risparmio e **procedura di fine periodo**
 
-`GET /risparmi`, `GET /api/risparmi`, `POST /api/risparmi/esegui`.
-`PATCH /api/risparmi` risponde 409: dichiarava il risparmio su
-`risparmi_periodo`, colonna che dopo la §8.11 non legge più nessuno.
+`GET /risparmi[?periodo=AAAA-MM-GG]`, `GET /api/risparmi`,
+`POST /api/risparmi/esegui`. `PATCH /api/risparmi` risponde 409:
+dichiarava il risparmio su `risparmi_periodo`, colonna che dopo la §8.11
+non legge più nessuno.
 
 I periodi vanno da un bonifico al successivo — categoria *Stipendio* **o**
 *Giroconto P.IVA*: da quando c'è la partita IVA il giroconto è lo stipendio
 di fatto (migrazione README §8.7). Mostra consigliato, effettivo e la
 differenza fra i due, che è l'unica cosa che conta guardare.
 
+**Si sceglie il periodo dal menu in cima** (`?periodo=`, la chiave è
+`data_bonifico`), e la scelta guida tutta la pagina — cascata, procedura,
+ripartizione. Prima si vedeva solo `periodi[0]`: un periodo saltato non
+era raggiungibile da nessuna parte. Il menu elenca *periodi*, non mesi,
+e ne scrive gli estremi — "Agosto 2026 · 13 ago → 2 set" — perché un mese
+può contenerne due (in agosto 2026 sono arrivati due giroconti); è
+cronologico e non alfabetico, ed è registrato in `ECCEZIONI` di
+`tools/verifica_menu.py` con quel motivo.
+
+**Il dettaglio è una cascata che quadra**: saldo di partenza, entrate,
+ogni uscita categoria per categoria, base del calcolo, quota, saldo
+finale. Prima non quadrava — il totale "Speso" somma *ogni* uscita tranne
+i Risparmi mentre il dettaglio ne mostrava quattro categorie, e le parti
+erano righe sorelle del totale, tutte col meno, come se si sottraessero
+due volte. Il conto lo fa `D.dettaglio_periodo`, con le stesse regole di
+aggregazione della vista.
+
+**L'arretrato** (`D.arretrato_risparmio`) elenca i periodi rimasti senza
+bonifico, camminando all'indietro fino al primo saldato. Serve perché un
+periodo passato non si allinea retrodatando: un movimento appartiene al
+periodo che contiene la sua data, e la data è quella vera della banca.
+Quindi il bonifico di recupero cade nel periodo di oggi — corretto — e
+l'arretrato è il posto dove quel debito resta visibile.
+
 Mostra anche **quanto c'è davvero in ogni salvadanaio**: la somma delle
 quote di tutti i periodi (il "dovrebbe") accanto ai saldi Revolut (il
 "c'è"). Uno scarto non è di per sé un errore — dai salvadanai si preleva —
 ma questo è l'unico posto in cui si vede.
+
+> **"Altro" non è un salvadanaio.** Quella quota va dritta negli
+> investimenti, e nello snapshot Revolut la chiave non esiste proprio:
+> confrontarla con un secchiello inesistente dava un ammanco fantasma
+> (3.134,43 € al 20/09/2026), rosso e permanente. Ora si confronta con
+> `investimenti`, dicendo che è un **valore** di portafoglio e non è
+> confrontabile con gli altri allo stesso modo.
 
 **La procedura di fine periodo** (`_card_procedura`) è il pezzo che
 chiude il cerchio: due passi nell'ordine in cui il denaro si muove
@@ -458,6 +497,12 @@ esplicita, e quello che resta scritto è un movimento vero.
 >
 > `risparmio_effettivo` a 0 è trattato come “non ancora registrato”: la
 > vista fa `coalesce` a zero e non c'è modo di distinguere i due casi.
+>
+> Per la stessa ragione la scheda “Come si divide” **non** legge le
+> colonne `quota_*`: valgono `effettivo × percentuale`, quindi su un
+> periodo non ancora allineato mostravano cinque zeri — proprio quando
+> serviva sapere come dividere. Si calcola sul numero che conta adesso:
+> l'effettivo se il periodo è allineato, il consigliato altrimenti.
 
 ### `spese/revolut.py` — 769 righe · il terzo conto
 

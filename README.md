@@ -145,7 +145,7 @@ PDF si intitola FACSIMILE e lo dichiara in calce.
 | `/spese/movimenti` | elenco con filtri per anno, mese, tipo, categoria, testo |
 | `/spese/movimenti/nuovo` | nuovo movimento |
 | `/spese/movimenti/<id>` | modifica |
-| `/spese/risparmi` | periodi di stipendio, risparmio consigliato ed effettivo, e quanto c'è davvero in ogni salvadanaio |
+| `/spese/risparmi` | periodi di stipendio (si sceglie quale), il conto del periodo voce per voce, risparmio consigliato ed effettivo, arretrato, e quanto c'è davvero in ogni salvadanaio |
 | `/spese/revolut` | saldi Revolut: liquidità, risparmi, investimenti |
 | `/spese/importa` | import dei movimenti da estratto conto bancario |
 
@@ -677,12 +677,36 @@ in cui il denaro si muove davvero.
    personale, e finché l'incasso non è arrivato lì quel numero è più
    basso del vero.
 2. **Quanto ne metti via.** Il consigliato è la percentuale di
-   `impostazioni` applicata a quel che resta nel periodo — lo stesso
-   numero della colonna *Risparmio consigliato* di `v_risparmi_mese`. Si
+   `impostazioni` applicata alla **base del calcolo** — lo stesso numero
+   della colonna *Risparmio consigliato* di `v_risparmi_mese`. Si
    può correggere, e mentre lo si scrive l'anteprima mostra quanto
    finisce in ciascuno dei cinque salvadanai. Alla conferma l'app
    registra **un'uscita vera** dal conto personale, categoria *Risparmi*,
    con la data del bonifico.
+
+> **La base non è lo stipendio, ed è il punto che si legge male.** È
+> tutto quello che hai sul conto a fine periodo — il residuo del periodo
+> prima compreso: `saldo prima + stipendio + altre entrate − uscite`. È
+> per questo che un periodo può chiudere in rosso e avere comunque un
+> consigliato sopra zero (i soldi ci sono, arrivano da prima), e per
+> questo la pagina la mostra come una cascata di addendi che si somma a
+> vista, invece che come un totale da prendere per buono.
+
+**Il periodo si sceglie.** In cima c'è il menu dei periodi, dal più
+recente: si torna indietro, si guarda il conto di quel periodo e si vede
+se il bonifico è stato fatto. Il menu elenca *periodi* e non mesi, con i
+loro estremi scritti accanto, perché un mese solare può contenerne due —
+in agosto 2026 sono arrivati due giroconti, quindi agosto sono due
+periodi con due consigliati distinti.
+
+**Un periodo saltato non si recupera retrodatando.** Un movimento
+appartiene al periodo che contiene la sua data, e la data è quella in cui
+la banca esegue il bonifico: retrodatare per far quadrare una schermata è
+esattamente la pratica che è costata 829,78 €. Il bonifico di recupero si
+fa oggi, con la data di oggi, e cade nel periodo di oggi. Quello che la
+pagina aggiunge è **l'arretrato**: l'elenco dei periodi rimasti senza
+bonifico e quanto valgono in tutto, così il debito resta visibile anche
+se non si può appiccicare al periodo che l'ha generato.
 
 Il bonifico lo fai tu dalla banca: l'app registra che è successo, non
 sposta denaro. Sembra una sfumatura e non lo è — è la differenza fra un

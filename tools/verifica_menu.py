@@ -37,6 +37,11 @@ ECCEZIONI = {
     "f_scenario": "gli scenari vanno dal minimo al piu' prudente",
     "d_tipo": "i tipi documento vanno per codice (TD01, TD04, TD06)",
     "f_regime": "un'opzione sola",
+    # I periodi di stipendio: la sequenza e' l'informazione. In ordine
+    # alfabetico "Agosto 2026 · 10 ago" verrebbe prima di "Luglio 2026",
+    # e due periodi dello stesso mese si mischierebbero fra loro — il
+    # menu serve proprio a distinguerli e a scorrerli all'indietro.
+    "Periodo": "i periodi di stipendio vanno dal piu' recente",
 }
 
 PAGINE = [

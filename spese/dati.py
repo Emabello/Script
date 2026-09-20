@@ -30,7 +30,7 @@ Tre cose vanno rispettate, e sono tutte trappole silenziose:
    sequenza: e' quello che fa la funzione `insert_spesa_first_free_id`
    gia' nel database, che prende anche un lock per non correre.
 """
-from datetime import date
+from datetime import date, timedelta
 
 from shared.ordina import ordina, ordina_coppie
 from shared.supabase_client import get_client, is_configured
@@ -766,6 +766,151 @@ def risparmio_del_periodo(client, dal: str, al: str | None = None) -> float:
             continue
         tot += imp if TIPI_SEGNO.get(riga.get("tipo"), 0) < 0 else -imp
     return round(tot, 2)
+
+
+def confini_periodo(periodo: dict, oggi: str | None = None) -> tuple[str, str]:
+    """
+    Il primo e l'ultimo giorno di un periodo di stipendio, come li
+    intende `v_risparmi_mese`.
+
+    La vista unisce le spese al periodo con
+    `data >= data_bonifico AND data <= fine_periodo`, dove `fine_periodo`
+    e' il giorno prima del bonifico successivo — o **oggi**, per il
+    periodo ancora aperto. Chiunque voglia ricalcolare in Python un
+    numero che la vista ha gia' calcolato deve usare esattamente questi
+    due estremi, altrimenti i due conti divergono su qualche movimento di
+    confine e nessuno capisce perche'.
+
+    L'estremo superiore serve soprattutto ai periodi **passati**: senza,
+    una lettura dei risparmi "da questo periodo in poi" si tira dentro i
+    bonifici dei periodi successivi, e un periodo mai allineato sembra
+    allineato (vedi `risparmio_del_periodo`, che per questo accetta `al`).
+    """
+    dal = str(periodo.get("data_bonifico") or "")[:10]
+    prossimo = str(periodo.get("prossimo_bonifico") or "")[:10]
+    if prossimo:
+        try:
+            y, m, d = (int(x) for x in prossimo.split("-"))
+            al = (date(y, m, d) - timedelta(days=1)).isoformat()
+        except (ValueError, TypeError):
+            al = oggi or date.today().isoformat()
+    else:
+        al = oggi or date.today().isoformat()
+    return dal, al
+
+
+def dettaglio_periodo(client, dal: str, al: str) -> dict:
+    """
+    Le uscite e le entrate di un periodo, categoria per categoria, con la
+    garanzia che i totali tornino a quelli di `v_risparmi_mese`.
+
+    Esiste perche' il dettaglio mostrato nella pagina Risparmi **non
+    tornava**. La vista espone quattro categorie di spesa (Fisso,
+    Personale, Benzina, Viaggi) e un "Totale Speso" che invece somma
+    *ogni* uscita tranne i Risparmi: tutto quello che cade fuori da
+    quelle quattro spariva dal dettaglio pur restando nel totale. Nel
+    periodo 13/08-02/09/2026 erano 1.068,33 € — un giroconto di rientro
+    sul conto P.IVA — su 1.807,10 € di "speso": il dettaglio mostrava
+    738,77 € e il KPI un altro numero, senza niente che spiegasse lo
+    scarto.
+
+    Le regole di aggregazione sono copiate da `v_risparmi_mese` apposta,
+    riga per riga: uscite di qualsiasi categoria tranne "Risparmi",
+    entrate di qualsiasi categoria tranne stipendio, giroconto P.IVA e
+    "Risparmi" (le prime due sono gia' il bonifico che apre il periodo,
+    la terza sono i rientri dai salvadanai). Allontanarsi da queste
+    regole rimetterebbe in piedi lo scarto che la funzione serve a
+    chiudere.
+    """
+    vuoto = {"uscite": [], "entrate": [], "tot_uscite": 0.0,
+             "tot_entrate": 0.0, "n_uscite": 0}
+    if not dal or not al:
+        return vuoto
+
+    righe = []
+    offset, passo = 0, 1000
+    while True:
+        try:
+            pagina = _righe(client.table("v_spese")
+                            .select("importo,tipo,data,categoria")
+                            .gte("data", dal).lte("data", al)
+                            .order("data", desc=False)
+                            .range(offset, offset + passo - 1).execute())
+        except Exception:
+            return vuoto
+        righe.extend(pagina)
+        if len(pagina) < passo:
+            break
+        offset += passo
+
+    fuori_entrate = {CATEGORIA_STIPENDIO, CATEGORIA_GIROCONTO,
+                     CATEGORIA_RISPARMIO}
+    uscite: dict[str, float] = {}
+    entrate: dict[str, float] = {}
+    n_uscite = 0
+    for riga in righe:
+        try:
+            imp = abs(float(riga.get("importo") or 0))
+        except (TypeError, ValueError):
+            continue
+        cat = riga.get("categoria") or ""
+        tipo = riga.get("tipo")
+        if tipo == "uscita" and cat != CATEGORIA_RISPARMIO:
+            uscite[cat] = round(uscite.get(cat, 0.0) + imp, 2)
+            n_uscite += 1
+        elif tipo == "entrata" and cat not in fuori_entrate:
+            entrate[cat] = round(entrate.get(cat, 0.0) + imp, 2)
+
+    ordina_voci = lambda d: sorted(((k, v) for k, v in d.items() if v),
+                                   key=lambda kv: -kv[1])
+    return {
+        "uscite":      ordina_voci(uscite),
+        "entrate":     ordina_voci(entrate),
+        "tot_uscite":  round(sum(uscite.values()), 2),
+        "tot_entrate": round(sum(entrate.values()), 2),
+        # Quante righe compongono il totale speso — non quante ne cadono
+        # nel periodo: accanto a "Speso" un conteggio che comprende anche
+        # le entrate risponderebbe a un'altra domanda.
+        "n_uscite":    n_uscite,
+    }
+
+
+def arretrato_risparmio(periodi: list[dict]) -> dict:
+    """
+    I periodi mai allineati, dal piu' recente all'indietro.
+
+    Risponde alla domanda con cui si apre la pagina: *"il mese scorso
+    l'ho fatto?"*. Si cammina dal periodo piu' recente verso il passato
+    e ci si ferma al primo che ha messo via qualcosa: quelli attraversati
+    sono l'arretrato. Fermarsi li' e non sommare tutta la storia e'
+    voluto — un periodo saldato chiude il conto di quelli prima, ed e'
+    esattamente come lo si legge guardando l'estratto.
+
+    `eccedenza` e' quanto l'ultimo periodo saldato ha messo via **oltre**
+    il consigliato. Non la sottraiamo dall'arretrato: e' un'informazione,
+    non un'aritmetica da imporre. A luglio 2026 sono usciti 2.307,48 €
+    contro 847,49 consigliati, e se quei 1.459,99 di troppo coprissero
+    gia' agosto lo sa solo chi ha fatto il bonifico.
+    """
+    def n(v):
+        try:
+            return float(v or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    aperti, eccedenza = [], 0.0
+    for p in periodi:
+        if n(p.get("risparmio_effettivo")) > 0:
+            eccedenza = round(n(p.get("risparmio_effettivo"))
+                              - n(p.get("risparmio_consigliato")), 2)
+            break
+        aperti.append(p)
+    return {
+        "periodi":   aperti,
+        "totale":    round(sum(n(p.get("risparmio_consigliato"))
+                               for p in aperti), 2),
+        "eccedenza": eccedenza if eccedenza > 0 else 0.0,
+    }
 
 
 def avviso_risparmio(client) -> dict | None:
