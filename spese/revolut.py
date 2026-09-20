@@ -511,9 +511,9 @@ def _riquadro_coerenza(c: dict | None) -> str:
     </div>'''
 
 
-@spese_bp.get("/revolut")
+@spese_bp.get("/conti/revolut")
 def revolut_pagina():
-    breadcrumb = [("Spese", "/spese"), ("Revolut", "")]
+    breadcrumb = [("Conti", "/conti"), ("Revolut", "")]
     client = D.sb()
     if client is None:
         return _render('<div class="notice warn">Supabase non configurato.</div>',
@@ -750,7 +750,7 @@ def revolut_pagina():
 # API
 # ---------------------------------------------------------------------------
 
-@spese_bp.post("/api/revolut/leggi")
+@spese_bp.post("/spese/api/revolut/leggi")
 def api_revolut_leggi():
     """Legge l'estratto e restituisce i saldi. Non scrive niente."""
     f = request.files.get("file")
@@ -764,7 +764,7 @@ def api_revolut_leggi():
         return jsonify({"error": f"file non leggibile: {str(e)[:200]}"}), 400
 
 
-@spese_bp.get("/api/revolut")
+@spese_bp.get("/spese/api/revolut")
 def api_revolut_get():
     client = D.sb()
     if client is None:
@@ -772,7 +772,7 @@ def api_revolut_get():
     return jsonify(saldo_revolut(client))
 
 
-@spese_bp.post("/api/revolut")
+@spese_bp.post("/spese/api/revolut")
 def api_revolut_salva():
     client = D.sb()
     if client is None:
@@ -782,7 +782,7 @@ def api_revolut_salva():
 
 
 def _render(content: str, breadcrumb=None) -> Response:
-    return Response(render_page(section="spese", eyebrow="Revolut",
+    return Response(render_page(section="conti-revolut", eyebrow="Revolut",
                                 title_html='I miei <em>risparmi</em> su Revolut',
                                 content=content, breadcrumb=breadcrumb),
                     mimetype="text/html")

@@ -737,7 +737,7 @@ scritto con **un backslash solo** se lo mangia Python, la stringa JS si chiude
 a metà frase e il browser scarta **l'intero blocco `<script>`**. Bottoni morti,
 pagina che si disegna lo stesso, nessun segno visibile.
 
-Non è teoria: è successo su `/spese/risparmi` e la procedura di fine periodo
+Non è teoria: è successo su `/risparmi` e la procedura di fine periodo
 non funzionava. Questo tool apre le diciotto pagine e fallisce su qualunque
 `pageerror`.
 

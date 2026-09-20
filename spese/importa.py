@@ -195,9 +195,9 @@ def _esc(v) -> str:
         "<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
-@spese_bp.get("/importa")
+@spese_bp.get("/conti/webank/personale/importa")
 def importa_pagina():
-    breadcrumb = [("Spese", "/spese"), ("Movimenti", "/spese/movimenti"),
+    breadcrumb = [("Conti", "/conti"), ("WeBank Personale", "/conti/webank/personale"),
                   ("Importa da banca", "")]
     client = D.sb()
     if client is None:
@@ -476,7 +476,7 @@ def importa_pagina():
     return _render(body, breadcrumb)
 
 
-@spese_bp.post("/api/importa/carica")
+@spese_bp.post("/spese/api/importa/carica")
 def api_importa_carica():
     f = request.files.get("file")
     if not f or not f.filename:
@@ -601,7 +601,7 @@ def segnala_sospetti(indice: dict, movimenti: list[dict]) -> int:
     return n
 
 
-@spese_bp.post("/api/importa/salva")
+@spese_bp.post("/spese/api/importa/salva")
 def api_importa_salva():
     client = D.sb()
     if client is None:
@@ -665,7 +665,7 @@ def api_importa_salva():
 
 
 def _render(content: str, breadcrumb=None) -> Response:
-    return Response(render_page(section="spese", eyebrow="Importa",
+    return Response(render_page(section="conti-personale", eyebrow="Importa",
                                 title_html='Importa da <em>banca</em>',
                                 content=content, breadcrumb=breadcrumb),
                     mimetype="text/html")

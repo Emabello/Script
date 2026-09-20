@@ -4,10 +4,10 @@ parametri, export Excel).
 
 Rotte HTML:
   GET /fatture/situazione            -> dashboard fiscale (riepilogo + scadenze)
-  GET /fatture/spese-piva            -> lista movimenti P.IVA
-  GET /fatture/spese-piva/nuova      -> form nuovo movimento
-  GET /fatture/spese-piva/<int:id>   -> form edit movimento
-  GET /fatture/parametri             -> editor parametri fiscali
+  GET /conti/webank/piva             -> movimenti del conto P.IVA
+  GET /conti/webank/piva/nuova       -> form nuovo movimento
+  GET /conti/webank/piva/<int:id>    -> form edit movimento
+  GET /impostazioni/parametri        -> editor parametri fiscali
 
 Rotte JSON:
   GET    /fatture/api/situazione?anno=YYYY
@@ -404,7 +404,7 @@ def saldo_piva(sb, al: str | None = None) -> dict:
     """
     Saldo reale del conto P.IVA a una data (default: oggi).
 
-    Non e' il saldo dell'anno filtrato che mostra /fatture/spese-piva: e'
+    Non e' il saldo dell'anno filtrato che mostra /conti/webank/piva: e'
     quanto c'e' sul conto, tutti i movimenti dall'apertura fino ad `al`.
     Dal secondo anno in poi i due numeri divergono, perche' il conto non
     riparte da zero a gennaio.
@@ -871,7 +871,7 @@ def _card_fondo_tasse(d: dict, anno: int) -> str:
 
 
 
-@fatture_bp.get("/situazione")
+@fatture_bp.get("/fatture/situazione")
 def situazione_dashboard():
     sb, err = _supabase_or_error()
     breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "")]
@@ -1037,8 +1037,8 @@ def situazione_dashboard():
         <a class="btn" href="/fatture/api/export/xlsx?anno={anno}">
           {_icon("download")}Esporta Excel
         </a>
-        <a class="btn ghost" href="/fatture/parametri">Parametri fiscali</a>
-        <a class="btn ghost" href="/fatture/spese-piva">Movimenti P.IVA</a>
+        <a class="btn ghost" href="/impostazioni/parametri">Parametri fiscali</a>
+        <a class="btn ghost" href="/conti/webank/piva">Movimenti P.IVA</a>
       </div>
     </div>'''
 
@@ -1059,7 +1059,7 @@ def situazione_dashboard():
                    breadcrumb=breadcrumb)
 
 
-@fatture_bp.get("/api/situazione")
+@fatture_bp.get("/fatture/api/situazione")
 def api_situazione():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1219,7 +1219,7 @@ def _build_workbook(sb, anno: int):
     return buf
 
 
-@fatture_bp.get("/api/export/xlsx")
+@fatture_bp.get("/fatture/api/export/xlsx")
 def api_export_xlsx():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1240,11 +1240,10 @@ def api_export_xlsx():
 # Parametri fiscali
 # ---------------------------------------------------------------------------
 
-@fatture_bp.get("/parametri")
+@fatture_bp.get("/impostazioni/parametri")
 def parametri_editor():
     sb, err = _supabase_or_error()
-    breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("Parametri", "")]
+    breadcrumb = [("Impostazioni", "/impostazioni"), ("Parametri fiscali", "")]
     if err:
         return _render(err, breadcrumb=breadcrumb)
     p = _get_parametri(sb)
@@ -1404,18 +1403,18 @@ def parametri_editor():
     }}
     </script>
     '''
-    return _render(body, eyebrow="Parametri fiscali",
+    return _render(body, section="impostazioni", eyebrow="Parametri fiscali",
                    title_html='Parametri <em>fiscali</em>', breadcrumb=breadcrumb)
 
 
-@fatture_bp.get("/api/parametri")
+@fatture_bp.get("/fatture/api/parametri")
 def api_parametri_get():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
     return jsonify(_get_parametri(sb))
 
 
-@fatture_bp.patch("/api/parametri")
+@fatture_bp.patch("/fatture/api/parametri")
 def api_parametri_update():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1496,13 +1495,13 @@ def _movimento_label(m: dict) -> str:
     return segno, cls
 
 
-@fatture_bp.get("/spese-piva")
+@fatture_bp.get("/conti/webank/piva")
 def spese_piva_list():
     sb, err = _supabase_or_error()
     breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
                   ("Spese P.IVA", "")]
     if err:
-        return _render(err, breadcrumb=breadcrumb, fab=("Nuovo movimento", "/fatture/spese-piva/nuova"))
+        return _render(err, breadcrumb=breadcrumb, fab=("Nuovo movimento P.IVA", "/conti/webank/piva/nuova"))
 
     anno_default = date.today().year
     anno = request.args.get("anno", type=int) or anno_default
@@ -1606,7 +1605,7 @@ def spese_piva_list():
             segno, cls = _movimento_label(m)
             cat = _esc(cat_lbl.get(m.get("categoria"), m.get("categoria") or "—"))
             items.append(f'''
-            <a class="item" href="/fatture/spese-piva/{m["id"]}">
+            <a class="item" href="/conti/webank/piva/{m["id"]}">
               <span class="ico {cls or "neutral"}">{_icon("wallet")}</span>
               <span class="body">
                 <span class="n">{_esc(m.get("descrizione") or "—")}</span>
@@ -1618,8 +1617,9 @@ def spese_piva_list():
             </a>''')
         body = f'{riepilogo}{toolbar}<div class="list">{"".join(items)}</div>'
 
-    return _render(body, eyebrow="Movimenti P.IVA", title_html='Movimenti <em>P.IVA</em>',
-                   breadcrumb=breadcrumb, fab=("Nuovo movimento", "/fatture/spese-piva/nuova"))
+    return _render(body, section="conti-piva", eyebrow="WeBank P.IVA",
+                   title_html='Conto <em>P.IVA</em>',
+                   breadcrumb=breadcrumb, fab=("Nuovo movimento P.IVA", "/conti/webank/piva/nuova"))
 
 
 def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None) -> str:
@@ -1654,7 +1654,7 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
                   f'<button type="button" class="btn" onclick="onSubmit({mid or "null"})">{submit_lbl}</button>')
     delete_btn = (f'<button type="button" class="btn danger" onclick="onElimina({mid})">Elimina</button>'
                   if is_edit and delete_ok else "")
-    torna_btn = ('<a class="btn ghost" href="/fatture/spese-piva">Torna ai movimenti</a>'
+    torna_btn = ('<a class="btn ghost" href="/conti/webank/piva">Torna ai movimenti</a>'
                  if bloccato and not delete_ok else "")
 
     return f'''
@@ -1721,7 +1721,7 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
         const j = await r.json();
         if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
         toast(isNew ? 'Movimento registrato' : 'Aggiornato', 'ok');
-        setTimeout(()=>{{ location.href = '/fatture/spese-piva'; }}, 500);
+        setTimeout(()=>{{ location.href = '/conti/webank/piva'; }}, 500);
       }} catch (e) {{ toast('Errore: '+e.message, 'err'); }}
     }}
     async function onElimina(mid) {{
@@ -1730,26 +1730,26 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
         const r = await fetch('/fatture/api/spese-piva/'+mid, {{method:'DELETE'}});
         if (!r.ok) {{ toast('Errore', 'err'); return; }}
         toast('Eliminato', 'ok');
-        setTimeout(()=>{{ location.href = '/fatture/spese-piva'; }}, 500);
+        setTimeout(()=>{{ location.href = '/conti/webank/piva'; }}, 500);
       }} catch (e) {{ toast('Errore: '+e.message, 'err'); }}
     }}
     </script>
     '''
 
 
-@fatture_bp.get("/spese-piva/nuova")
+@fatture_bp.get("/conti/webank/piva/nuova")
 def spesa_piva_new():
     breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("Spese P.IVA", "/fatture/spese-piva"), ("Nuovo", "")]
-    return _render(_movimento_form_html(None), eyebrow="Nuovo movimento",
+                  ("WeBank P.IVA", "/conti/webank/piva"), ("Nuovo", "")]
+    return _render(_movimento_form_html(None), section="conti-piva", eyebrow="Nuovo movimento",
                    title_html='<em>Nuovo</em> movimento', breadcrumb=breadcrumb)
 
 
-@fatture_bp.get("/spese-piva/<int:mid>")
+@fatture_bp.get("/conti/webank/piva/<int:mid>")
 def spesa_piva_edit(mid):
     sb, err = _supabase_or_error()
     breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("Spese P.IVA", "/fatture/spese-piva"), (str(mid), "")]
+                  ("WeBank P.IVA", "/conti/webank/piva"), (str(mid), "")]
     if err:
         return _render(err, breadcrumb=breadcrumb)
     try:
@@ -1777,12 +1777,12 @@ def spesa_piva_edit(mid):
     else:
         collegamento = None
 
-    return _render(_movimento_form_html(m, collegamento), eyebrow="Movimento",
+    return _render(_movimento_form_html(m, collegamento), section="conti-piva", eyebrow="Movimento",
                    title_html=f'<em>{_esc((m.get("descrizione") or "Movimento")[:20])}</em>',
                    breadcrumb=breadcrumb)
 
 
-@fatture_bp.get("/api/spese-piva")
+@fatture_bp.get("/fatture/api/spese-piva")
 def api_spese_piva_list():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1856,7 +1856,7 @@ def _stacca_da_fattura(sb, mid: int) -> None:
         pass
 
 
-@fatture_bp.post("/api/spese-piva")
+@fatture_bp.post("/fatture/api/spese-piva")
 def api_spesa_piva_create():
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1925,7 +1925,7 @@ def api_spesa_piva_create():
     return jsonify(riga)
 
 
-@fatture_bp.patch("/api/spese-piva/<int:mid>")
+@fatture_bp.patch("/fatture/api/spese-piva/<int:mid>")
 def api_spesa_piva_update(mid):
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -1961,7 +1961,7 @@ def api_spesa_piva_update(mid):
         return jsonify({"error": str(e)[:200]}), 500
 
 
-@fatture_bp.delete("/api/spese-piva/<int:mid>")
+@fatture_bp.delete("/fatture/api/spese-piva/<int:mid>")
 def api_spesa_piva_delete(mid):
     sb, err = _supabase_or_error()
     if err: return jsonify({"error": "supabase not configured"}), 503
@@ -2007,9 +2007,17 @@ def api_spesa_piva_delete(mid):
 
 def _render(content: str, eyebrow: str = "Situazione fiscale",
             title_html: str = 'Situazione <em>fiscale</em>',
-            breadcrumb=None, fab=None, actions_html: str = "") -> Response:
+            breadcrumb=None, fab=None, actions_html: str = "",
+            section: str = "fatture") -> Response:
+    """
+    `section` accende la voce giusta nel menu. Questo modulo serve tre
+    rami diversi dell'albero — la situazione fiscale sta sotto Fatture,
+    il conto P.IVA sotto Conti, i parametri sotto Impostazioni — e il
+    codice sta insieme perche' e' la stessa materia, non perche' sia la
+    stessa sezione.
+    """
     html = render_page(
-        section="fatture", eyebrow=eyebrow, title_html=title_html,
+        section=section, eyebrow=eyebrow, title_html=title_html,
         content=content, breadcrumb=breadcrumb, fab=fab,
         actions_html=actions_html,
     )

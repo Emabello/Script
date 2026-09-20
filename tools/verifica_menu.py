@@ -45,13 +45,13 @@ ECCEZIONI = {
 }
 
 PAGINE = [
-    "/", "/saldi",
+    "/", "/conti", "/impostazioni",
     "/fatture", "/fatture/storico", "/fatture/nuova", "/fatture/clienti",
     "/fatture/clienti/nuovo", "/fatture/clienti/1", "/fatture/situazione",
-    "/fatture/parametri", "/fatture/spese-piva", "/fatture/spese-piva/nuova",
-    "/fatture/spese-piva/1", "/fatture/emittente",
-    "/spese", "/spese/movimenti", "/spese/movimenti/nuovo", "/spese/movimenti/1",
-    "/spese/importa", "/spese/risparmi", "/spese/revolut",
+    "/impostazioni/parametri", "/conti/webank/piva", "/conti/webank/piva/nuova",
+    "/conti/webank/piva/1", "/impostazioni/emittente",
+    "/conti", "/conti/webank/personale", "/conti/webank/personale/nuovo", "/conti/webank/personale/1",
+    "/conti/webank/personale/importa", "/risparmi", "/conti/revolut",
 ]
 
 # Placeholder di testa: non sono dati, non entrano nel confronto.
@@ -119,7 +119,7 @@ def main():
     problemi, controllati, saltati = [], 0, 0
 
     for url in PAGINE:
-        # follow_redirects: "/fatture" e "/spese" rispondono 308 verso la
+        # follow_redirects: "/fatture" e "/conti" rispondono 308 verso la
         # variante con lo slash finale.
         r = client.get(url, follow_redirects=True)
         if r.status_code != 200:

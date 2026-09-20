@@ -18,7 +18,7 @@ tramite apply_patch.py (il decoratore di index() viene riscritto).
 import os
 from datetime import date
 
-from flask import Response, jsonify
+from flask import Response, jsonify, redirect
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import xs_server
@@ -30,7 +30,7 @@ from spese import spese_bp
 from shared.webauthn import webauthn_bp
 
 from shared.caricamento import render_attesa
-from shared.theme import render_launchpad, render_saldi_page
+from shared.theme import render_launchpad, render_conti_page, render_impostazioni_page
 from shared.supabase_client import get_client, is_configured
 
 # Render (come ogni PaaS) termina il TLS su un proxy e inoltra a gunicorn in
@@ -49,9 +49,60 @@ app.config.update(
     SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),
 )
 
-app.register_blueprint(fatture_bp, url_prefix="/fatture")
-app.register_blueprint(spese_bp,   url_prefix="/spese")
+# Senza url_prefix, e ogni rotta porta il suo percorso completo nel
+# decoratore. E' quello che permette all'albero della navigazione di
+# esistere: il conto P.IVA sta in `fatture/fiscale.py` (accanto al resto
+# del fisco, dove ha senso che stia il codice) ma risponde su
+# /conti/webank/piva, dove ha senso che stia per chi naviga. Con il
+# prefisso sul blueprint le due cose erano costrette a coincidere, ed e'
+# il motivo per cui i tre conti erano sparsi in due sezioni diverse.
+app.register_blueprint(fatture_bp)
+app.register_blueprint(spese_bp)
 app.register_blueprint(webauthn_bp, url_prefix="/api/webauthn")
+
+# I percorsi di prima, che devono continuare a funzionare: segnalibri,
+# l'app installata sul telefono (il manifest ha start_url "/"), i link
+# scritti nelle note. Un 301 e non un doppione: due URL vivi per la
+# stessa pagina non si riallineano mai piu'.
+VECCHI_PERCORSI = {
+    "/saldi":                  "/conti",
+    "/spese":                  "/conti/webank/personale",
+    "/spese/":                 "/conti/webank/personale",
+    "/spese/movimenti":        "/conti/webank/personale",
+    "/spese/movimenti/nuovo":  "/conti/webank/personale/nuovo",
+    "/spese/importa":          "/conti/webank/personale/importa",
+    "/spese/revolut":          "/conti/revolut",
+    "/spese/risparmi":         "/risparmi",
+    "/fatture/spese-piva":       "/conti/webank/piva",
+    "/fatture/spese-piva/nuova": "/conti/webank/piva/nuova",
+    "/fatture/parametri":      "/impostazioni/parametri",
+    "/fatture/emittente":      "/impostazioni/emittente",
+}
+
+
+def _vecchio_percorso(nuovo: str):
+    def vai():
+        from flask import request as _rq
+        meta = nuovo
+        if _rq.query_string:
+            meta += "?" + _rq.query_string.decode("utf-8", "ignore")
+        return redirect(meta, code=301)
+    return vai
+
+
+for _vecchio, _nuovo in VECCHI_PERCORSI.items():
+    app.add_url_rule(_vecchio, endpoint=f"legacy{_vecchio.replace('/', '_')}",
+                     view_func=_vecchio_percorso(_nuovo))
+
+# Quelli con un id dentro: stessa cosa, ma la rotta ha un segnaposto.
+@app.get("/spese/movimenti/<int:mid>")
+def legacy_movimento(mid):
+    return redirect(f"/conti/webank/personale/{mid}", code=301)
+
+
+@app.get("/fatture/spese-piva/<int:mid>")
+def legacy_spesa_piva(mid):
+    return redirect(f"/conti/webank/piva/{mid}", code=301)
 
 # Gli endpoint WebAuthn devono restare accessibili senza PIN: register/*
 # richiede comunque sessione già sbloccata (controllo interno al blueprint),
@@ -253,8 +304,8 @@ def launchpad():
     return Response(html, mimetype="text/html")
 
 
-@app.get("/saldi")
-def saldi_page():
+@app.get("/conti")
+def conti_page():
     saldi = None
     coerenza_html = ""
     if is_configured():
@@ -297,8 +348,21 @@ def saldi_page():
         except Exception:
             pass
 
-    html = render_saldi_page(saldi, coerenza_html, verifiche)
+    html = render_conti_page(saldi, coerenza_html, verifiche)
     return Response(html, mimetype="text/html")
+
+
+@app.get("/impostazioni")
+def impostazioni_page():
+    """
+    Le impostazioni, raccolte in un posto solo.
+
+    Prima stavano sparse dentro Fatture: l'emittente nella landing, i
+    parametri fiscali **solo** passando dalla Situazione fiscale — una
+    pagina che si apre tre volte l'anno, dietro un percorso che nessuno
+    indovina. Non sono fatture: sono come e' configurata l'app.
+    """
+    return Response(render_impostazioni_page(), mimetype="text/html")
 
 
 # ---------------------------------------------------------------------

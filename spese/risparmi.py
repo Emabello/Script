@@ -209,7 +209,7 @@ def _card_procedura(client, periodo, dal: str, al: str, consigliato: float,
             Il consigliato era € {eur(consigliato)}.
           </p>
           <a class="btn ghost block mt-4"
-             href="/spese/movimenti?categoria=Risparmi">Vedi i movimenti</a>
+             href="/conti/webank/personale?categoria=Risparmi">Vedi i movimenti</a>
         </div>'''
 
     da_girocontare = _fatture_da_girocontare(client)
@@ -385,7 +385,7 @@ def _card_dettaglio(dettaglio, prima: float, bonifico: float,
 
 @spese_bp.get("/risparmi")
 def risparmi_pagina():
-    breadcrumb = [("Spese", "/spese"), ("Risparmi", "")]
+    breadcrumb = [("Risparmi", "")]
     client = D.sb()
     if client is None:
         return _render('<div class="notice warn">Supabase non configurato.</div>',
@@ -464,7 +464,7 @@ def risparmi_pagina():
                        f'{_etichetta_periodo(p, oggi, p is periodi[0])}'
                        f' — {stato}</option>')
     torna = ("" if e_corrente else
-             '<a class="btn ghost" href="/spese/risparmi">Torna al periodo corrente</a>')
+             '<a class="btn ghost" href="/risparmi">Torna al periodo corrente</a>')
     toolbar = f'''
     <div class="toolbar">
       <select class="select-pill" aria-label="Periodo" style="min-width:260px"
@@ -477,7 +477,7 @@ def risparmi_pagina():
     aperti = arretrato.get("periodi") or []
     if aperti:
         link = " · ".join(
-            f'<a href="/spese/risparmi?periodo={str(p.get("data_bonifico") or "")[:10]}">'
+            f'<a href="/risparmi?periodo={str(p.get("data_bonifico") or "")[:10]}">'
             f'{_etichetta_periodo(p, oggi, p is periodi[0])}</a>'
             for p in aperti)
         ecc = arretrato.get("eccedenza") or 0
@@ -562,7 +562,7 @@ def risparmi_pagina():
             secchiello per secchiello, quanto c'è contro quanto dovrebbe
             esserci.
           </p>
-          <a class="btn ghost block mt-4" href="/spese/revolut">Vai a Revolut</a>
+          <a class="btn ghost block mt-4" href="/conti/revolut">Vai a Revolut</a>
         </div>'''
 
     # --- Come si divide -------------------------------------------------
@@ -697,7 +697,7 @@ def risparmi_pagina():
 
       function vaiA(chiave) {{
         if (!chiave) return;
-        location.href = '/spese/risparmi?periodo=' + encodeURIComponent(chiave);
+        location.href = '/risparmi?periodo=' + encodeURIComponent(chiave);
       }}
 
       function toast(msg, cls) {{
@@ -773,7 +773,7 @@ def risparmi_pagina():
     return _render(body, breadcrumb=breadcrumb)
 
 
-@spese_bp.get("/api/risparmi")
+@spese_bp.get("/spese/api/risparmi")
 def api_risparmi():
     client = D.sb()
     if client is None:
@@ -781,7 +781,7 @@ def api_risparmi():
     return jsonify(D.periodi_risparmio(client))
 
 
-@spese_bp.post("/api/risparmi/esegui")
+@spese_bp.post("/spese/api/risparmi/esegui")
 def api_risparmi_esegui():
     """
     Il passo 2 della procedura: registra il bonifico ai salvadanai.
@@ -812,7 +812,7 @@ def api_risparmi_esegui():
     return jsonify({"ok": True, **esito})
 
 
-@spese_bp.patch("/api/risparmi")
+@spese_bp.patch("/spese/api/risparmi")
 def api_risparmi_aggiorna():
     """
     Chiuso: scriveva su una colonna che non legge piu' nessuno.
@@ -839,7 +839,7 @@ def api_risparmi_aggiorna():
 
 
 def _render(content: str, breadcrumb=None) -> Response:
-    return Response(render_page(section="spese", eyebrow="Risparmi",
+    return Response(render_page(section="risparmi", eyebrow="Risparmi",
                                 title_html='I miei <em>risparmi</em>',
                                 content=content, breadcrumb=breadcrumb),
                     mimetype="text/html")

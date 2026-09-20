@@ -100,7 +100,7 @@ recuperare: gli acconti versati sono calcolati sull'anno prima, e se
 cresci il saldo dopo e' piu' alto di quanto avevi accantonato.
 
 Il margine di sicurezza, i costi fissi annui e il fatturato atteso sono
-parametri modificabili in /fatture/parametri.
+parametri modificabili in /impostazioni/parametri.
 """
 
 # Parametri specifici dell'accantonamento, con i loro default. Vengono

@@ -373,7 +373,7 @@ def riconcilia_tutte(sb) -> int:
     return n
 
 
-@fatture_bp.post("/api/fatture/<int:fid>/giroconto")
+@fatture_bp.post("/fatture/api/fatture/<int:fid>/giroconto")
 def api_giroconto_esegui(fid):
     """
     Registra la **decisione** di accantonamento, poi guarda sul conto
@@ -521,7 +521,7 @@ def api_giroconto_esegui(fid):
     })
 
 
-@fatture_bp.post("/api/fatture/<int:fid>/giroconto/aggancia")
+@fatture_bp.post("/fatture/api/fatture/<int:fid>/giroconto/aggancia")
 def api_giroconto_aggancia(fid):
     """
     "Ricontrolla la banca": riguarda se sono comparsi movimenti di
@@ -538,7 +538,7 @@ def api_giroconto_aggancia(fid):
     return jsonify({"ok": True, **riconcilia(sb, f)})
 
 
-@fatture_bp.post("/api/fatture/<int:fid>/giroconto/bonifico")
+@fatture_bp.post("/fatture/api/fatture/<int:fid>/giroconto/bonifico")
 def api_giroconto_bonifico(fid):
     """
     Registra a mano il bonifico appena eseguito, quando l'estratto conto
@@ -600,7 +600,7 @@ def api_giroconto_bonifico(fid):
     return jsonify({"ok": True, "movimento_id": esito["id"], **riconcilia(sb, f)})
 
 
-@fatture_bp.delete("/api/fatture/<int:fid>/giroconto")
+@fatture_bp.delete("/fatture/api/fatture/<int:fid>/giroconto")
 def api_giroconto_annulla(fid):
     """
     Annulla la **decisione**: libera la fattura, cosi' si puo' rifare la

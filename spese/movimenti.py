@@ -55,7 +55,7 @@ def _riga_movimento(m: dict) -> str:
     marchio = ('<span class="chip">giroconto</span>'
                if m.get("categoria") == D.CATEGORIA_GIROCONTO else "")
     return f'''
-    <a class="item" href="/spese/movimenti/{m["id"]}">
+    <a class="item" href="/conti/webank/personale/{m["id"]}">
       <span class="body">
         <span class="n">{_esc((m.get("descrizione") or "—")[:60])}</span>
         <span class="m">{data_it(m.get("data"))} · {_esc(cat)}</span>
@@ -71,9 +71,9 @@ def _riga_movimento(m: dict) -> str:
 # Lista
 # ---------------------------------------------------------------------------
 
-@spese_bp.get("/movimenti")
+@spese_bp.get("/conti/webank/personale")
 def movimenti_lista():
-    breadcrumb = [("Spese", "/spese"), ("Movimenti", "")]
+    breadcrumb = [("Conti", "/conti"), ("WeBank Personale", "")]
     client = D.sb()
     if client is None:
         return _no_db(breadcrumb)
@@ -133,7 +133,7 @@ def movimenti_lista():
       </select>
       <input class="select-pill" style="min-width:150px" placeholder="Cerca…"
              value="{_esc(cerca)}" onchange="filtra('q', this.value)">
-      <a class="btn ghost" href="/spese/importa">{icon("download")}Importa da banca</a>
+      <a class="btn ghost" href="/conti/webank/personale/importa">{icon("download")}Importa da banca</a>
     </div>
     <details class="explain mb-3">
       <summary>Filtri avanzati</summary>
@@ -171,8 +171,28 @@ def movimenti_lista():
                 .replace(chr(39), "&#39;"))
         return f"apriDettaglio({js})"
 
+    # Il saldo del CONTO, che e' un'altra cosa dal saldo del periodo
+    # filtrato: comprende l'apertura e tutti gli anni precedenti, ed e'
+    # quello che dice la banca. Stava sulla dashboard "/spese", che non
+    # esiste piu': era l'unico numero suo: gli altri riquadri e l'elenco
+    # delle sezioni li danno gia' questa pagina e il menu.
+    conto = D.saldo_conto(client, oggi.isoformat())
+    tile_conto = ""
+    if conto.get("disponibile"):
+        segno = "−" if conto["saldo"] < 0 else ""
+        risp = (f' · di cui € {eur(conto["risparmiato"], 0)} finiti nei salvadanai'
+                if conto.get("risparmiato") else "")
+        tile_conto = f'''
+      <div class="card"><div class="stat">
+        <div class="val tnum {"pos" if conto["saldo"] >= 0 else "neg"}">€ {segno}{eur(abs(conto["saldo"]), 0)}</div>
+        <div class="lbl">Saldo del conto, oggi</div>
+        <div class="hint">apertura € {eur(conto["saldo_iniziale"], 0)}
+          + {conto["movimenti"]} movimenti{risp}</div>
+      </div></div>'''
+
     riepilogo = f'''
     <div class="grid kpi lead mb-3">
+      {tile_conto}
       <div class="card"><div class="stat clickable" onclick='{_dd({})}'>
         <div class="val tnum {"pos" if t["saldo"] >= 0 else "neg"}">€ {eur_segno(t["saldo"], 0)}</div>
         <div class="lbl">Saldo del periodo</div>
@@ -332,7 +352,7 @@ def movimenti_lista():
 
     return _render(body, eyebrow=f"Movimenti {anno}",
                    titolo='I miei <em>movimenti</em>', breadcrumb=breadcrumb,
-                   fab=("Nuovo movimento", "/spese/movimenti/nuovo"))
+                   fab=("Nuovo movimento", "/conti/webank/personale/nuovo"))
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +447,7 @@ def _form(client, m: dict | None = None) -> str:
       <div class="actions">
         {salva_btn}
         {elimina_btn}
-        <a class="btn ghost" href="/spese/movimenti">Annulla</a>
+        <a class="btn ghost" href="/conti/webank/personale">Annulla</a>
       </div>
     </div>
     </div>
@@ -494,7 +514,7 @@ def _form(client, m: dict | None = None) -> str:
           const j = await r.json();
           if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
           toast(nuovo ? 'Movimento registrato' : 'Aggiornato', 'ok');
-          setTimeout(()=>{{ location.href = '/spese/movimenti'; }}, 600);
+          setTimeout(()=>{{ location.href = '/conti/webank/personale'; }}, 600);
         }} catch (e) {{ toast('Errore rete: ' + e.message, 'err'); }}
       }}
 
@@ -505,7 +525,7 @@ def _form(client, m: dict | None = None) -> str:
           const j = await r.json();
           if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
           toast('Eliminato', 'ok');
-          setTimeout(()=>{{ location.href = '/spese/movimenti'; }}, 600);
+          setTimeout(()=>{{ location.href = '/conti/webank/personale'; }}, 600);
         }} catch (e) {{ toast('Errore rete: ' + e.message, 'err'); }}
       }}
 
@@ -514,9 +534,9 @@ def _form(client, m: dict | None = None) -> str:
     </script>'''
 
 
-@spese_bp.get("/movimenti/nuovo")
+@spese_bp.get("/conti/webank/personale/nuovo")
 def movimento_nuovo():
-    breadcrumb = [("Spese", "/spese"), ("Movimenti", "/spese/movimenti"), ("Nuovo", "")]
+    breadcrumb = [("Conti", "/conti"), ("WeBank Personale", "/conti/webank/personale"), ("Nuovo", "")]
     client = D.sb()
     if client is None:
         return _no_db(breadcrumb)
@@ -524,9 +544,9 @@ def movimento_nuovo():
                    titolo='<em>Nuovo</em> movimento', breadcrumb=breadcrumb)
 
 
-@spese_bp.get("/movimenti/<int:mid>")
+@spese_bp.get("/conti/webank/personale/<int:mid>")
 def movimento_modifica(mid):
-    breadcrumb = [("Spese", "/spese"), ("Movimenti", "/spese/movimenti"), (str(mid), "")]
+    breadcrumb = [("Conti", "/conti"), ("WeBank Personale", "/conti/webank/personale"), (str(mid), "")]
     client = D.sb()
     if client is None:
         return _no_db(breadcrumb)
@@ -565,7 +585,7 @@ def _filtri_da_query() -> dict:
     )
 
 
-@spese_bp.get("/api/movimenti")
+@spese_bp.get("/spese/api/movimenti")
 def api_movimenti():
     client, err = _client_o_503()
     if err:
@@ -580,7 +600,7 @@ def api_movimenti():
     ))
 
 
-@spese_bp.get("/api/movimenti/dettaglio")
+@spese_bp.get("/spese/api/movimenti/dettaglio")
 def api_movimenti_dettaglio():
     """
     Come `/api/movimenti`, ma senza il tetto di 300: serve al drill-down
@@ -594,7 +614,7 @@ def api_movimenti_dettaglio():
     return jsonify(D.righe_periodo(client, **_filtri_da_query()))
 
 
-@spese_bp.post("/api/movimenti")
+@spese_bp.post("/spese/api/movimenti")
 def api_movimento_crea():
     client, err = _client_o_503()
     if err:
@@ -612,7 +632,7 @@ def _messaggio_collegato(collegato: dict, verbo: str) -> str:
             f'Spese P.IVA. {verbo} da lì, così spariscono entrambe le righe.')
 
 
-@spese_bp.patch("/api/movimenti/<int:mid>")
+@spese_bp.patch("/spese/api/movimenti/<int:mid>")
 def api_movimento_aggiorna(mid):
     client, err = _client_o_503()
     if err:
@@ -628,7 +648,7 @@ def api_movimento_aggiorna(mid):
     return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
 
 
-@spese_bp.delete("/api/movimenti/<int:mid>")
+@spese_bp.delete("/spese/api/movimenti/<int:mid>")
 def api_movimento_elimina(mid):
     client, err = _client_o_503()
     if err:
@@ -644,7 +664,7 @@ def api_movimento_elimina(mid):
     return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
 
 
-@spese_bp.get("/api/categorie")
+@spese_bp.get("/spese/api/categorie")
 def api_categorie():
     client, err = _client_o_503()
     if err:
@@ -654,7 +674,7 @@ def api_categorie():
 
 def _render(content: str, eyebrow: str, titolo: str,
             breadcrumb=None, fab=None) -> Response:
-    return Response(render_page(section="spese", eyebrow=eyebrow,
+    return Response(render_page(section="conti-personale", eyebrow=eyebrow,
                                 title_html=titolo, content=content,
                                 breadcrumb=breadcrumb, fab=fab),
                     mimetype="text/html")

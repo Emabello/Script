@@ -147,7 +147,7 @@ def _render_editor(em, acc_rate, init: dict, titolo: str, eyebrow: str,
         avviso += (
             '<div class="notice warn mb-3">'
             "<strong>Nessuna rivalsa INPS.</strong> In "
-            '<a href="/fatture/emittente">Dati emittente</a> l&apos;aliquota '
+            '<a href="/impostazioni/emittente">Dati emittente</a> l&apos;aliquota '
             "cassa &egrave; a zero, quindi la casella qui sotto parte "
             "spenta e il facsimile non la espone. Se il tuo accordo con lo "
             "studio prevede la rivalsa, impostala l&igrave;."
@@ -171,7 +171,7 @@ def _render_editor(em, acc_rate, init: dict, titolo: str, eyebrow: str,
     return Response(html, mimetype="text/html")
 
 
-@fatture_bp.get("/nuova")
+@fatture_bp.get("/fatture/nuova")
 def fattura_nuova():
     if not is_configured():
         return Response(render_page(
@@ -217,7 +217,7 @@ def fattura_nuova():
                           avviso=avviso)
 
 
-@fatture_bp.get("/<int:fid>/modifica")
+@fatture_bp.get("/fatture/<int:fid>/modifica")
 def fattura_modifica(fid):
     """
     Modifica di una fattura, permessa solo finche' e' in bozza.

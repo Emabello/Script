@@ -16,7 +16,7 @@ sparisce, mai si duplica.
 ## Indice
 
 1. [Come è fatta](#1-come-è-fatta)
-2. [Le tre aree](#2-le-tre-aree)
+2. [Le aree](#2-le-aree)
 3. [Il modello dei dati](#3-il-modello-dei-dati)
 4. [La logica fiscale](#4-la-logica-fiscale)
 5. [Accantonamento e ripartizione](#5-accantonamento-e-ripartizione)
@@ -78,13 +78,13 @@ dominio, la mappa spiega il *dove*.
 
 ---
 
-## 2. Le tre aree
+## 2. Le aree
 
 ### Home — `/`
 
 In cima ci sono **i tre conti, ad oggi**, più il totale. È un numero che
 nessun'altra pagina dava — `/spese` mostrava il saldo del mese e
-`/fatture/spese-piva` quello dell'anno filtrato, e nessuno dei due è
+`/conti/webank/piva` quello dell'anno filtrato, e nessuno dei due è
 "quanto ho in banca".
 
 | Conto | Come si calcola | Chi lo calcola |
@@ -129,30 +129,73 @@ l'intestazione — più il ponte verso le fatture, che è nuovo e sta in
 | `/fatture/storico` | elenco per anno e stato |
 | `/fatture/clienti` | anagrafica |
 | `/fatture/situazione` | situazione fiscale dell'anno |
-| `/fatture/spese-piva` | movimenti del conto P.IVA: saldo del conto oggi, movimento netto dell'anno, rivalsa incassata |
-| `/fatture/parametri` | aliquote, coefficiente, accantonamento |
-| `/fatture/emittente` | dati dell'intestazione |
+
+Il conto P.IVA (`/conti/webank/piva`) e le impostazioni fiscali
+(`/impostazioni/parametri`, `/impostazioni/emittente`) **non stanno più
+qui**: il codice resta in `fatture/`, dov'è la stessa materia, ma le
+pagine vivono sotto Conti e Impostazioni, dove si capisce cosa sono.
 
 **Il documento prodotto non è la fattura elettronica.** È il *facsimile* che
 va allo studio, che poi predispone e trasmette l'XML allo SDI. Per questo il
 PDF si intitola FACSIMILE e lo dichiara in calce.
 
-### Spese — `/spese`
+### Conti — `/conti`
+
+**I tre conti stanno sotto un ramo solo, perché sono tre conti.** Prima
+erano sparsi: il conto P.IVA dentro «Fatture», il personale e Revolut
+dentro «Spese», e una quinta voce «Saldi» che mostrava lo *stesso*
+blocco già in cima alla home. La visione unita esisteva — era la
+navigazione a contraddirla, e «Movimenti P.IVA» compariva negli elenchi
+di **entrambe** le sezioni perché nessuna delle due era il posto giusto.
+
+```
+Conti  /conti                      la panoramica: i tre saldi e come si formano
+       ├─ Revolut                  /conti/revolut
+       └─ WeBank
+          ├─ Personale             /conti/webank/personale
+          └─ Partita IVA           /conti/webank/piva
+```
+
+Sul desktop la sidebar mostra l'albero, aperto sul ramo in cui ti trovi;
+sul telefono la tab bar mostra solo il primo livello e l'albero si apre
+dentro `/conti`. Stessa gerarchia, due rese.
 
 | Rotta | Cosa fa |
 |---|---|
-| `/spese` | dashboard: saldo del conto oggi, saldo del mese, ultimi movimenti, quanto è arrivato dalla P.IVA |
-| `/spese/movimenti` | elenco con filtri per anno, mese, tipo, categoria, testo |
-| `/spese/movimenti/nuovo` | nuovo movimento |
-| `/spese/movimenti/<id>` | modifica |
-| `/spese/risparmi` | periodi di stipendio (si sceglie quale), il conto del periodo voce per voce, risparmio consigliato ed effettivo, arretrato, e quanto c'è davvero in ogni salvadanaio |
-| `/spese/revolut` | saldi Revolut: liquidità, risparmi, investimenti |
-| `/spese/importa` | import dei movimenti da estratto conto bancario |
+| `/conti` | panoramica: i tre saldi, la loro formazione, il controllo contro l'estratto, l'elenco per entrarci |
+| `/conti/webank/personale` | il conto personale: saldo di oggi, KPI del periodo, elenco con filtri, ripartizione per categoria |
+| `/conti/webank/personale/nuovo` · `/<id>` | nuovo movimento · modifica |
+| `/conti/webank/personale/importa` | import dei movimenti da estratto conto bancario |
+| `/conti/webank/piva` | il conto P.IVA: movimenti, saldo, rivalsa incassata |
+| `/conti/webank/piva/nuova` · `/<id>` | nuovo movimento · modifica |
+| `/conti/revolut` | Revolut: liquidità, risparmi, investimenti |
+
+### Risparmi — `/risparmi`
+
+Sta in cima da sola e non sotto i conti: non è un conto, è il **flusso**
+dal personale a Revolut, ed è quello che si apre una volta al mese.
+Periodi di stipendio (si sceglie quale), il conto del periodo voce per
+voce, risparmio consigliato ed effettivo, arretrato, e quanto c'è
+davvero in ogni salvadanaio.
+
+### Impostazioni — `/impostazioni`
+
+Dati emittente e parametri fiscali. Non sono fatture: prima stavano
+dentro «Fatture», e i parametri erano raggiungibili **solo** passando
+dalla Situazione fiscale. Si arriva dal piede della sidebar sul desktop
+e dall'ingranaggio nella barra in alto sul telefono.
+
+> **Gli URL delle pagine sono cambiati, quelli delle API no.** I vecchi
+> percorsi rispondono con un redirect 301 permanente (`VECCHI_PERCORSI`
+> in `app.py`), così segnalibri, app installata e link nelle note
+> continuano a funzionare. Le API restano su `/spese/api/*` e
+> `/fatture/api/*`: non sono URL che qualcuno scrive, e spostarle
+> avrebbe moltiplicato i riferimenti da aggiornare senza guadagno.
 
 API JSON: `/spese/api/movimenti` (GET, POST, PATCH, DELETE),
 `/spese/api/categorie`, `/spese/api/risparmi` (GET, PATCH).
 
-### Revolut — `/spese/revolut`
+### Revolut — `/conti/revolut`
 
 Il terzo conto: liquidità, risparmi e investimenti. Non è una sezione a
 parte per capriccio — **è dove finisce il risparmio**, e senza di lei
@@ -216,7 +259,7 @@ Vedi [§ 8.11](#811--i-risparmi-diventano-movimenti-veri-necessaria).
 
 Da qui il confronto che prima non esisteva: la pagina Risparmi calcola
 quanto *dovrebbe* esserci in ogni secchiello (somma delle quote di tutti i
-periodi), Revolut sa quanto c'è. E sul totale, `/spese/revolut` confronta
+periodi), Revolut sa quanto c'è. E sul totale, `/conti/revolut` confronta
 il risparmio dichiarato con il saldo reale dei salvadanai: sono due misure
 indipendenti della stessa cosa, e se divergono uno dei due numeri è
 sbagliato — non c'è nessun altro punto in cui la cosa verrebbe fuori.
@@ -644,7 +687,7 @@ ignorano, e viene sottratto dal saldo dei movimenti P.IVA.
 ### Il giroconto manuale
 
 Non tutti gli spostamenti nascono da una fattura incassata: da
-`/fatture/spese-piva/nuova` si può registrare un giroconto anche a mano,
+`/conti/webank/piva/nuova` si può registrare un giroconto anche a mano,
 scegliendo `tipo=giroconto`. Succede la stessa cosa della ripartizione, solo
 innescata da qui invece che dall'incasso: l'app scrive anche la riga gemella
 su `spese` (`tipo=entrata`, categoria *Giroconto P.IVA*), collegata tramite
@@ -653,7 +696,7 @@ su `spese` (`tipo=entrata`, categoria *Giroconto P.IVA*), collegata tramite
 Qui la riga gemella **viene ancora scritta**, e le sue garanzie valgono: se il
 secondo inserimento fallisce il primo viene tolto; il movimento su `spese` non
 si cancella da `/spese`, va eliminato il movimento P.IVA che lo ha generato,
-così spariscono entrambe le righe; da `/fatture/spese-piva` tipo e importo di
+così spariscono entrambe le righe; da `/conti/webank/piva` tipo e importo di
 un giroconto manuale non si possono più cambiare una volta registrato, per non
 disallineare i due conti — va eliminato e rifatto.
 
@@ -667,7 +710,7 @@ disallineare i due conti — va eliminato e rifatto.
 
 Il giroconto porta il denaro **sul** conto personale. La domanda subito
 dopo è quanta parte di quel denaro non deve restarci: è il risparmio, e
-`/spese/risparmi` la trasforma in una procedura di due passi, nell'ordine
+`/risparmi` la trasforma in una procedura di due passi, nell'ordine
 in cui il denaro si muove davvero.
 
 1. **L'incasso è arrivato sul personale?** Se ci sono fatture già
@@ -923,7 +966,7 @@ consigliata) e
 [8.9](#89--spesetipo-non-ha-più-giroconto) (4 righe con `tipo=giroconto`
 diventate invisibili ai risparmi, consigliata) e
 [8.10](#810--tabella-dei-saldi-revolut) (nuova tabella, **necessaria**
-perché `/spese/revolut` possa salvare).
+perché `/conti/revolut` possa salvare).
 
 ### 8.1 — Categoria del giroconto sul conto personale ✅ già applicata
 
@@ -1059,11 +1102,11 @@ update b2f_emittente set
 where id = 1;
 ```
 
-I dati si cambiano anche da `/fatture/emittente`.
+I dati si cambiano anche da `/impostazioni/emittente`.
 
 ### 8.4 — Collegamento dei giroconti manuali ✅ già applicata
 
-Da `/fatture/spese-piva/nuova` si può registrare un giroconto anche senza
+Da `/conti/webank/piva/nuova` si può registrare un giroconto anche senza
 passare da una fattura (un trasferimento libero al conto personale). Senza
 questa colonna l'app non ha dove scrivere quale riga di `spese` è nata da
 quale movimento P.IVA, e non riuscirebbe a tenerle in sincrono quando una
@@ -1398,7 +1441,7 @@ Serve per il terzo conto (vedi [§ 2](#revolut--speserevolut)). Una riga
 per snapshot, con la data come chiave: reimportare lo stesso estratto
 aggiorna la riga invece di aggiungerne una gemella.
 
-Finché non è applicata, la pagina `/spese/revolut` si apre e legge
+Finché non è applicata, la pagina `/conti/revolut` si apre e legge
 l'estratto ma il salvataggio risponde con un errore che rimanda qui;
 tutto il resto dell'app funziona come prima.
 

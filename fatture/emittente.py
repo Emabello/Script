@@ -6,7 +6,7 @@ quelli che compaiono nell'intestazione del PDF fattura/proforma generato da
 shared/pdfgen.py. Senza questi dati l'intestazione mostra solo il nome.
 
 Rotte HTML:
-  GET   /fatture/emittente            -> form editor emittente
+  GET   /impostazioni/emittente       -> form editor emittente
 
 Rotte JSON:
   GET   /fatture/api/emittente        -> dati emittente
@@ -78,10 +78,10 @@ def _esc(v) -> str:
         "<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
-@fatture_bp.get("/emittente")
+@fatture_bp.get("/impostazioni/emittente")
 def emittente_editor():
     sb, err = _supabase_or_error()
-    breadcrumb = [("Fatture", "/fatture"), ("Emittente", "")]
+    breadcrumb = [("Impostazioni", "/impostazioni"), ("Emittente", "")]
     if err:
         return _render(err, breadcrumb=breadcrumb)
     e = _get_emittente(sb)
@@ -178,7 +178,7 @@ def emittente_editor():
                    title_html='Dati <em>emittente</em>', breadcrumb=breadcrumb)
 
 
-@fatture_bp.get("/api/emittente")
+@fatture_bp.get("/fatture/api/emittente")
 def api_emittente_get():
     sb, err = _supabase_or_error()
     if err:
@@ -186,7 +186,7 @@ def api_emittente_get():
     return jsonify(_get_emittente(sb))
 
 
-@fatture_bp.patch("/api/emittente")
+@fatture_bp.patch("/fatture/api/emittente")
 def api_emittente_update():
     sb, err = _supabase_or_error()
     if err:
@@ -214,7 +214,7 @@ def _render(content: str, eyebrow: str = "Emittente",
             title_html: str = 'Dati <em>emittente</em>',
             breadcrumb=None) -> Response:
     html = render_page(
-        section="fatture", eyebrow=eyebrow, title_html=title_html,
+        section="impostazioni", eyebrow=eyebrow, title_html=title_html,
         content=content, breadcrumb=breadcrumb,
     )
     return Response(html, mimetype="text/html")
