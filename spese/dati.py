@@ -635,9 +635,14 @@ def per_categoria(righe: list[dict], tipo: str = "uscita",
 # Risparmi
 # ---------------------------------------------------------------------------
 
-def periodi_risparmio(client, limite=24) -> list[dict]:
+def periodi_risparmio(client, limite=120) -> list[dict]:
     """
     Le righe di v_risparmi_mese, dal periodo piu' recente.
+
+    Il limite di default e' alto (120, cioe' dieci anni di stipendi
+    mensili) perche' `arretrato_risparmio` ci calcola sopra la posizione
+    complessiva: con un limite stretto il cumulato partirebbe da meta'
+    storia e direbbe un numero piu' basso del vero, senza segnalarlo.
 
     I nomi delle colonne della vista hanno spazi e maiuscole; qui
     vengono tradotti in chiavi normali, cosi' il resto del codice non
@@ -877,20 +882,38 @@ def dettaglio_periodo(client, dal: str, al: str) -> dict:
 
 def arretrato_risparmio(periodi: list[dict]) -> dict:
     """
-    I periodi mai allineati, dal piu' recente all'indietro.
+    Quanto manca da mettere via, guardato in due modi diversi.
 
-    Risponde alla domanda con cui si apre la pagina: *"il mese scorso
-    l'ho fatto?"*. Si cammina dal periodo piu' recente verso il passato
-    e ci si ferma al primo che ha messo via qualcosa: quelli attraversati
-    sono l'arretrato. Fermarsi li' e non sommare tutta la storia e'
-    voluto — un periodo saldato chiude il conto di quelli prima, ed e'
-    esattamente come lo si legge guardando l'estratto.
+    Le due domande non sono la stessa, e mescolarle e' il motivo per cui
+    questa pagina non si capiva:
 
-    `eccedenza` e' quanto l'ultimo periodo saldato ha messo via **oltre**
-    il consigliato. Non la sottraiamo dall'arretrato: e' un'informazione,
-    non un'aritmetica da imporre. A luglio 2026 sono usciti 2.307,48 €
-    contro 847,49 consigliati, e se quei 1.459,99 di troppo coprissero
-    gia' agosto lo sa solo chi ha fatto il bonifico.
+    **"Il mese scorso l'ho fatto?"** — si cammina dal periodo piu'
+    recente all'indietro e ci si ferma al primo che ha un bonifico suo.
+    Quelli attraversati sono `periodi` / `totale`. E' la domanda che ci
+    si fa aprendo la pagina, e la risposta si legge sull'estratto.
+
+    **"E da quando tengo il conto?"** — `cum_consigliato` contro
+    `cum_effettivo` su **tutti** i periodi caricati. Questa e' la
+    posizione vera, e non si vedeva da nessuna parte: al 20/09/2026 sono
+    19.302,76 consigliati contro 15.672,07 messi via, cioe' 3.630,69 di
+    scarto accumulato in diciannove mesi. Guardando solo i periodi
+    scoperti piu' recenti se ne vedono 2.577,01 — meno della meta'.
+
+    Le due convivono apposta. La prima dice cosa fare adesso, la seconda
+    dice dove sei: un bonifico che chiude la prima puo' lasciare intatta
+    la seconda, ed e' un'informazione, non una contraddizione.
+
+    `eccedenza` resta quanto l'ultimo periodo saldato ha messo via
+    **oltre** il suo consigliato. Non la sottraiamo dall'arretrato
+    recente: se quel margine copra gia' i periodi dopo lo sa solo chi ha
+    fatto il bonifico.
+
+    Non rietichetta il passato. Sarebbe stato possibile riallocare il
+    denaro messo via sui periodi piu' vecchi e dire "questo e' coperto,
+    questo no" — ma un periodo con un bonifico suo diventerebbe
+    "scoperto" perche' quei soldi sono stati assegnati altrove, e la
+    pagina direbbe una cosa che l'estratto conto non dice. Meglio due
+    numeri veri che uno interpretato.
     """
     def n(v):
         try:
@@ -905,11 +928,21 @@ def arretrato_risparmio(periodi: list[dict]) -> dict:
                               - n(p.get("risparmio_consigliato")), 2)
             break
         aperti.append(p)
+
+    cum_cons = round(sum(n(p.get("risparmio_consigliato")) for p in periodi), 2)
+    cum_eff = round(sum(n(p.get("risparmio_effettivo")) for p in periodi), 2)
     return {
         "periodi":   aperti,
         "totale":    round(sum(n(p.get("risparmio_consigliato"))
                                for p in aperti), 2),
         "eccedenza": eccedenza if eccedenza > 0 else 0.0,
+        # La posizione complessiva. `n_periodi` serve a dire su quanti
+        # periodi e' calcolata: se un giorno `periodi_risparmio` dovesse
+        # troncare, il cumulato sarebbe parziale e va saputo.
+        "cum_consigliato": cum_cons,
+        "cum_effettivo":   cum_eff,
+        "cum_scarto":      round(cum_eff - cum_cons, 2),
+        "n_periodi":       len(periodi),
     }
 
 

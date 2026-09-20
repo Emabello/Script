@@ -178,6 +178,27 @@ Periodi di stipendio (si sceglie quale), il conto del periodo voce per
 voce, risparmio consigliato ed effettivo, arretrato, e quanto c'è
 davvero in ogni salvadanaio.
 
+**Un mese solare può contenere due periodi**, e non è un doppione: il
+periodo va da un'entrata di stipendio o giroconto P.IVA alla successiva.
+In agosto 2026 sono arrivati due giroconti (il 5 e il 13), a dicembre
+2025 tredicesima e stipendio a sei giorni di distanza, ad aprile 2026 due
+stipendi. Per questo ogni riga dello storico porta scritti i suoi
+estremi — «10 ago → 23 ago» — come già faceva il menu.
+
+**Due domande diverse, due numeri.** «Il mese scorso l'ho fatto?» guarda
+i periodi scoperti più recenti e si ferma al primo con un bonifico suo.
+«E da quando tengo il conto?» somma tutto: è la card *La posizione
+complessiva*, e dice una cosa che la prima non può dire — al 20/09/2026
+sono 19.302,76 consigliati contro 15.672,07 messi via, cioè **3.630,69
+di scarto** contro i 2.577,01 dei soli periodi scoperti. Un periodo
+chiuso in pari non recupera quello che manca dai periodi prima.
+
+**Allineare più periodi in una volta** non retrodata niente: resta un
+bonifico solo, con la data vera, e la procedura propone le due cifre
+(i periodi scoperti, oppure tutto l'arretrato). La conferma è quella di
+sempre — un bonifico da qualche migliaio di euro non parte da un click
+su un banner.
+
 ### Impostazioni — `/impostazioni`
 
 Dati emittente e parametri fiscali. Non sono fatture: prima stavano

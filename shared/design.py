@@ -620,6 +620,12 @@ ul,ol{margin:0;padding:0;list-style:none}
 .btn.danger{background:transparent;color:var(--neg);border:1px solid var(--neg-soft)}
 @media (hover:hover){.btn.danger:hover{background:var(--neg-soft)}}
 .btn.block{width:100%}
+/* Azione secondaria dentro un avviso o accanto a un titolo: piu' bassa
+   del bottone pieno, ma **non** sotto i 36px — e' l'altezza cozy di
+   Fiori, il minimo per un pollice. La classe era gia' usata in
+   spese/movimenti.py senza esistere: il bottone usciva a taglia piena
+   e nessuno se n'era accorto. */
+.btn.sm{min-height:36px;padding:7px var(--sp-4);font-size:13.5px}
 .btn[disabled],.btn.is-disabled{opacity:.45;pointer-events:none}
 
 .actions{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-4)}
