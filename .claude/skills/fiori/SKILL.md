@@ -8,7 +8,8 @@ description: Regole di design SAP Fiori (tema Horizon) applicate a B2F Hub, che 
 `app.py` dichiara «Fiori Launchpad style» fin dal primo commit. Questa
 skill trasforma quell'aspirazione in regole verificabili.
 
-**Lo stato attuale**: dal 20/09/2026 la palette **è** quella di Horizon.
+**Lo stato attuale**: dal 20/09/2026 la palette **è** quella di Horizon
+e i menù a tendina sono un Select Fiori, non la tendina di sistema.
 `shared/design.py` porta i valori veri di Morning Horizon (chiaro) ed
 Evening Horizon (scuro) presi da `SAP/theming-base-content`, la scala dei
 raggi di Fiori (campo 4px, bottone 8, elemento 12, tile 16), le sue ombre
@@ -189,6 +190,36 @@ scritta in `CLAUDE.md`: categorie, clienti, metodi di pagamento passano
 da `shared/ordina.py`; mesi, anni, stati della fattura, periodi di
 stipendio restano nel loro ordine naturale, e vanno dichiarati in
 `ECCEZIONI` di `tools/verifica_menu.py` col motivo.
+
+**I menu sono già un componente Fiori: non scrivertene un altro.** Ogni
+`<select>` della shell viene innestato da `shared/theme.py::_SELECT_JS`
+in un Select in stile Fiori — campo chiuso con icona e valore, pannello
+con titolo, riga di aiuto e ricerca sopra le otto voci; foglio dal basso
+sotto i 720px, lista ancorata al campo sopra. Quindi:
+
+- **scrivi un `<select>` normale**, con le sue `<option>`: l'innesto è
+  automatico e il select vero resta nel DOM a tenere il valore (gli
+  `onchange` inline scattano come prima);
+- **arricchisci con le `data-*`** invece di inventare markup: sulla
+  `<option>` `data-icona` (emoji), `data-titolo`, `data-breve` (il testo
+  del campo chiuso, quando quello completo è troppo lungo), `data-sub`,
+  `data-nota` + `data-stato` (`pos`/`warn`/`neg`/`accent`), `data-info`
+  (il valore a destra); sul `<select>` `data-etichetta` (titolo del
+  pannello), `data-icona`, `data-aiuto`;
+- **metti nelle `data-*` quello che serve a distinguere le voci**, non
+  quello che serve a decorarle. Nel menu dei periodi di paga sono
+  estremi e stato: senza, due periodi dello stesso mese si leggono come
+  un doppione;
+- `data-nativo` rinuncia all'innesto. Usalo solo dove un pannello per
+  riga sarebbe peggio della tendina (le tabelle dense dell'import), mai
+  per gusto.
+
+**Le emoji di stato sono informazione, non decorazione.** In un elenco
+lungo sono il primo appiglio: ✅ fatto, 🟡 fatto ma sotto la soglia,
+⚠️ da fare, ⏳ ancora in corso, 🔒 chiuso. Vanno **sempre** accompagnate
+dalla parola (l'emoji da sola non è accessibile e non si cerca) e non
+devono mai contraddire il numero che hanno accanto — la spunta verde su
+un periodo saldato per un quinto era esattamente quel guasto.
 
 **Uno stato vuoto non è una pagina rotta.** Ogni sezione dice cosa manca
 e come rimediare, mai un blocco bianco o uno zero senza spiegazione.

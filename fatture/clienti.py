@@ -123,6 +123,7 @@ def clienti_list():
                    location.href=u.toString();
                  }},420)">
           <select class="select-pill" aria-label="Tipo cliente"
+                  data-etichetta="Tipo cliente" data-icona="👥"
                   onchange="location.href='/fatture/clienti'+(this.value?'?tipo='+this.value:'')">
             <option value="">Tutti i tipi</option>
             {opts}
@@ -203,7 +204,8 @@ def _form_html(c: dict | None = None) -> str:
     <div class="card">
       <div class="field">
         <label>Tipo</label>
-        <select id="f_tipo" onchange="onTipoChange()">{tipo_options}</select>
+        <select id="f_tipo" data-etichetta="Tipo cliente" data-icona="👥"
+                onchange="onTipoChange()">{tipo_options}</select>
       </div>
 
       <div id="grp_azienda" class="field">

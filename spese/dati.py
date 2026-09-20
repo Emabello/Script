@@ -773,6 +773,27 @@ def risparmio_del_periodo(client, dal: str, al: str | None = None) -> float:
     return round(tot, 2)
 
 
+def periodo_chiuso(periodo: dict) -> bool:
+    """
+    Un periodo e' **chiuso** quando dopo di lui e' gia' arrivato un altro
+    stipendio: `prossimo_bonifico` valorizzato.
+
+    E' la distinzione che decide quali numeri si possono usare. In un
+    periodo chiuso entrate e uscite sono tutte quelle che ci saranno mai:
+    la base del calcolo e' definitiva, e il risparmio consigliato e' un
+    numero su cui si agisce. Nel periodo ancora aperto invece lo
+    stipendio successivo non e' arrivato e le spese non sono finite: la
+    stessa formula da' un numero che cambia ogni giorno — al mattino
+    consiglia di piu' di quanto consigliera' la sera, dopo la spesa.
+
+    Per questo il periodo aperto porta una **stima** e non un consiglio,
+    non entra nell'arretrato e non fa scattare l'avviso in home: diventa
+    un periodo come gli altri nel momento in cui il prossimo stipendio
+    (o giroconto dalla P.IVA) viene incassato e lo chiude.
+    """
+    return bool(str(periodo.get("prossimo_bonifico") or "")[:10])
+
+
 def confini_periodo(periodo: dict, oggi: str | None = None) -> tuple[str, str]:
     """
     Il primo e l'ultimo giorno di un periodo di stipendio, come li
@@ -893,7 +914,7 @@ def arretrato_risparmio(periodi: list[dict]) -> dict:
     si fa aprendo la pagina, e la risposta si legge sull'estratto.
 
     **"E da quando tengo il conto?"** — `cum_consigliato` contro
-    `cum_effettivo` su **tutti** i periodi caricati. Questa e' la
+    `cum_effettivo` su tutti i periodi **chiusi**. Questa e' la
     posizione vera, e non si vedeva da nessuna parte: al 20/09/2026 sono
     19.302,76 consigliati contro 15.672,07 messi via, cioe' 3.630,69 di
     scarto accumulato in diciannove mesi. Guardando solo i periodi
@@ -908,6 +929,12 @@ def arretrato_risparmio(periodi: list[dict]) -> dict:
     recente: se quel margine copra gia' i periodi dopo lo sa solo chi ha
     fatto il bonifico.
 
+    Il periodo ancora aperto non entra ne' nell'una ne' nell'altra: il
+    suo consigliato non e' un numero ma una stima che cambia a ogni
+    spesa (vedi `periodo_chiuso`). Entra pero' il suo **effettivo**, se
+    c'e', perche' un bonifico fatto oggi paga l'arretrato dei chiusi pur
+    cadendo, per data, nel periodo aperto.
+
     Non rietichetta il passato. Sarebbe stato possibile riallocare il
     denaro messo via sui periodi piu' vecchi e dire "questo e' coperto,
     questo no" — ma un periodo con un bonifico suo diventerebbe
@@ -921,20 +948,36 @@ def arretrato_risparmio(periodi: list[dict]) -> dict:
         except (TypeError, ValueError):
             return 0.0
 
-    aperti, eccedenza = [], 0.0
+    scoperti, eccedenza = [], 0.0
     for p in periodi:
+        # Un bonifico ferma il cammino anche se cade nel periodo aperto, ed
+        # e' l'unico modo perche' "allinea tutto" funzioni: quel bonifico
+        # porta la data di oggi, quindi appartiene per forza al periodo
+        # aperto, ma paga l'arretrato dei chiusi. Fermarsi solo sui chiusi
+        # lascerebbe l'avviso acceso per sempre.
         if n(p.get("risparmio_effettivo")) > 0:
             eccedenza = round(n(p.get("risparmio_effettivo"))
                               - n(p.get("risparmio_consigliato")), 2)
             break
-        aperti.append(p)
+        # Il periodo ancora aperto invece non entra nel conto: il suo
+        # consigliato e' una stima che cambia a ogni spesa, e chiedere di
+        # versarla adesso vorrebbe dire versare un numero provvisorio.
+        if not periodo_chiuso(p):
+            continue
+        scoperti.append(p)
 
-    cum_cons = round(sum(n(p.get("risparmio_consigliato")) for p in periodi), 2)
+    chiusi = [p for p in periodi if periodo_chiuso(p)]
+    # Consigliato solo sui chiusi (gli unici definitivi), effettivo su
+    # tutti: il denaro spostato e' spostato davvero, e quello versato oggi
+    # sta nel periodo aperto pur pagando i chiusi. Contarlo dal lato
+    # giusto e' quello che tiene lo scarto onesto.
+    cum_cons = round(sum(n(p.get("risparmio_consigliato")) for p in chiusi), 2)
     cum_eff = round(sum(n(p.get("risparmio_effettivo")) for p in periodi), 2)
+    aperto = next((p for p in periodi if not periodo_chiuso(p)), None)
     return {
-        "periodi":   aperti,
+        "periodi":   scoperti,
         "totale":    round(sum(n(p.get("risparmio_consigliato"))
-                               for p in aperti), 2),
+                               for p in scoperti), 2),
         "eccedenza": eccedenza if eccedenza > 0 else 0.0,
         # La posizione complessiva. `n_periodi` serve a dire su quanti
         # periodi e' calcolata: se un giorno `periodi_risparmio` dovesse
@@ -942,37 +985,57 @@ def arretrato_risparmio(periodi: list[dict]) -> dict:
         "cum_consigliato": cum_cons,
         "cum_effettivo":   cum_eff,
         "cum_scarto":      round(cum_eff - cum_cons, 2),
-        "n_periodi":       len(periodi),
+        "n_periodi":       len(chiusi),
+        # Il periodo aperto, tenuto da parte invece che buttato: la pagina
+        # lo mostra lo stesso, ma etichettato come stima.
+        "aperto":       aperto,
+        "stima_aperto": round(n((aperto or {}).get("risparmio_consigliato")), 2),
     }
 
 
 def avviso_risparmio(client) -> dict | None:
     """
-    "E' arrivato lo stipendio e non hai ancora messo via niente."
+    "E' arrivato lo stipendio nuovo: quello vecchio si puo' chiudere."
 
-    Ritorna None quando non c'e' niente da dire — ed e' la maggior parte
-    delle volte: solo un periodo **aperto**, con un consigliato sopra
-    zero e nessuna uscita verso i salvadanai, merita di comparire in
-    home. Un avviso che c'e' sempre non lo legge piu' nessuno.
+    Ritorna None quando non c'e' niente da dire, ed e' la maggior parte
+    delle volte. L'avviso guarda **l'ultimo periodo chiuso**, non quello
+    in corso, e la differenza non e' un dettaglio.
 
-    Il periodo si apre con il bonifico dello stipendio o il giroconto
-    dalla P.IVA (v_periodi_stipendio, README §8.7): e' quello il momento
-    in cui la domanda "quanto ne metto via?" ha una risposta, perche'
-    prima non si sa ancora quanto e' entrato.
+    Prima nominava il periodo aperto, cioe' quello che parte
+    dall'ultimo stipendio e arriva a oggi. Ma oggi non e' una fine:
+    le spese del mese non sono finite e il prossimo stipendio non e'
+    arrivato, quindi il "consigliato" di quel periodo scende ogni volta
+    che si paga qualcosa. Chiederne il versamento voleva dire chiedere
+    un numero che domani sarebbe stato un altro — e infatti il residuo
+    del periodo aperto finiva versato per intero o quasi, a occhio.
+
+    Un periodo chiuso invece e' fermo: il prossimo stipendio ha fissato
+    entrate e uscite, la base non cambia piu' e il consigliato e' un
+    numero su cui si agisce. E' quello il momento che l'avviso deve
+    intercettare (vedi `periodo_chiuso`).
+
+    "Gia' fatto" si misura **senza tetto superiore** a partire da
+    quando il periodo si e' aperto: il bonifico che lo salda porta la
+    data del giorno in cui lo esegui, quindi cade quasi sempre nel
+    periodo dopo. Fermarsi alla fine del periodo direbbe di no per
+    sempre.
     """
     try:
-        periodi = periodi_risparmio(client, limite=1)
+        periodi = periodi_risparmio(client, limite=6)
     except Exception:
         return None
     if not periodi:
         return None
 
-    corrente = periodi[0]
-    dal = str(corrente.get("data_bonifico") or "")[:10]
+    chiuso = next((p for p in periodi if periodo_chiuso(p)), None)
+    if chiuso is None:
+        return None
+
+    dal = str(chiuso.get("data_bonifico") or "")[:10]
     if not dal:
         return None
     try:
-        consigliato = round(float(corrente.get("risparmio_consigliato") or 0), 2)
+        consigliato = round(float(chiuso.get("risparmio_consigliato") or 0), 2)
     except (TypeError, ValueError):
         return None
     if consigliato <= 0:
@@ -980,8 +1043,9 @@ def avviso_risparmio(client) -> dict | None:
     if risparmio_del_periodo(client, dal) > 0:
         return None
 
-    return {"dal": dal, "consigliato": consigliato,
-            "speso": corrente.get("speso"), "rimanente": corrente.get("rimanente")}
+    _, al = confini_periodo(chiuso)
+    return {"dal": dal, "al": al, "consigliato": consigliato,
+            "speso": chiuso.get("speso"), "rimanente": chiuso.get("rimanente")}
 
 
 def impostazioni(client) -> dict:

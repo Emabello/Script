@@ -881,7 +881,7 @@ html[data-theme="light"] .overlay{background:rgba(60,52,32,.34)}
       <div class="section-label"><span class="eyebrow">Google Calendar</span><span class="l"></span></div>
       <div class="gstatus" id="g-status">—</div>
       <a class="btn" style="border:1px solid var(--line);color:var(--gold);width:100%;display:block;text-align:center;text-decoration:none" href="/oauth/start">Collega / ricollega Google</a>
-      <div class="field" style="margin-top:12px"><label>Calendario di lavoro</label><select id="g-cal"><option value="">—</option></select></div>
+      <div class="field" style="margin-top:12px"><label>Calendario di lavoro</label><select id="g-cal" data-etichetta="Calendario di lavoro" data-icona="🗓️"><option value="">—</option></select></div>
       <div style="display:flex;gap:9px;margin-bottom:10px"><button class="btn" style="border:1px solid var(--line);color:var(--muted);flex:1" id="g-cal-reload">Ricarica elenco</button></div>
       <div class="field"><label>Oppure incolla l'ID del calendario</label><input type="text" id="g-cal-id" placeholder="xxxx@group.calendar.google.com"></div>
       <button class="btn" style="border:1px solid var(--line);color:var(--muted);width:100%" id="g-cal-save">Usa questo ID</button>
@@ -1045,9 +1045,9 @@ function buildBody(box, i){
   box.insertAdjacentHTML("beforeend",`
     <button class="addtoggle">+ aggiungi ore</button>
     <div class="addform">
-      <div class="field"><label>Cliente</label><select class="f-client"><option value="">— seleziona —</option></select></div>
-      <div class="field"><label>Progetto</label><select class="f-proj" disabled><option value="">—</option></select></div>
-      <div class="field"><label>Task</label><select class="f-task" disabled><option value="">—</option></select></div>
+      <div class="field"><label>Cliente</label><select class="f-client" data-etichetta="Cliente" data-icona="👤"><option value="">— seleziona —</option></select></div>
+      <div class="field"><label>Progetto</label><select class="f-proj" data-etichetta="Progetto" data-icona="📁" disabled><option value="">—</option></select></div>
+      <div class="field"><label>Task</label><select class="f-task" data-etichetta="Task" data-icona="✅" disabled><option value="">—</option></select></div>
       <div class="row2"><div class="field"><label>Inizio</label><input type="time" class="f-start" step="300" value="10:00"></div>
         <div class="field"><label>Fine</label><input type="time" class="f-end" step="300" value="18:00"></div></div>
       <div class="field"><label>Note (facoltative)</label><textarea class="f-note" rows="2" placeholder="Annotazioni…"></textarea></div>
