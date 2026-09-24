@@ -18,6 +18,39 @@ come), **Stato**.
 
 ## Aperti
 
+### [2026-09-24] Un mese con due stipendi chiede di risparmiare due volte sugli stessi soldi — è tutto l'arretrato storico
+**Cosa**: il risparmio consigliato è `percentuale × base`, e la base è **quanto c'è sul conto a fine periodo**, residuo del periodo precedente compreso. Il periodo si apre a ogni stipendio o giroconto P.IVA. Quindi la quota non si applica una volta al mese: si applica **una volta per stipendio**, sullo stesso denaro.
+
+**Perché si rompe**: caso concreto, agosto 2026 sui dati veri. Due giroconti, il 5 e il 13, quindi due periodi:
+
+| periodo | prima | entrata | speso | base | consigliato (35%) |
+|---|---|---|---|---|---|
+| 05/08 → 12/08 | 113,91 | 2.000,00 | 147,97 | 1.965,94 | **688,08** |
+| 13/08 → 02/09 | 1.965,94 | 1.502,85 | 1.807,10 | 1.661,69 | **581,59** |
+| | | | | | **1.269,67** |
+
+La `prima` del secondo periodo **è** la base del primo: quando il primo non viene eseguito, gli stessi 1.965,94 € entrano due volte nel conto. Se agosto fosse stato un periodo solo — stesse entrate, stesse spese — la base sarebbe 113,91 + 3.502,85 − 1.955,07 = 1.661,69 e il consigliato **581,59**. L'app ne chiede 1.269,67: **+688,08, cioè +118%**, e non perché sia entrato o uscito un euro in più, ma perché lo stipendio è arrivato in due tranche.
+
+Non è un caso isolato, ed è dimostrabile in forma chiusa: quando il primo dei due sotto-periodi non viene allineato, il sovrappiù è **esattamente il consigliato del primo**; quando viene allineato in parte, è `consigliato(primo) − percentuale × effettivo(primo)`.
+
+I tre mesi doppi dello storico (gli stessi che sembravano righe ripetute):
+
+| mese | periodi | consigliato spezzato | consigliato se unito | sovrappiù |
+|---|---|---|---|---|
+| giugno 2025 | 23→29 giu · 30 giu→29 lug | 2.000,47 | 1.153,48 | **846,99** |
+| dicembre 2025 | 17→22 dic · 23 dic→29 gen | 1.397,63 | 593,85 | **803,78** |
+| agosto 2026 | 5→12 ago · 13 ago→2 set | 1.269,67 | 581,59 | **688,08** |
+| | | | | **2.338,85** |
+
+**Impatto**: lo scarto cumulato su 21 periodi chiusi è **−2.323,35 €** (17.995,42 consigliati contro 15.672,07 messi via). Il sovrappiù dei tre mesi doppi è 2.338,85. **Tutto l'arretrato storico, al netto di quindici euro, è questo artefatto** — non soldi non risparmiati. E lo si vede anche in piccolo: i tre periodi corti (6, 7 e 8 giorni) portano da soli 2.510,10 € di consigliato, quanto cinque mesi pieni.
+
+Di riflesso, sporca anche il resto: il banner dell'arretrato di agosto 2026 dice 1.269,67 € invece di 581,59; e il badge «🟡 sotto il consigliato» introdotto il 20/09 marca come mancanti periodi che mancanti non sono — il 23→29 giu 2025 risulta coperto al 67% (685 su 1.018,24) quando in sette giorni il consigliato onesto è una frazione di quello.
+
+**Stato**: aperto, **non toccato** — cambia i numeri su cui si decide quanto spostare, quindi va deciso insieme. Tre strade, tutte dentro `v_risparmi_mese` (migrazione, README §8):
+1. **quota mensile**: la percentuale si applica al mese solare, e i periodi dentro al mese se la dividono. Semplice da spiegare, ma rompe l'idea «il periodo è da stipendio a stipendio» che regge tutto il resto della pagina.
+2. **la base non ri-accumula**: dalla base si sottrae quello che il periodo precedente aveva già chiesto e non è stato eseguito, così sugli stessi soldi la quota si chiede una volta sola. È la più fedele al modello attuale e non tocca la definizione di periodo.
+3. **quota sull'entrata, non sul saldo**: `percentuale × (stipendio + altre entrate − speso)`. Elimina il problema alla radice, ma è un modello diverso da quello descritto in README §5 («la base non è lo stipendio»), che era una scelta voluta.
+
 ### [2026-09-20] `GET /spese/api/risparmi` non distingue il periodo chiuso da quello aperto
 **Cosa**: l'endpoint ritorna le righe di `v_risparmi_mese` così come sono. Fra queste c'è sempre il periodo ancora aperto, con il suo `risparmio_consigliato` calcolato dalla vista: la vista non ha il concetto di "chiuso", applica la percentuale alla base qualunque base sia.
 **Perché si rompe**: la base del periodo aperto non è definitiva — mancano le spese da oggi a fine periodo e manca l'entrata che lo chiude — quindi quel numero cambia ogni giorno. Sui dati finti di oggi il periodo aperto dà 2.934,59 € di "consigliato"; una spesa da 500 € questo pomeriggio lo porta a 2.809,59. Chi legge il JSON vede due campi (`risparmio_consigliato`, `risparmio_effettivo`) identici a quelli dei periodi chiusi, e non ha modo di sapere che uno dei due è una fotografia e l'altro un impegno. È la stessa confusione che la pagina aveva e che è stata chiusa oggi: qui è rimasta.
