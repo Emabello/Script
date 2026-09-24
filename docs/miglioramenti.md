@@ -268,6 +268,12 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 
 ## Fatti (storico — per non riproporli)
 
+### [2026-09-24] `verifica_rotte.py` teneva l'elenco delle rotte binarie scritto a mano
+**Cosa**: il controllo cercava le spie di un 500 travestito da 200 leggendo il corpo della risposta come testo, e saltava le rotte binarie confrontandole con un insieme `BINARIE` scritto a mano (le quattro icone più l'export fiscale).
+**Perché si rompe**: caso concreto, successo oggi. Aggiunto `/api/export/completo.xlsx`, il controllo ha provato a decodificare un file xlsx come UTF-8 ed è fallito con `UnicodeDecodeError`, segnalando come rotta una rotta che risponde 200 con il file giusto. È la stessa forma di guasto della palette copiata dentro `verifica_contrasti.py`: una seconda copia di una verità che sta già altrove — qui il fatto che una risposta sia binaria, che la rotta **dichiara già** nel suo `Content-Type`.
+**Impatto**: basso di per sé (un falso positivo), ma della classe peggiore: un controllo che fallisce quando il codice è giusto smette di essere letto, e il giorno che fallisce sul serio nessuno se ne accorge.
+**Stato**: **chiuso il 24/09/2026.** Il criterio è il `Content-Type` della risposta (`_e_testo`); l'elenco scritto a mano non c'è più, e un export nuovo non richiede di ricordarsene.
+
 ### [2026-09-20] Il periodo aperto consigliava quanto risparmiare, e quel numero cambiava a ogni spesa
 **Cosa**: la pagina Risparmi trattava il periodo in corso come tutti gli altri — KPI «Da mettere via», chip «da allineare», riga nell'arretrato, banner in home con la cifra, procedura precompilata con quel valore. Ma il periodo in corso non ha una base ferma: `v_risparmi_mese` calcola `base = prima + bonifico + altre entrate − speso`, e in un periodo non ancora chiuso "speso" cresce fino all'arrivo del prossimo stipendio.
 **Perché si rompe**: caso concreto, le due letture dello stesso giorno. Al mattino il periodo aperto ha 11.738 € di base e consiglia 2.934,59; nel pomeriggio si paga l'affitto da 800 € e lo stesso periodo consiglia 2.734,59. Il primo numero non era sbagliato: era **provvisorio** presentato come definitivo. Chi lo eseguiva spostava sui salvadanai una quota calcolata su soldi che doveva ancora spendere, e a fine mese si ritrovava sotto — cioè esattamente il motivo per cui l'arretrato esisteva. Un periodo **chiuso** invece è fermo: lo stipendio successivo ha fissato entrate e uscite, e il consigliato è un numero su cui si agisce.

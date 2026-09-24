@@ -45,8 +45,20 @@ ESTERNE = {
 }
 
 # Risposte binarie: il test legge il corpo come testo, e un PNG non lo e'.
-BINARIE = {"/icon-192.png", "/icon-512.png", "/apple-touch-icon.png",
-           "/apple-touch-icon-precomposed.png", "/fatture/api/export/xlsx"}
+# Le risposte che non sono testo non si ispezionano cercando un
+# traceback: `get_data(as_text=True)` su un PNG o su un xlsx esplode con
+# un UnicodeDecodeError, e il controllo segnalerebbe come rotta una rotta
+# che funziona. Prima l'elenco stava scritto qui a mano, e ogni export
+# nuovo lo faceva fallire finche' qualcuno non se ne ricordava: adesso lo
+# decide il Content-Type, che e' la rotta stessa a dichiarare.
+TESTUALI = ("text/", "application/json", "application/xml",
+            "image/svg+xml", "application/manifest+json",
+            "application/javascript")
+
+
+def _e_testo(resp) -> bool:
+    tipo = (resp.headers.get("Content-Type") or "").lower()
+    return any(tipo.startswith(t) or t in tipo for t in TESTUALI)
 
 # Spie di un 500 travestito da 200.
 SPIE = ("Traceback (most recent call last)", "jinja2.exceptions",
@@ -131,7 +143,7 @@ def passata_get(c):
                 if resp.status_code != 200:
                     problemi.append(f"{url} -> HTTP {resp.status_code}")
                     continue
-                if url in BINARIE:
+                if not _e_testo(resp):
                     continue
                 corpo = resp.get_data(as_text=True)
                 for spia in SPIE:

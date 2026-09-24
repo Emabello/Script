@@ -218,6 +218,28 @@ dentro «Fatture», e i parametri erano raggiungibili **solo** passando
 dalla Situazione fiscale. Si arriva dal piede della sidebar sul desktop
 e dall'ingranaggio nella barra in alto sul telefono.
 
+**Da qui si porta via tutto** (`/api/export/completo.xlsx`,
+`shared/esporta.py`): un foglio di calcolo con i tre conti, ogni
+movimento dei due WeBank, i periodi di paga, i salvadanai, le fatture, i
+clienti, il fisco, le scadenze, le categorie e i parametri. Dodici fogli
+con un **indice** in cima che porta a ciascuno e un ritorno all'indice su
+ognuno: a quel numero di linguette la barra in fondo non basta più. È il
+successore del `Budget.xlsx` da cui questa app è nata — stessi dati,
+calcolati dal database invece che da formule di matrice.
+
+> **Due export, due mestieri.** `/fatture/api/export/xlsx?anno=` riproduce
+> il foglio del commercialista per un anno, e deve restare uguale a
+> quello. Questo è lo storico completo dell'app, e non ha vincoli di
+> forma esterni.
+
+> **Nel foglio «Periodi di paga» il risparmio consigliato compare due
+> volte**, con la regola della vista e con quella del `Budget.xlsx`
+> (`prima + stipendio − Fisso − Personale − Benzina − Viaggi`, senza
+> altre entrate). Le due differiscono del 24% sui periodi in comune, e
+> quella differenza è quasi tutto l'«arretrato»: finché non è deciso
+> quale regola vale, il file le mostra entrambe invece di sceglierne una
+> in silenzio. Vedi `docs/miglioramenti.md`, voce del 24/09/2026.
+
 > **Gli URL delle pagine sono cambiati, quelli delle API no.** I vecchi
 > percorsi rispondono con un redirect 301 permanente (`VECCHI_PERCORSI`
 > in `app.py`), così segnalibri, app installata e link nelle note
@@ -2296,6 +2318,7 @@ virgolette (PEP 701), che su 3.11 non compilano.
 | `verifica_facsimile.py` | controlli sul PDF generato |
 | `verifica_js.py` | apre tutte le pagine e fallisce se una ha JavaScript rotto |
 | `verifica_menu.py` | apre tutte le pagine e controlla che ogni tendina di dati sia alfabetica per descrizione (le eccezioni volute sono elencate nel file) |
+| `verifica_rotte.py` | chiama ogni GET con id veri, ripete tutte le pagine su sette scenari di tabelle vuote, e prova i payload malformati sulle API (le risposte non testuali le riconosce dal `Content-Type`, non da un elenco scritto a mano) |
 
 ### Analisi funzionale continua
 
