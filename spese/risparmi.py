@@ -608,7 +608,6 @@ def risparmi_pagina():
                        breadcrumb=breadcrumb)
 
     periodi = D.periodi_risparmio(client)
-    imp = D.impostazioni(client)
     oggi = date.today().isoformat()
 
     if not periodi:
@@ -637,12 +636,20 @@ def risparmi_pagina():
 
     n = _n
 
-    # Quote di destinazione del risparmio, dalle impostazioni in vigore.
-    # La corrispondenza fra il secchiello, la sua percentuale e la colonna
-    # della vista sta in `revolut.SALVADANAI`, una volta sola: e' la stessa
-    # che serve per confrontarli con i saldi Revolut, e due elenchi
-    # paralleli prima o poi divergono.
-    quote = [(chiave_rev, nome_app, colonna, imp.get(campo_perc))
+    # Le impostazioni in vigore **nel periodo che stai guardando**, non
+    # quelle di oggi: `impostazioni` e' uno storico con `valido_dal`, ed e'
+    # la stessa riga che la vista ha usato per calcolare il consigliato.
+    # Guardando luglio 2025 con le percentuali del 2026 la pagina mostra
+    # numeri che non sono mai stati veri.
+    storiche = D.impostazioni_storiche(client)
+    imp_periodo = D.impostazioni_alla(storiche, corrente.get("data_bonifico"))
+
+    # Quote di destinazione del risparmio. La corrispondenza fra il
+    # secchiello, la sua percentuale e la colonna della vista sta in
+    # `revolut.SALVADANAI`, una volta sola: e' la stessa che serve per
+    # confrontarli con i saldi Revolut, e due elenchi paralleli prima o
+    # poi divergono.
+    quote = [(chiave_rev, nome_app, colonna, imp_periodo.get(campo_perc))
              for chiave_rev, _, nome_app, campo_perc, colonna, _
              in revolut.SALVADANAI]
 
@@ -661,7 +668,16 @@ def risparmi_pagina():
     # La percentuale in vigore **in quel periodo**, non l'ultima scritta
     # in `impostazioni`: la vista usa la riga valida alla data del
     # bonifico, e sui periodi prima del 25/02/2026 era il 25%, non il 35%.
-    perc = (consigliato / base) if base > 0 else n(imp.get("percentuale_risparmio"))
+    #
+    # Letta da `impostazioni`, non ricavata dividendo consigliato per base.
+    # La divisione dava il numero giusto quasi sempre e uno sbagliato nei
+    # due casi che contano: con base <= 0 la vista azzera il consigliato
+    # (il `case when ... < 0 then 0`), e 0/base dichiarava una quota dello
+    # 0% che non e' mai stata in vigore; e con gli arrotondamenti usciva
+    # 0,2499996, che stampato al decimale e' giusto ma messo in un export
+    # non e'. La vista calcola con quella percentuale ma non la espone —
+    # vedi `D.impostazioni_storiche`.
+    perc = n(imp_periodo.get("percentuale_risparmio"))
 
     # La vista espone sempre un numero (mai vuoto: coalesce a 0 quando il
     # periodo non e' ancora stato registrato). Non potendo distinguere

@@ -232,6 +232,17 @@ calcolati dal database invece che da formule di matrice.
 > quello. Questo è lo storico completo dell'app, e non ha vincoli di
 > forma esterni.
 
+> **La percentuale di risparmio si legge, non si divide.** `impostazioni`
+> è uno storico (`valido_dal`): 25% dal 26/02/2025, 35% dal 25/02/2026.
+> `v_risparmi_mese` sceglie la riga giusta per ogni periodo ma **non
+> espone la colonna**, così la pagina e l'export la ricavavano come
+> `consigliato / base` — che sbaglia quando la vista azzera il
+> consigliato (dichiara una quota dello 0% mai esistita) e stampa
+> `0,2499996` per un tondo 25%. Adesso passa da
+> `spese/dati.py::impostazioni_alla`, e il foglio «Parametri» dell'export
+> porta tutte le versioni con quanti periodi sono stati calcolati con
+> ciascuna.
+
 > **Nel foglio «Periodi di paga» il risparmio consigliato compare due
 > volte**, con la regola della vista e con quella del `Budget.xlsx`
 > (`prima + stipendio − Fisso − Personale − Benzina − Viaggi`, senza
