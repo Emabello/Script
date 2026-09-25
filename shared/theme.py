@@ -1818,6 +1818,22 @@ def render_impostazioni_page() -> str:
       </div>
       <div class="stack">
         <div class="card">
+          <div class="card-head">
+            <div class="eyebrow">Porta via i dati</div>
+            <span class="chip accent">📊 xlsx</span>
+          </div>
+          <p class="small muted">Un foglio di calcolo con <strong>tutto</strong>
+            quello che l'app sa: i tre conti, ogni movimento, i periodi di paga
+            con il risparmio consigliato, i salvadanai, le fatture, i clienti,
+            il fisco, le scadenze. Un indice in cima porta a ogni foglio.</p>
+          <a class="btn block mt-4" href="/api/export/completo.xlsx">
+            {icon("download")}Scarica tutto in Excel</a>
+          <p class="hint mt-2">È una fotografia di oggi, e il nome del file porta
+            la data. Per il solo foglio del commercialista, anno per anno, c'è
+            <a class="linklike" href="/fatture/situazione">Situazione fiscale</a>.</p>
+        </div>
+
+        <div class="card">
           <div class="card-head"><div class="eyebrow">Aspetto</div></div>
           <p class="small muted">Tema chiaro o scuro e colore d'accento restano
             su questo dispositivo, non sul database: cambiano qui e basta.</p>

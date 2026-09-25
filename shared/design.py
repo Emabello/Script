@@ -567,7 +567,12 @@ ul,ol{margin:0;padding:0;list-style:none}
   font-variant-numeric:tabular-nums;
 }
 .stat .lbl{font-size:12px;color:var(--ink-3)}
-.stat .hint{font-size:12px;color:var(--ink-3);margin-top:2px}
+/* `.hint` e' una utility, non un discendente. Era dichiarata solo dentro
+   `.stat` e `.field`, ma viene usata da sola in cinque punti (Revolut,
+   Risparmi, il timesheet, l'export): li' restava testo pieno, grande
+   come il corpo — una nota che grida piu' forte della cosa che annota. */
+.hint{font-size:12px;color:var(--ink-3);line-height:1.45}
+.stat .hint{margin-top:2px}
 .stat.sm .val{font-size:22px}
 
 /* --- Elemento che apre un dettaglio al click (drill-down "come si calcola") */
@@ -766,7 +771,6 @@ ul,ol{margin:0;padding:0;list-style:none}
    usato dalle intestazioni di sezione (.eyebrow), e due livelli di
    maiuscolo nello stesso modulo appiattiscono la gerarchia. */
 .field label{font-size:12.5px;font-weight:500;color:var(--ink-3)}
-.field .hint{font-size:12px;color:var(--ink-3)}
 .field input,.field select,.field textarea,.input{
   width:100%;min-height:44px;padding:11px var(--sp-3);
   background:var(--bg);color:var(--ink);

@@ -1059,6 +1059,49 @@ def impostazioni(client) -> dict:
         return {}
 
 
+def impostazioni_storiche(client) -> list[dict]:
+    """
+    Tutte le righe di `impostazioni`, dalla piu' vecchia.
+
+    `impostazioni` non e' una riga di configurazione: e' uno **storico**,
+    con `valido_dal` a dire da quando ogni versione vale. Oggi ci sono due
+    righe — 25% dal 26/02/2025, 35% dal 25/02/2026 — e la differenza non e'
+    accademica: un periodo di luglio 2025 va letto al 25%, e applicargli il
+    35% di oggi riscriverebbe il passato.
+
+    `v_risparmi_mese` la usa gia' cosi' (`where i.valido_dal <=
+    a.data_bonifico order by i.valido_dal desc limit 1`), ma **non espone
+    la percentuale**: chi guarda la vista vede il consigliato e la base, e
+    per sapere l'aliquota deve dividere. La divisione e' fragile — base a
+    zero, arrotondamenti che danno 0,249999 — e sbagliata quando il
+    consigliato e' stato azzerato dal clamp della vista. Meglio leggere il
+    numero da dove e' scritto.
+    """
+    try:
+        r = (client.table("impostazioni").select("*")
+             .order("valido_dal", desc=False).execute())
+        return _righe(r)
+    except Exception:
+        return []
+
+
+def impostazioni_alla(storiche: list[dict], quando: str | None) -> dict:
+    """
+    La riga di `impostazioni` in vigore a una data, con la stessa regola
+    della vista: l'ultima con `valido_dal <= quando`.
+
+    Senza data, o con una data anteriore alla prima riga, torna comunque
+    la piu' vecchia: e' la meno sbagliata delle risposte possibili, e
+    lasciare un dizionario vuoto farebbe comparire uno 0% che sembra un
+    dato invece di un'assenza.
+    """
+    if not storiche:
+        return {}
+    d = str(quando or "")[:10]
+    valide = [r for r in storiche if str(r.get("valido_dal") or "")[:10] <= d]
+    return valide[-1] if valide else storiche[0]
+
+
 def anni_disponibili(client) -> list[int]:
     """Anni con almeno un movimento, dal piu' recente."""
     try:

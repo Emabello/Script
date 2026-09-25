@@ -365,6 +365,37 @@ def impostazioni_page():
     return Response(render_impostazioni_page(), mimetype="text/html")
 
 
+@app.get("/api/export/completo.xlsx")
+def export_completo():
+    """
+    L'app intera in un foglio di calcolo.
+
+    Sta qui e non dentro un blueprint perche' attraversa tutte le aree —
+    conti, movimenti, periodi di paga, fatture, fisco — e non ce n'e'
+    nessuna che possa dirsi proprietaria. L'export fiscale per anno resta
+    dove sta (`/fatture/api/export/xlsx`): quello riproduce il foglio del
+    commercialista, questo e' lo storico completo.
+
+    Il nome del file porta la data: un export e' una fotografia, e due
+    fotografie diverse con lo stesso nome nella cartella Download si
+    sovrascrivono a vicenda.
+    """
+    if not is_configured():
+        return jsonify({"error": "supabase not configured"}), 503
+    from flask import send_file
+    from shared import esporta
+    try:
+        buf = esporta.costruisci(get_client())
+    except Exception as e:
+        return jsonify({"error": str(e)[:250]}), 500
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=esporta.nome_file(),
+    )
+
+
 # ---------------------------------------------------------------------
 # API KPI per la launchpad (chiamate async dal client)
 # ---------------------------------------------------------------------
