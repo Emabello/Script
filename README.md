@@ -168,7 +168,8 @@ dentro `/conti`. Stessa gerarchia, due rese.
 | `/conti/webank/personale/importa` | import dei movimenti da estratto conto bancario |
 | `/conti/webank/piva` | il conto P.IVA: movimenti, saldo, rivalsa incassata |
 | `/conti/webank/piva/nuova` · `/<id>` | nuovo movimento · modifica |
-| `/conti/revolut` | Revolut: liquidità, risparmi, investimenti |
+| `/conti/revolut` | Revolut: liquidità, risparmi, investimenti, ultimi movimenti, ponte con WeBank, import dell'estratto |
+| `/conti/revolut/movimenti` · `/nuovo` · `/<id>` | i movimenti Revolut con filtri · nuovo · modifica |
 
 ### Risparmi — `/risparmi`
 
@@ -220,8 +221,10 @@ e dall'ingranaggio nella barra in alto sul telefono.
 
 **Da qui si porta via tutto** (`/api/export/completo.xlsx`,
 `shared/esporta.py`): un foglio di calcolo con i tre conti, ogni
-movimento dei due WeBank, i periodi di paga, i salvadanai, le fatture, i
-clienti, il fisco, le scadenze, le categorie e i parametri. Dodici fogli
+movimento dei tre conti (uno per conto, più «Tutti i movimenti», il
+registro unico di `shared/registro.py`), i periodi di paga, i salvadanai,
+le fatture, i clienti, il fisco, le scadenze, le categorie e i parametri.
+Quattordici fogli
 con un **indice** in cima che porta a ciascuno e un ritorno all'indice su
 ognuno: a quel numero di linguette la barra in fondo non basta più. È il
 successore del `Budget.xlsx` da cui questa app è nata — stessi dati,
@@ -277,11 +280,34 @@ della conferma. Due cose l'estratto non le contiene e vanno scritte a mano:
 - **la ripartizione dei salvadanai.** Dal 15 aprile 2026 vivono dentro un
   unico "Deposito senza vincoli" e l'estratto ne dà solo il totale.
 
-È uno **snapshot con una data**, non un saldo dal vivo: l'app mostra
-sempre a quando risale, e da 45 giorni in su lo segnala.
+Il saldo è la **fotografia più i movimenti registrati dopo**: l'app
+mostra sempre a quando risale la fotografia, e da 45 giorni in su lo
+segnala se nel frattempo non è stato registrato niente.
+
+#### I movimenti, come sugli altri due conti
+
+Dallo stesso estratto si leggono anche **i movimenti** (migrazione
+[§ 8.19](#819--i-movimenti-di-revolut-necessaria)): importo positivo,
+tipo entrata/uscita, e le **stesse categorie del conto personale** — una
+cena pagata con la carta Revolut è «Personale › Cena» come se l'avessi
+pagata con WeBank. `/conti/revolut/movimenti` li elenca con gli stessi
+filtri del personale, e si possono registrare anche a mano.
+
+Prima di salvare, per ogni conto dell'estratto la pagina rifà la
+quadratura *apertura + entrate − uscite = chiusura dichiarata*: se torna
+al centesimo il file è completo. I movimenti si rivedono a gruppi (stessa
+descrizione, stessa direzione): la stessa pizzeria compare trenta volte,
+e si categorizza una volta sola.
+
+**Il ponte con WeBank.** Ogni bonifico «Risparmi» che esce da WeBank deve
+entrare su Revolut con lo stesso importo entro pochi giorni. La pagina li
+appaia e mostra quello che resta spaiato: è un errore di una delle due
+parti, e prima non c'era modo di vederlo.
 
 API JSON: `/spese/api/revolut` (GET, POST), `/spese/api/revolut/leggi`
-(POST multipart, legge e basta).
+(POST multipart, legge saldi e movimenti, non scrive),
+`/spese/api/revolut/movimenti` (GET, POST, PATCH, DELETE) e
+`/spese/api/revolut/movimenti/importa` (POST).
 
 #### Il risparmio è un movimento come gli altri
 
@@ -344,6 +370,7 @@ sbagliato — non c'è nessun altro punto in cui la cosa verrebbe fuori.
 | `b2f_spese_piva` | movimenti del conto P.IVA |
 | `b2f_parametri_fiscali` | riga unica: aliquote, parametri di accantonamento e tariffa giornaliera — [§ 8.14](#814--la-tariffa-giornaliera-è-un-parametro-non-una-costante-necessaria) |
 | `b2f_revolut` | saldi Revolut, uno snapshot per data — [§ 8.10](#810--tabella-dei-saldi-revolut) |
+| `b2f_revolut_movimenti` | movimenti Revolut, stessa forma di `spese` — [§ 8.19](#819--i-movimenti-di-revolut-necessaria) |
 | `b2f_webauthn_credentials` | credenziali dello sblocco biometrico |
 
 ### Tabelle del conto personale (preesistenti all'app)
@@ -2157,6 +2184,98 @@ controllo sui doppioni ([§ 8.12](#812--il-controllo-contro-lestratto-necessaria
 le segnalerà come **sospette** (stesso importo, stesso tipo, date vicine) senza
 preselezionarle: salta quelle tre, oppure importale e cancella queste — visto che
 l'aggancio va per categoria e non per id, la fattura si riaggancia da sola.
+
+### 8.19 — I movimenti di Revolut (**necessaria**)
+
+Fino a oggi Revolut era solo una fotografia (`b2f_revolut`): i saldi di
+chiusura dell'estratto, nessuna riga. Un'entrata su Revolut non aveva un
+tipo, non aveva una categoria e non esisteva da nessuna parte. Da qui i
+movimenti hanno **la stessa forma di quelli degli altri due conti**:
+importo sempre positivo, `tipo` entrata/uscita, categoria come rimando a
+`cfg_categoria_sottocategoria` — lo stesso albero del conto personale
+(vedi `spese/revolut_movimenti.py`).
+
+Finché non è applicata, `/conti/revolut` funziona come prima (fotografie,
+lettura dell'estratto) e al posto dei movimenti dice di lanciare questa.
+
+```sql
+-- 1) la tabella
+create table if not exists b2f_revolut_movimenti (
+  id                bigserial primary key,
+  data              date          not null,
+  importo           numeric(12,2) not null check (importo > 0),
+  tipo              text          not null check (tipo in ('entrata', 'uscita')),
+  descrizione       text          not null default '',
+  categoria_link_id uuid references cfg_categoria_sottocategoria(id) on delete set null,
+  sezione           text          not null default 'conto'
+                                  check (sezione in ('conto', 'risparmi')),
+  fonte             text          not null default 'estratto'
+                                  check (fonte in ('estratto', 'manuale')),
+  chiave            text unique,  -- impronta della riga dell'estratto: niente doppioni
+  note              text,
+  created_at        timestamptz   not null default now(),
+  updated_at        timestamptz   not null default now()
+);
+
+create index if not exists idx_b2f_revolut_movimenti_data
+  on b2f_revolut_movimenti (data);
+
+alter table b2f_revolut_movimenti enable row level security;
+
+drop trigger if exists trg_b2f_revolut_movimenti_updated on b2f_revolut_movimenti;
+create trigger trg_b2f_revolut_movimenti_updated before update on b2f_revolut_movimenti
+  for each row execute function b2f_touch_updated_at();
+
+-- 2) le tre categorie che servono a Revolut, ciascuna con la sua riga
+--    "senza sottocategoria" (e' quella a cui punta un movimento che ha
+--    solo la categoria). Idempotente: non duplica se esistono gia'.
+do $$
+declare
+  v_nome text;
+  v_id   uuid;
+begin
+  foreach v_nome in array array['Giroconto Revolut', 'Interessi', 'Investimenti'] loop
+    select id into v_id from cfg_categorie where nome = v_nome;
+    if v_id is null then
+      insert into cfg_categorie (nome, ordine, attiva)
+      values (v_nome, 0, true) returning id into v_id;
+    end if;
+    if not exists (select 1 from cfg_categoria_sottocategoria
+                    where categoria_id = v_id and sottocategoria_id is null) then
+      insert into cfg_categoria_sottocategoria (categoria_id, sottocategoria_id, ordine, attiva)
+      values (v_id, null, 0, true);
+    end if;
+  end loop;
+end $$;
+```
+
+**Le categorie, e perché queste.**
+
+| Categoria | Su Revolut vuol dire | Nei totali |
+|---|---|---|
+| Risparmi *(esiste già)* | il bonifico che arriva da WeBank (entrata) o ci torna (uscita). Sul personale è la stessa riga vista dall'altra parte, col tipo opposto — come «Giroconto P.IVA» fra P.IVA e personale | entra ed esce |
+| Giroconto Revolut | lo spostamento fra liquidità e deposito dei salvadanai, dentro Revolut | **fuori**: è lo stesso euro visto due volte |
+| Interessi | quello che matura il deposito, e la ritenuta | entra |
+| Investimenti | versamenti e prelievi verso il conto trading | entra ed esce |
+| tutte le altre | le stesse del conto personale: una cena pagata con Revolut è «Personale › Cena» come con WeBank | entra ed esce |
+
+«Giroconto Revolut» non compare nel menu del conto personale: su WeBank
+un'uscita con quella categoria finirebbe nel «Totale Speso» dei risparmi.
+
+**Il saldo cambia forma, non numero.** Revolut era la fotografia; ora è
+la fotografia **più i movimenti registrati dopo**, cioè la stessa
+formula del personale (apertura + movimenti) con la fotografia al posto
+dell'apertura. Senza movimenti successivi il numero è identico a prima.
+
+**Dopo averla lanciata**: carica su `/conti/revolut` l'estratto
+consolidato **dall'apertura del conto** (Menu → Estratti conto →
+Consolidato, formato Excel). Prima di salvare la pagina mostra per ogni
+conto la quadratura *saldo di apertura + entrate − uscite = saldo di
+chiusura*: se torna al centesimo, nel file non manca nessuna riga.
+Reimportare un periodo che si sovrappone non crea doppioni e non tocca
+le categorie già corrette a mano.
+
+---
 
 ## 9. Sicurezza
 

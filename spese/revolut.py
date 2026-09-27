@@ -39,12 +39,18 @@ Lo stesso vale per i saldi dei singoli salvadanai: dal 15 aprile 2026 i
 salvadanai vivono dentro il "Deposito senza vincoli" e l'estratto ne dà
 solo il totale. Il totale arriva dall'import, la ripartizione la scrivi tu.
 
+I MOVIMENTI
+-----------
+Dallo stesso file si leggono anche i movimenti, riga per riga, con la
+stessa forma di quelli degli altri due conti: vivono in
+`spese/revolut_movimenti.py`. Qui la pagina li mostra e li fa salvare.
+
 Rotte HTML:
-  GET  /spese/revolut
+  GET  /conti/revolut
 
 Rotte JSON:
   GET  /spese/api/revolut                 -> ultimo saldo registrato
-  POST /spese/api/revolut/leggi           -> (multipart) legge l'estratto, non scrive
+  POST /spese/api/revolut/leggi           -> (multipart) legge saldi e movimenti, non scrive
   POST /spese/api/revolut                 -> salva uno snapshot
 """
 import csv
@@ -58,8 +64,10 @@ from flask import Response, jsonify, request
 
 from . import dati as D
 from . import spese_bp
-from shared.fmt import eur, data_it
+from . import revolut_movimenti as RM
+from shared.fmt import eur, eur_segno, data_it
 from shared.design import icon, info
+from shared.ordina import ordina
 from shared.theme import render_page
 
 
@@ -132,8 +140,14 @@ def _demojibake(s) -> str:
 
 def _importo(s: str) -> float | None:
     """"8.525,39€" -> 8525.39. None se la cella non e' un importo."""
-    t = (s or "").replace("\xa0", " ").strip()
-    t = re.sub(r"[€$£¥]|EUR", "", t).strip()
+    t = (s or "").replace("\xa0", " ").replace(" ", "").strip()
+    t = re.sub(r"[€$£¥+]|EUR", "", t).strip()
+    # "12.50" senza virgola: il punto e' il separatore decimale, non
+    # quello delle migliaia. Letto all'italiana diventava 1250 — un
+    # errore di cento volte, su un movimento che sembrava normalissimo.
+    # "1.234" (tre cifre dopo il punto) resta invece mille e rotti.
+    if "," not in t and re.fullmatch(r"-?\d+\.\d{1,2}", t):
+        return float(t)
     if not re.fullmatch(r"-?[\d.]*,?\d*", t) or not re.search(r"\d", t):
         return None
     try:
@@ -143,11 +157,18 @@ def _importo(s: str) -> float | None:
 
 
 _MESI = {"gen": 1, "feb": 2, "mar": 3, "apr": 4, "mag": 5, "giu": 6,
-         "lug": 7, "ago": 8, "set": 9, "ott": 10, "nov": 11, "dic": 12}
+         "lug": 7, "ago": 8, "set": 9, "ott": 10, "nov": 11, "dic": 12,
+         # L'estratto si scarica anche in inglese: stesse colonne, altri
+         # nomi dei mesi. Solo quelli che non coincidono con l'italiano.
+         "jan": 1, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9,
+         "oct": 10, "dec": 12}
 
 
 def _data(s: str):
-    """"12 ago 2026" o "20/04/26" -> date. None se non e' una data."""
+    """
+    "12 ago 2026", "20/04/26", "20/04/2026" o "2026-04-20" -> date.
+    None se non e' una data.
+    """
     t = (s or "").strip()
     m = re.fullmatch(r"(\d{1,2})\s+([a-zà-ú]{3})[a-zà-ú]*\.?\s+(\d{4})", t, re.I)
     if m and m.group(2).lower() in _MESI:
@@ -155,10 +176,18 @@ def _data(s: str):
             return date(int(m.group(3)), _MESI[m.group(2).lower()], int(m.group(1)))
         except ValueError:
             return None
-    m = re.fullmatch(r"(\d{2})/(\d{2})/(\d{2})", t)
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{2}|\d{4})", t)
+    if m:
+        anno = int(m.group(3))
+        try:
+            return date(anno + 2000 if anno < 100 else anno,
+                        int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            return None
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})(?:[ T].*)?", t)
     if m:
         try:
-            return date(2000 + int(m.group(3)), int(m.group(2)), int(m.group(1)))
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         except ValueError:
             return None
     return None
@@ -204,6 +233,75 @@ def _data_estratto(righe, nome_file: str = ""):
     return ultima or date.today()
 
 
+def _sezione_da_titolo(titolo: str) -> str | None:
+    """
+    Da un titolo di sezione ("Riepiloghi dei conti deposito", "Estratti
+    conto dei conti correnti", "Savings Transaction Statements"…) al tipo
+    di conto: 'risparmi', 'investimenti' o 'conto'.
+    """
+    basso = titolo.lower()
+    if any(k in basso for k in ("deposit", "risparm", "saving", "salvadana")):
+        return "risparmi"
+    if any(k in basso for k in ("investment", "investiment", "trading",
+                                "cripto", "crypto", "commodit")):
+        return "investimenti"
+    return "conto"
+
+
+def _intestazione_movimenti(celle: list[str]) -> dict | None:
+    """
+    Riconosce la riga di intestazione della tabella dei movimenti e dice
+    in che colonna sta cosa. None se la riga non e' un'intestazione.
+
+    Le colonne si trovano **per nome**, non per posizione: l'estratto
+    italiano e quello inglese hanno lo stesso contenuto con nomi diversi
+    ("Denaro in uscita" / "Money out"), e basta che Revolut aggiunga una
+    colonna per spostare tutte le altre di un posto. Leggere la terza
+    colonna perche' "di solito e' l'uscita" e' il modo in cui un'entrata
+    finisce registrata come spesa senza che niente se ne accorga.
+    """
+    basse = [c.strip().lower() for c in celle]
+
+    def trova(*chiavi, escludi=()):
+        for i, c in enumerate(basse):
+            if any(k in c for k in chiavi) and not any(e in c for e in escludi):
+                return i
+        return None
+
+    i_data = next((i for i, c in enumerate(basse)
+                   if c.startswith(("data", "date"))), None)
+    i_desc = trova("descri")
+    if i_data is None or i_desc is None:
+        return None
+    return {
+        "data": i_data,
+        "desc": i_desc,
+        "uscita": trova("uscit", "money out", "addebit", "paid out"),
+        "entrata": trova("entrat", "money in", "accredit", "paid in"),
+        "importo": trova("importo", "amount", escludi=("saldo", "balance")),
+        "saldo": trova("saldo", "balance"),
+    }
+
+
+def _chiave_movimento(m: dict, n: int) -> str:
+    """
+    L'impronta di un movimento, per non importarlo due volte.
+
+    Due estratti che si sovrappongono (luglio-agosto, poi agosto-
+    settembre) contengono le stesse righe di agosto. L'estratto non ha un
+    id per riga, quindi l'impronta e' fatta di quello che la riga dice —
+    conto, data, direzione, importo, descrizione — piu' `n`, il numero
+    d'ordine fra le righe **identiche** dello stesso file: due caffe' da
+    1,20 lo stesso giorno sono due movimenti, e senza `n` il secondo
+    verrebbe scartato come doppione del primo.
+    """
+    import hashlib
+    base = "|".join([m["sezione"], m["conto"], m["data"], m["tipo"],
+                     f'{m["importo"]:.2f}', m["descrizione"].strip().lower(),
+                     str(n)])
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()[:24]
+
+
 def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
     """
     Legge l'estratto conto consolidato di Revolut.
@@ -213,21 +311,36 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
     guarda può controllare che il totale sia la somma di quello che si
     aspetta. Non scrive niente.
 
+    Ritorna anche **i movimenti**, dalle sezioni "Estratti conto": ogni
+    riga con data, direzione e importo, nella stessa forma dei movimenti
+    degli altri due conti (importo sempre positivo, la direzione la dà
+    `tipo`). E per ogni conto il controllo che li rende affidabili:
+    saldo di apertura + entrate − uscite deve dare il saldo di chiusura
+    che la banca dichiara. Se torna al centesimo, nel file non manca
+    nessuna riga; se non torna, lo si dice prima di salvare.
+
     Struttura del file: sezioni "<qualcosa> Riepiloghi" con dentro un
     blocco per conto ("Conto personale (EUR)", "Deposito senza vincoli
-    (EUR)", …), ognuno con la sua riga "Saldo di chiusura". Le sezioni
-    degli estratti dei movimenti vengono dopo e qui non servono: si
-    smette di raccogliere saldi appena iniziano.
+    (EUR)", …), ognuno con le righe "Saldo di apertura" e "Saldo di
+    chiusura"; poi le sezioni "Estratti conto", con lo stesso blocco per
+    conto seguito dalla tabella dei movimenti.
     """
     righe = _righe_csv(file_bytes)
     if not righe:
         raise ValueError("Il file è vuoto.")
 
+    modo = None             # 'saldi' | 'movimenti' | None
     sezione = None          # 'conto' | 'risparmi' | 'investimenti' | None
-    conto_corrente = None   # nome del blocco in corso
+    conto_corrente = None   # (nome, valuta) del blocco in corso
+    colonne = None          # intestazione della tabella movimenti in corso
     dettaglio: list[dict] = []
+    aperture: dict[tuple, float] = {}
+    movimenti: list[dict] = []
+    viste: dict[tuple, int] = {}
     investimenti_trovati = False
     avvisi: list[str] = []
+    in_valuta = 0
+    illeggibili = 0
 
     for r in righe:
         celle = [c.strip() for c in r]
@@ -236,25 +349,30 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
             continue
         testa = piene[0]
 
-        # Cambio di macro-sezione. Gli "Estratti conto"/"Transaction
-        # Statements" sono i movimenti: da lì in poi niente più saldi.
-        if len(piene) == 1 and testa.endswith(("Riepiloghi", "Riepilogo")):
-            basso = testa.lower()
-            if "deposito" in basso:
-                sezione = "risparmi"
-            elif "investment" in basso or "investiment" in basso:
-                sezione = "investimenti"
+        # Cambio di macro-sezione: i riepiloghi danno i saldi, gli
+        # estratti conto ("Transaction Statements") i movimenti.
+        # Il file vero intitola le sezioni «<qualcosa> Riepiloghi»; si
+        # accetta la parola anche in testa («Riepiloghi dei conti…»), che e'
+        # come la scrive l'estratto in inglese («Account summaries») una
+        # volta tradotto. Mai dentro il nome di un conto: quello finisce
+        # sempre con la valuta fra parentesi.
+        basso_testa = testa.lower()
+        titolo = len(piene) == 1 and not re.search(r"\([A-Z]{3}\)\s*$", testa)
+        if titolo and re.search(r"(^|\s)(riepiloghi|riepilogo|summaries|summary)(\s|$)",
+                                basso_testa):
+            modo = "saldi"
+            sezione = _sezione_da_titolo(testa)
+            if sezione == "investimenti":
                 investimenti_trovati = True
-            elif "conti correnti" in basso:
-                sezione = "conto"
-            else:
-                sezione = None
-            conto_corrente = None
+            conto_corrente = colonne = None
             continue
-        if len(piene) == 1 and ("Estratti conto" in testa
-                                or "Transaction Statements" in testa):
-            sezione = None
-            conto_corrente = None
+        if titolo and ("estratti conto" in basso_testa
+                       or "statements" in basso_testa):
+            modo = "movimenti"
+            sezione = _sezione_da_titolo(testa)
+            if sezione == "investimenti":
+                investimenti_trovati = True
+            conto_corrente = colonne = None
             continue
 
         if sezione in (None, "investimenti"):
@@ -265,21 +383,80 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
             m = re.fullmatch(r"(.+?)\s*\(([A-Z]{3})\)", testa)
             if m:
                 conto_corrente = (re.sub(r"\s+", " ", m.group(1)).strip(), m.group(2))
+                colonne = None
             continue
 
-        if testa.lower().startswith("saldo di chiusura") and conto_corrente:
+        if modo == "saldi":
+            basso = testa.lower()
+            if not conto_corrente:
+                continue
             # Su un conto in valuta la riga porta prima l'importo nella
             # valuta del conto e poi il controvalore in euro: l'ultimo
             # numero della riga e' sempre quello in euro.
             importi = [v for v in (_importo(c) for c in piene[1:]) if v is not None]
-            if importi:
+            if not importi:
+                continue
+            if basso.startswith(("saldo di apertura", "opening balance")):
+                aperture[(sezione, conto_corrente[0])] = round(importi[-1], 2)
+            elif basso.startswith(("saldo di chiusura", "closing balance")):
                 dettaglio.append({
                     "sezione": sezione,
                     "nome": conto_corrente[0],
                     "valuta": conto_corrente[1],
                     "saldo": round(importi[-1], 2),
                 })
-            conto_corrente = None
+            continue
+
+        if modo != "movimenti" or not conto_corrente:
+            continue
+
+        intest = _intestazione_movimenti(celle)
+        if intest:
+            colonne = intest
+            continue
+        if not colonne:
+            continue
+
+        def cella(i):
+            return celle[i] if i is not None and i < len(celle) else ""
+
+        quando = _data(cella(colonne["data"]))
+        if not quando:
+            continue            # righe di servizio: totali, note, ripetizioni
+        uscita = _importo(cella(colonne["uscita"]))
+        entrata = _importo(cella(colonne["entrata"]))
+        if uscita is None and entrata is None and colonne["importo"] is not None:
+            firmato = _importo(cella(colonne["importo"]))
+            if firmato is not None:
+                (entrata, uscita) = (firmato, None) if firmato >= 0 else (None, -firmato)
+        if uscita:
+            tipo, importo = "uscita", abs(uscita)
+        elif entrata:
+            tipo, importo = "entrata", abs(entrata)
+        else:
+            illeggibili += 1
+            continue
+        if conto_corrente[1] != "EUR":
+            # Un movimento in dollari non si somma a quelli in euro: il
+            # controvalore non e' nella riga, e inventarlo con un cambio
+            # qualunque darebbe un saldo sbagliato con l'aria di giusto.
+            in_valuta += 1
+            continue
+
+        mov = {
+            "sezione": sezione,
+            "conto": conto_corrente[0],
+            "data": quando.isoformat(),
+            "tipo": tipo,
+            "importo": round(importo, 2),
+            "descrizione": re.sub(r"\s+", " ", cella(colonne["desc"])).strip()[:200],
+        }
+        impronta = (mov["sezione"], mov["conto"], mov["data"], mov["tipo"],
+                    mov["importo"], mov["descrizione"].lower())
+        n = viste.get(impronta, 0)
+        viste[impronta] = n + 1
+        mov["chiave"] = _chiave_movimento(mov, n)
+        movimenti.append(mov)
 
     if not dettaglio:
         raise ValueError(
@@ -288,6 +465,35 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
 
     conto = round(sum(d["saldo"] for d in dettaglio if d["sezione"] == "conto"), 2)
     risparmi = round(sum(d["saldo"] for d in dettaglio if d["sezione"] == "risparmi"), 2)
+
+    # Il controllo che rende i movimenti affidabili: per ogni conto in
+    # euro, apertura + entrate − uscite deve dare la chiusura dichiarata.
+    # E' la stessa verifica che sul conto WeBank ha trovato 829,78 € di
+    # scarto dopo diciotto mesi: qui si fa prima di salvare, riga per riga
+    # di conto, e non dopo.
+    quadrature = []
+    for d in dettaglio:
+        if d["valuta"] != "EUR":
+            continue
+        chiave = (d["sezione"], d["nome"])
+        propri = [m for m in movimenti
+                  if (m["sezione"], m["conto"]) == chiave]
+        if not propri and chiave not in aperture:
+            continue
+        entrate = round(sum(m["importo"] for m in propri if m["tipo"] == "entrata"), 2)
+        uscite = round(sum(m["importo"] for m in propri if m["tipo"] == "uscita"), 2)
+        apertura = aperture.get(chiave)
+        calcolato = (round(apertura + entrate - uscite, 2)
+                     if apertura is not None else None)
+        scarto = (round(d["saldo"] - calcolato, 2)
+                  if calcolato is not None else None)
+        quadrature.append({
+            "sezione": d["sezione"], "nome": d["nome"],
+            "apertura": apertura, "entrate": entrate, "uscite": uscite,
+            "movimenti": len(propri), "chiusura": d["saldo"],
+            "calcolato": calcolato, "scarto": scarto,
+            "ok": scarto is not None and abs(scarto) < 0.01,
+        })
 
     if investimenti_trovati:
         avvisi.append(
@@ -301,12 +507,30 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
             "I salvadanai stanno dentro un unico conto deposito e l'estratto ne "
             f"dà solo il totale (€ {eur(risparmi)}). La ripartizione fra Emergenze, "
             "Fondo casa, Vacanze, Regali e Altro va scritta a mano.")
+    if in_valuta:
+        avvisi.append(
+            f"{in_valuta} movimenti stanno su conti in valuta diversa dall'euro e "
+            "non sono stati letti: la riga non porta il controvalore, e sommarli "
+            "agli euro darebbe un saldo sbagliato.")
+    if illeggibili:
+        avvisi.append(
+            f"{illeggibili} righe con una data ma senza un importo leggibile "
+            "sono state saltate.")
+    storte = [q for q in quadrature if q["scarto"] is not None and not q["ok"]]
+    if storte:
+        avvisi.append(
+            "I movimenti letti non tornano con il saldo dichiarato su "
+            + ", ".join(f'«{q["nome"]}» (scarto € {eur(q["scarto"])})' for q in storte)
+            + ". Manca qualche riga, o il file ha un formato che il lettore non "
+              "conosce: meglio non salvare i movimenti finché non torna.")
 
     return {
         "data": _data_estratto(righe, nome_file).isoformat(),
         "conto": conto,
         "risparmi": risparmi,
         "dettaglio": dettaglio,
+        "movimenti": movimenti,
+        "quadrature": quadrature,
         "investimenti_nel_file": investimenti_trovati,
         "avvisi": avvisi,
     }
@@ -328,6 +552,7 @@ def saldo_revolut(client, al: str | None = None) -> dict:
     al = al or date.today().isoformat()
     vuoto = {"al": al, "disponibile": False, "conto": 0.0, "risparmi": 0.0,
              "investimenti": 0.0, "saldo": 0.0, "salvadanai": {},
+             "dopo": {"conto": 0.0, "risparmi": 0.0, "n": 0},
              "data": None, "giorni": None}
     try:
         r = (client.table(TABELLA).select("*")
@@ -363,6 +588,16 @@ def saldo_revolut(client, al: str | None = None) -> dict:
     except ValueError:
         pass
 
+    # Fotografia + movimenti registrati dopo: la stessa forma del saldo
+    # del conto personale (apertura + movimenti), con la fotografia al
+    # posto dell'apertura. `conto` e `risparmi` restano quelli della
+    # fotografia, perche' chi li confronta con altro (i salvadanai, il
+    # risparmio dichiarato) li confronta alla data della fotografia; il
+    # movimento successivo sta in `dopo`, e il `saldo` li somma.
+    from .revolut_movimenti import dopo_la_fotografia
+    dopo = dopo_la_fotografia(client, quando, al) or {"conto": 0.0,
+                                                      "risparmi": 0.0, "n": 0}
+
     return {
         "al": al,
         "disponibile": True,
@@ -371,7 +606,9 @@ def saldo_revolut(client, al: str | None = None) -> dict:
         "conto": conto,
         "risparmi": risparmi,
         "investimenti": investimenti,
-        "saldo": round(conto + risparmi + investimenti, 2),
+        "dopo": dopo,
+        "saldo": round(conto + risparmi + investimenti
+                       + dopo["conto"] + dopo["risparmi"], 2),
         "salvadanai": salvadanai,
         "fonte": s.get("fonte") or "estratto",
         "note": s.get("note"),
@@ -512,6 +749,53 @@ def _riquadro_coerenza(c: dict | None) -> str:
     </div>'''
 
 
+def _card_movimenti(movimenti: list[dict] | None) -> str:
+    """Gli ultimi movimenti, con i totali e il collegamento all'elenco."""
+    if movimenti is None:
+        return f'''
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Movimenti</div></div>
+          {RM.avviso_migrazione()}
+        </div>'''
+    if not movimenti:
+        return '''
+        <div class="card">
+          <div class="card-head"><div class="eyebrow">Movimenti</div>
+            <span class="chip">nessuno</span></div>
+          <p class="small muted">Nessun movimento registrato. Caricando l'estratto
+            consolidato qui a fianco, oltre ai saldi leggo anche i movimenti: entrate
+            e uscite con la loro categoria, come sugli altri due conti.</p>
+          <a class="btn ghost block mt-3" href="/conti/revolut/movimenti/nuovo">Registra un movimento a mano</a>
+        </div>'''
+    t = RM.totali(movimenti)
+    da_cat = (f'<a class="chip warn" href="/conti/revolut/movimenti?anno=0&amp;categoria=-">'
+              f'{t["da_categorizzare"]} da categorizzare</a>'
+              if t["da_categorizzare"] else "")
+    ultimi = "".join(RM.riga_html(m) for m in reversed(movimenti[-8:]))
+    return f'''
+    <div class="card">
+      <div class="card-head">
+        <div class="eyebrow">Movimenti
+          {info("Le entrate e le uscite di Revolut, lette dall&apos;estratto, con "
+                "le stesse categorie del conto personale. Gli spostamenti fra "
+                "liquidit&agrave; e deposito sono &laquo;Giroconto Revolut&raquo; e "
+                "restano fuori da entrate e uscite: sono lo stesso euro visto due volte.")}</div>
+        <span class="chip">{t["n"]}</span>
+      </div>
+      <div class="rows detail">
+        <div class="row"><span class="t">Entrate
+          <span class="sub">di cui € {eur(t["dal_webank"])} netti arrivati da WeBank
+            · € {eur(t["interessi"])} di interessi</span></span>
+          <span class="v tnum pos">€ {eur(t["entrate"])}</span></div>
+        <div class="row"><span class="t">Uscite</span>
+          <span class="v tnum neg">€ {eur(t["uscite"])}</span></div>
+      </div>
+      {f'<div class="mt-2">{da_cat}</div>' if da_cat else ""}
+      <div class="list mt-3">{ultimi}</div>
+      <a class="btn ghost block mt-3" href="/conti/revolut/movimenti">Tutti i movimenti ›</a>
+    </div>'''
+
+
 @spese_bp.get("/conti/revolut")
 def revolut_pagina():
     breadcrumb = [("Conti", "/conti"), ("Revolut", "")]
@@ -537,6 +821,12 @@ def revolut_pagina():
         corpo = ""
 
     # --- KPI, come sugli altri conti ------------------------------------
+    dopo = rev.get("dopo") or {}
+    if dopo.get("n"):
+        hint_totale = (f'fotografia del {data_it(rev["data"])} + {dopo["n"]} '
+                       f'moviment{"o" if dopo["n"] == 1 else "i"} registrati dopo')
+    else:
+        hint_totale = f'fotografia del {data_it(rev["data"])}, non un saldo dal vivo'
     if rev["disponibile"]:
         giorni = rev.get("giorni") or 0
         eta = (f'<span class="chip warn">fermo da {giorni} giorni</span>'
@@ -547,7 +837,7 @@ def revolut_pagina():
           <div class="card"><div class="stat">
             <div class="val tnum accent">€ {eur(rev["saldo"])}</div>
             <div class="lbl">Totale su Revolut</div>
-            <div class="hint">fotografia del {data_it(rev["data"])}, non un saldo dal vivo
+            <div class="hint">{hint_totale}
               {info("Gli altri due conti si calcolano dai movimenti, quindi "
                     "valgono <strong>a oggi</strong>. Questo no: &egrave; il saldo "
                     "che l&apos;estratto dichiarava il giorno in cui l&apos;hai "
@@ -556,10 +846,10 @@ def revolut_pagina():
                     "un errore dell&apos;app.")}</div>
           </div></div>
           <div class="card"><div class="stat sm">
-            <div class="val tnum">€ {eur(rev["conto"])}</div>
+            <div class="val tnum">€ {eur(rev["conto"] + float(dopo.get("conto") or 0))}</div>
             <div class="lbl">Liquidità</div></div></div>
           <div class="card"><div class="stat sm">
-            <div class="val tnum pos">€ {eur(rev["risparmi"])}</div>
+            <div class="val tnum pos">€ {eur(rev["risparmi"] + float(dopo.get("risparmi") or 0))}</div>
             <div class="lbl">Risparmi</div></div></div>
           <div class="card"><div class="stat sm">
             <div class="val tnum">€ {eur(rev["investimenti"])}</div>
@@ -602,6 +892,16 @@ def revolut_pagina():
             <span class="v tnum {"" if residuo >= 0 else "neg"}">€ {eur(residuo)}</span>
           </div>'''
 
+        riga_dopo = ""
+        if dopo.get("n"):
+            netto = round(float(dopo.get("conto") or 0) + float(dopo.get("risparmi") or 0), 2)
+            riga_dopo = f'''
+            <div class="row">
+              <span class="t">Movimenti dopo il {data_it(rev["data"])}
+                <span class="sub">{dopo["n"]} registrati dopo la fotografia: il saldo
+                  non è più fermo al giorno dell'estratto</span></span>
+              <span class="v tnum">{eur_segno(netto)}</span>
+            </div>'''
         corpo = f'''
         <div class="card">
           <div class="card-head">
@@ -626,6 +926,7 @@ def revolut_pagina():
                 <span class="sub">valore del portafoglio, scritto a mano</span></span>
               <span class="v tnum">€ {eur(rev["investimenti"])}</span>
             </div>
+            {riga_dopo}
             <div class="row tot">
               <span class="t">Totale su Revolut</span>
               <span class="v tnum">€ {eur(rev["saldo"])}</span>
@@ -634,6 +935,18 @@ def revolut_pagina():
         </div>'''
 
     coer = _riquadro_coerenza(coerenza(client, rev))
+
+    # --- I movimenti ----------------------------------------------------
+    movimenti = RM.tutti(client)
+    blocco_mov = _card_movimenti(movimenti)
+    blocco_ponte = RM.card_ponte(RM.ponte(client, movimenti)) if movimenti else ""
+    # Le voci del menu categoria nell'anteprima dell'import: le stesse del
+    # conto personale, in ordine alfabetico per quello che si legge.
+    voci_menu = ordina([{"link_id": v["link_id"],
+                         "nome": v["categoria"] + (f' › {v["sottocategoria"]}'
+                                                   if v["sottocategoria"] else "")}
+                        for v in RM.voci_categoria(client)],
+                       per=lambda v: v["nome"])
 
     # --- Il form: la data parte da OGGI ---------------------------------
     # Prima partiva dalla data dell'ultimo snapshot, e `salva()` fa un
@@ -677,6 +990,8 @@ def revolut_pagina():
     <div class="grid split">
       <div class="stack">
         {corpo}
+        {blocco_mov}
+        {blocco_ponte}
         {blocco_storico}
       </div>
 
@@ -743,6 +1058,20 @@ def revolut_pagina():
             <button type="button" class="btn block" onclick="onSalva()">Salva la lettura</button>
           </div>
         </div>
+
+        <div class="card" id="cardMovimenti" style="display:none">
+          <div class="card-head">
+            <div class="eyebrow">Movimenti letti</div>
+            <span class="chip" id="chipMovimenti"></span>
+          </div>
+          <div class="rows detail" id="quadrature"></div>
+          <p class="small muted mt-2" id="riassuntoMovimenti"></p>
+          <div class="rows detail mt-2" id="gruppiMovimenti"></div>
+          <div class="actions mt-4">
+            <button type="button" class="btn block" id="btnSalvaMovimenti"
+                    onclick="onSalvaMovimenti()">Salva i movimenti nuovi</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -750,6 +1079,8 @@ def revolut_pagina():
     <script>
       const SALVADANAI = {json.dumps([[s[0], s[2]] for s in SALVADANAI], ensure_ascii=False)};
       const DATE_NOTE = {date_note};
+      const VOCI = {json.dumps(voci_menu, ensure_ascii=False)};
+      let MOVIMENTI = [];
 
       function toast(msg, cls) {{
         const t = document.getElementById('toast');
@@ -836,10 +1167,97 @@ def revolut_pagina():
               '<span class="sub">' + (d.sezione === 'risparmi' ? 'deposito' : 'conto corrente') +
               ' · ' + esc(d.valuta) + '</span></span>' +
               '<span class="v tnum">€ ' + euro(d.saldo) + '</span></div>').join('');
+          mostraMovimenti(j.movimenti || [], j.quadrature || []);
           toast('Letto: liquidità € ' + euro(j.conto) + ', risparmi € ' + euro(j.risparmi), 'ok');
         }} catch (e) {{
           err.textContent = 'Errore rete: ' + e.message; err.style.display = 'block';
         }}
+      }}
+
+      // I movimenti letti si rivedono A GRUPPI: stessa descrizione, stessa
+      // direzione, stessa parte del conto e stessa categoria proposta. Un
+      // estratto dall'apertura del conto ha un migliaio di righe, e la
+      // stessa pizzeria compare trenta volte: una tendina per riga
+      // vorrebbe dire trenta scelte uguali. Si sceglie una volta per
+      // gruppo; il singolo movimento si ritocca poi dall'elenco.
+      let GRUPPI = [];
+      function opzioniCategoria(scelta) {{
+        return '<option value="">— da categorizzare —</option>' + VOCI.map(v =>
+          '<option value="' + esc(v.link_id) + '"' + (String(v.link_id) === String(scelta) ? ' selected' : '') +
+          '>' + esc(v.nome) + '</option>').join('');
+      }}
+      function mostraMovimenti(righe, quadrature) {{
+        MOVIMENTI = righe;
+        const card = document.getElementById('cardMovimenti');
+        if (!righe.length) {{ card.style.display = 'none'; return; }}
+        card.style.display = '';
+        const nuove = righe.filter(r => !r.presente);
+        document.getElementById('chipMovimenti').textContent =
+          nuove.length + ' nuovi su ' + righe.length;
+        document.getElementById('quadrature').innerHTML = quadrature.map(q =>
+          '<div class="row"><span class="t">' + esc(q.nome) +
+          '<span class="sub">' + (q.apertura === null
+             ? q.movimenti + ' movimenti · saldo di apertura non trovato, niente controllo'
+             : 'apertura € ' + euro(q.apertura) + ' + entrate € ' + euro(q.entrate) +
+               ' − uscite € ' + euro(q.uscite) + ' = € ' + euro(q.calcolato) +
+               ' · la banca dichiara € ' + euro(q.chiusura)) +
+          '</span></span><span class="v tnum ' + (q.ok ? 'pos' : (q.scarto === null ? '' : 'neg')) + '">' +
+          (q.ok ? '✓ torna' : (q.scarto === null ? '—' : 'scarto € ' + euro(q.scarto))) +
+          '</span></div>').join('');
+        const gemelle = nuove.filter(r => r.gemella).length;
+        document.getElementById('riassuntoMovimenti').textContent =
+          (righe.length - nuove.length ? (righe.length - nuove.length) +
+             ' erano già stati salvati da un estratto precedente e restano come sono. ' : '') +
+          (gemelle ? gemelle + ' hanno il loro bonifico «Risparmi» su WeBank e sono già ' +
+             'categorizzati così. ' : '') +
+          'Scegli la categoria per gruppo: vale per tutte le righe del gruppo.';
+        const mappa = new Map();
+        for (const r of nuove) {{
+          const k = [r.tipo, r.sezione, (r.descrizione || '').toLowerCase(), r.categoria_link_id || ''].join('|');
+          if (!mappa.has(k)) mappa.set(k, {{righe: [], link: r.categoria_link_id || ''}});
+          mappa.get(k).righe.push(r);
+        }}
+        GRUPPI = Array.from(mappa.values()).sort((a, b) => b.righe.length - a.righe.length);
+        document.getElementById('gruppiMovimenti').innerHTML = GRUPPI.map((g, i) => {{
+          const r0 = g.righe[0];
+          const tot = g.righe.reduce((s, r) => s + Number(r.importo || 0), 0);
+          const segno = r0.tipo === 'entrata' ? '+' : '−';
+          return '<div class="row"><span class="t">' + esc((r0.descrizione || '—').slice(0, 50)) +
+            '<span class="sub">' + g.righe.length + (g.righe.length === 1 ? ' movimento' : ' movimenti') +
+            ' · ' + (r0.sezione === 'risparmi' ? 'deposito' : 'liquidità') +
+            ' · dal ' + dataIt(g.righe[0].data) + '</span>' +
+            '<select class="input mt-2" aria-label="Categoria del gruppo" data-gruppo="' + i + '" ' +
+            'onchange="GRUPPI[' + i + '].link = this.value">' + opzioniCategoria(g.link) +
+            '</select></span><span class="v tnum ' + (r0.tipo === 'entrata' ? 'pos' : 'neg') + '">' +
+            segno + ' € ' + euro(tot) + '</span></div>';
+        }}).join('');
+        document.getElementById('btnSalvaMovimenti').disabled = !nuove.length;
+      }}
+
+      async function onSalvaMovimenti() {{
+        const storte = Array.from(document.querySelectorAll('#quadrature .neg')).length;
+        if (storte && !confirm('I movimenti letti non tornano con il saldo che la banca ' +
+            'dichiara: probabilmente manca qualche riga. Salvo lo stesso?')) return;
+        const righe = [];
+        for (const g of GRUPPI) {{
+          for (const r of g.righe) {{
+            righe.push({{chiave: r.chiave, data: r.data, tipo: r.tipo, importo: r.importo,
+                        descrizione: r.descrizione, sezione: r.sezione,
+                        categoria_link_id: g.link || null}});
+          }}
+        }}
+        if (!righe.length) {{ toast('Nessun movimento nuovo da salvare', 'err'); return; }}
+        try {{
+          const r = await fetch('/spese/api/revolut/movimenti/importa', {{
+            method: 'POST', headers: {{'Content-Type':'application/json'}},
+            body: JSON.stringify({{righe}}),
+          }});
+          const j = await r.json();
+          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
+          toast('Salvati ' + j.inseriti + ' movimenti' +
+                (j.gia_presenti ? ' (' + j.gia_presenti + ' già presenti)' : ''), 'ok');
+          setTimeout(()=>location.reload(), 900);
+        }} catch (e) {{ toast('Errore rete: ' + e.message, 'err'); }}
       }}
 
       async function onSalva() {{
@@ -883,16 +1301,25 @@ def revolut_pagina():
 
 @spese_bp.post("/spese/api/revolut/leggi")
 def api_revolut_leggi():
-    """Legge l'estratto e restituisce i saldi. Non scrive niente."""
+    """Legge l'estratto e restituisce saldi e movimenti. Non scrive niente."""
     f = request.files.get("file")
     if not f or not f.filename:
         return jsonify({"error": "nessun file caricato"}), 400
     try:
-        return jsonify(parse_estratto(f.read(), f.filename))
+        letto = parse_estratto(f.read(), f.filename)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": f"file non leggibile: {str(e)[:200]}"}), 400
+    # Le categorie proposte e i doppioni chiedono il database; se non
+    # risponde (o manca la tabella) i saldi si leggono lo stesso.
+    client = D.sb()
+    try:
+        if client is not None:
+            letto["movimenti"] = RM.prepara_import(client, letto["movimenti"])
+    except Exception:
+        pass
+    return jsonify(letto)
 
 
 @spese_bp.get("/spese/api/revolut")

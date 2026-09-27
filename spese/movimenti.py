@@ -387,8 +387,13 @@ def _form(client, m: dict | None = None) -> str:
     # senza che nulla lo segnali. Resta nel menu solo se e' gia' quella del
     # movimento aperto (mostrata disabilitata, non e' comunque modificabile
     # da qui: vedi il blocco su `collegato` piu' sotto).
+    # Idem "Giroconto Revolut": e' lo spostamento fra liquidita' e deposito
+    # DENTRO Revolut (spese/revolut_movimenti.py). Su WeBank non esiste, e
+    # un'uscita con quella categoria finirebbe nel "Totale Speso" dei
+    # risparmi come se fosse una spesa.
     albero_scelta = [g for g in albero
-                     if g["categoria"] != D.CATEGORIA_GIROCONTO
+                     if g["categoria"] not in (D.CATEGORIA_GIROCONTO,
+                                               D.CATEGORIA_GIROCONTO_REVOLUT)
                      or g["categoria"] == cat_corrente]
     cat_opts = "".join(
         f'<option value="{_esc(g["categoria"])}"'

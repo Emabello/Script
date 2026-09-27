@@ -25,3 +25,4 @@ from . import movimenti   # noqa: E402,F401
 from . import risparmi    # noqa: E402,F401
 from . import importa     # noqa: E402,F401
 from . import revolut     # noqa: E402,F401
+from . import revolut_movimenti  # noqa: E402,F401

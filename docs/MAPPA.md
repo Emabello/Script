@@ -23,6 +23,8 @@ Ultimo aggiornamento: 2026-08-25 · 36 file di codice e configurazione.
 | Scrivere sul conto personale | `spese/dati.py` — **unico posto** |
 | Saldo reale dei conti | `fatture/fiscale.py::saldo_piva` · `spese/dati.py::saldo_conto` · `spese/revolut.py::saldo_revolut` |
 | Risparmi, salvadanai, Revolut | `spese/revolut.py` |
+| Movimenti Revolut, ponte con WeBank | `spese/revolut_movimenti.py` |
+| I movimenti dei tre conti in una forma sola | `shared/registro.py` |
 | Le ore di un mese, per fatturarle | `shared/ore.py` |
 | Quanto vale una giornata | `b2f_parametri_fiscali.tariffa_giornaliera` |
 | Stati della fattura, rivalsa | `fatture/costanti.py` |
@@ -510,12 +512,15 @@ Liquidità, risparmi e investimenti su Revolut. Esiste perché **è lì che
 finisce il risparmio**: senza, quel denaro usciva dal conto personale
 (`v_risparmi_mese` lo sottrae) e non entrava da nessuna parte.
 
-- HTML: `/revolut` — saldi, import dell'estratto, editor dei salvadanai,
+- HTML: `/conti/revolut` — saldi, ultimi movimenti, ponte con WeBank,
+  import dell'estratto (saldi **e** movimenti), editor dei salvadanai,
   storico degli snapshot.
 - JSON: `GET|POST /api/revolut`, `POST /api/revolut/leggi` (multipart:
   legge il file e basta, non scrive).
 - `parse_estratto(bytes, nome_file)`: legge l'estratto consolidato di
-  Revolut. `saldo_revolut(client, al)`: l'ultimo snapshot a quella data.
+  Revolut: saldi di chiusura e d'apertura, movimenti (colonne trovate
+  per nome), quadrature per conto. `saldo_revolut(client, al)`: l'ultimo
+  snapshot a quella data più i movimenti registrati dopo (`dopo`).
   `coerenza(client, rev)`: il confronto fra risparmio dichiarato e saldo
   reale dei salvadanai.
 - `SALVADANAI` tiene insieme i cinque secchielli e la quota di
@@ -539,6 +544,33 @@ finisce il risparmio**: senza, quel denaro usciva dal conto personale
 > vecchio, e chi lo guarda deve poterlo distinguere.
 
 Richiede la tabella `b2f_revolut` — migrazione README §8.10.
+
+### `spese/revolut_movimenti.py` · i movimenti di Revolut
+
+Le righe dell'estratto Revolut nella stessa forma di `spese`: importo
+positivo, `tipo` entrata/uscita, categoria come `categoria_link_id` sullo
+stesso albero `cfg_*` del personale (migrazione §8.19).
+
+- HTML: `/conti/revolut/movimenti` (filtri come il personale; `anno=0` =
+  tutti gli anni, `categoria=-` = senza categoria), `/nuovo`, `/<id>`.
+- JSON: `GET|POST /spese/api/revolut/movimenti`, `PATCH|DELETE .../<id>`,
+  `POST .../importa` (salta le impronte già presenti senza toccarle).
+- `tutti(client)` → None se manca la tabella (≠ lista vuota). `totali()`
+  tiene fuori i «Giroconto Revolut» (liquidità↔deposito).
+  `dopo_la_fotografia()` alimenta `saldo_revolut`: fotografia + movimenti
+  successivi. `abbina()`/`ponte()`: bonifici «Risparmi» WeBank↔Revolut,
+  stesso importo, −1…+5 giorni. `prepara_import()`: categoria proposta
+  (gemella WeBank → sezione → parole) e flag `presente`.
+
+> **Trappola**: `CATEGORIA_INTERNO` è esclusa dai totali ma NON dal saldo
+> per sezione — è lì che si muove davvero.
+
+### `shared/registro.py` · i tre conti in una forma sola
+
+`registro(client)`: ogni movimento di personale, P.IVA e Revolut con gli
+stessi campi (`conto`, `tipo`, `segno`, `categoria` come nome,
+`trasferimento`). Il «giroconto» della P.IVA diventa un'uscita. Alimenta il
+foglio «Tutti i movimenti» dell'export.
 
 ### `spese/importa.py` — 435 righe · import da estratto conto
 

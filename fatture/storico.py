@@ -1760,21 +1760,33 @@ def api_fattura_create():
         if k not in data:
             return jsonify({"error": f"campo mancante: {k}"}), 400
 
+    # I numeri si convertono dentro un try: fuori, un "abc" usciva come
+    # 500 in HTML e il form leggeva «Unexpected token '<'» invece di un
+    # messaggio (docs/miglioramenti.md, voce del 20/09/2026).
+    try:
+        numeri = {k: int(data[k]) for k in ("anno", "progressivo")}
+        numeri.update({k: float(data.get(k) or 0) for k in
+                       ("imponibile", "bollo", "cassa_perc", "cassa_importo")})
+        numeri["totale"] = float(data["totale"])
+        date.fromisoformat(str(data["data"])[:10])
+    except (TypeError, ValueError):
+        return jsonify({"error": "anno, progressivo, data o importi non validi"}), 400
+
     payload = {
-        "anno":              int(data["anno"]),
-        "progressivo":       int(data["progressivo"]),
+        "anno":              numeri["anno"],
+        "progressivo":       numeri["progressivo"],
         "data":              data["data"],
         "tipo_doc":          data.get("tipo_doc", "TD01"),
         "natura_iva":        data.get("natura_iva") or "N2.2",
         "cliente_id":        data.get("cliente_id"),
         "cliente_snapshot":  data["cliente_snapshot"],
         "righe":             data["righe"],
-        "imponibile":        float(data.get("imponibile") or 0),
-        "bollo":             float(data.get("bollo") or 0),
+        "imponibile":        numeri["imponibile"],
+        "bollo":             numeri["bollo"],
         "bollo_addebitato":  bool(data.get("bollo_addebitato")),
-        "cassa_perc":        float(data.get("cassa_perc") or 0),
-        "cassa_importo":     float(data.get("cassa_importo") or 0),
-        "totale":            float(data["totale"]),
+        "cassa_perc":        numeri["cassa_perc"],
+        "cassa_importo":     numeri["cassa_importo"],
+        "totale":            numeri["totale"],
         "divisa":            data.get("divisa") or "EUR",
         "pagamento_mod":     data.get("pagamento_mod"),
         "pagamento_cond":    data.get("pagamento_cond"),

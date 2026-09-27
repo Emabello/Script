@@ -52,6 +52,8 @@ PAGINE = [
     "/conti/webank/piva/1", "/impostazioni/emittente",
     "/conti", "/conti/webank/personale", "/conti/webank/personale/nuovo", "/conti/webank/personale/1",
     "/conti/webank/personale/importa", "/risparmi", "/conti/revolut",
+    "/conti/revolut/movimenti", "/conti/revolut/movimenti/nuovo",
+    "/conti/revolut/movimenti/2",
 ]
 
 # Placeholder di testa: non sono dati, non entrano nel confronto.

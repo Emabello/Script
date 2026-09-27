@@ -1324,10 +1324,12 @@ def _blocco_saldi(saldi: dict) -> str:
         # dell'app, mentre e' il mercato che si e' mosso da allora.
         giorni = rev.get("giorni") or 0
         quando = data_breve(rev.get("data"))
-        if giorni > 45:
+        n_dopo = (rev.get("dopo") or {}).get("n") or 0
+        if giorni > 45 and not n_dopo:
             pezzi.append(f'fermo da {giorni} giorni')
         elif quando:
-            pezzi.append(f'fotografia del {quando}')
+            pezzi.append(f'fotografia del {quando}'
+                         + (f' + {n_dopo} movimenti' if n_dopo else ""))
         tiles += tile(rev, "Revolut", "/conti/revolut", " · ".join(pezzi))
 
     # Il totale ha senso solo se tutti i saldi in gioco sono veri:
@@ -1372,12 +1374,18 @@ def _blocco_saldi(saldi: dict) -> str:
         + entrate € {eur(pers["entrate"])} − uscite € {eur(pers["uscite"])}{meno_risp}</span></span>
         <span class="v tnum">€ {eur(pers["saldo"])}</span></div>'''
     if rev.get("disponibile"):
+        dopo = rev.get("dopo") or {}
+        netto_dopo = round(float(dopo.get("conto") or 0)
+                           + float(dopo.get("risparmi") or 0), 2)
+        piu_dopo = (f' {"+" if netto_dopo >= 0 else "−"} € {eur(abs(netto_dopo))} di '
+                    f'{dopo["n"]} movimenti registrati dopo'
+                    if dopo.get("n") else "")
         righe += f'''
       <div class="row"><span class="t">Revolut
         <span class="sub">liquidità € {eur(rev["conto"])}
         + risparmi € {eur(rev["risparmi"])}
         + investimenti € {eur(rev["investimenti"])}
-        · saldi al {data_it(rev.get("data"))}</span></span>
+        · saldi al {data_it(rev.get("data"))}{piu_dopo}</span></span>
         <span class="v tnum">€ {eur(rev["saldo"])}</span></div>'''
 
     nota_risparmi = ""
@@ -1398,8 +1406,9 @@ def _blocco_saldi(saldi: dict) -> str:
         futura restano fuori. Sul conto P.IVA il giroconto è un'uscita —
         quei soldi sono già sull'altro conto, e contarli due volte
         gonfierebbe il totale.{nota_risparmi}
-        {"Revolut è uno snapshot dall'estratto conto, non un saldo dal vivo."
-         if rev.get("disponibile") else ""}
+        {"Revolut parte dall'ultima fotografia dell'estratto e somma i "
+         "movimenti registrati dopo: senza movimenti successivi è fermo al "
+         "giorno dell'estratto." if rev.get("disponibile") else ""}
       </p>
     </details>'''
 
@@ -1632,12 +1641,21 @@ def _kpi_conto(saldo: dict, tipo: str) -> str:
     elif tipo == "revolut":
         quando = data_it(saldo.get("data")) or "—"
         giorni = saldo.get("giorni")
+        dopo = saldo.get("dopo") or {}
         hint_data = (f'fermo da {giorni} giorni' if (giorni or 0) > 45
                     else f'aggiornato al {quando}')
+        if dopo.get("n"):
+            hint_data += f' · {dopo["n"]} movimenti dopo'
+        # Liquidita' e risparmi A OGGI: fotografia piu' i movimenti di
+        # ciascuna parte registrati dopo. La fotografia da sola li
+        # lascerebbe fermi al giorno dell'estratto, e la somma delle
+        # tessere non darebbe il saldo della prima.
         tiles = [
             tile_saldo,
-            _kpi(f'€ {eur(saldo["conto"])}', "Liquidità"),
-            _kpi(f'€ {eur(saldo["risparmi"])}', "Risparmi"),
+            _kpi(f'€ {eur(float(saldo["conto"]) + float(dopo.get("conto") or 0))}',
+                 "Liquidità"),
+            _kpi(f'€ {eur(float(saldo["risparmi"]) + float(dopo.get("risparmi") or 0))}',
+                 "Risparmi"),
             _kpi(f'€ {eur(saldo["investimenti"])}', "Investimenti"),
             _kpi(quando, "Ultimo estratto", hint=hint_data),
         ]

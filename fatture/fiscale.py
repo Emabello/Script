@@ -1501,8 +1501,11 @@ def _movimento_label(m: dict) -> str:
 @fatture_bp.get("/conti/webank/piva")
 def spese_piva_list():
     sb, err = _supabase_or_error()
-    breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("Spese P.IVA", "")]
+    # Il conto sta sotto «Conti», come gli altri due: il percorso di prima
+    # (Fatture › Situazione fiscale › Spese P.IVA) era quello di quando la
+    # pagina viveva dentro le fatture, e su telefono il «torna indietro»
+    # portava alla situazione fiscale invece che ai conti.
+    breadcrumb = [("Conti", "/conti"), ("WeBank P.IVA", "")]
     if err:
         return _render(err, breadcrumb=breadcrumb, fab=("Nuovo movimento P.IVA", "/conti/webank/piva/nuova"))
 
@@ -1747,8 +1750,7 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
 
 @fatture_bp.get("/conti/webank/piva/nuova")
 def spesa_piva_new():
-    breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("WeBank P.IVA", "/conti/webank/piva"), ("Nuovo", "")]
+    breadcrumb = [("Conti", "/conti"), ("WeBank P.IVA", "/conti/webank/piva"), ("Nuovo", "")]
     return _render(_movimento_form_html(None), section="conti-piva", eyebrow="Nuovo movimento",
                    title_html='<em>Nuovo</em> movimento', breadcrumb=breadcrumb)
 
@@ -1756,8 +1758,7 @@ def spesa_piva_new():
 @fatture_bp.get("/conti/webank/piva/<int:mid>")
 def spesa_piva_edit(mid):
     sb, err = _supabase_or_error()
-    breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("WeBank P.IVA", "/conti/webank/piva"), (str(mid), "")]
+    breadcrumb = [("Conti", "/conti"), ("WeBank P.IVA", "/conti/webank/piva"), (str(mid), "")]
     if err:
         return _render(err, breadcrumb=breadcrumb)
     try:

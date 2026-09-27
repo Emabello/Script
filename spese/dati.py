@@ -79,6 +79,11 @@ CATEGORIA_STIPENDIO = "Stipendio"
 # calcola SOLO dai movimenti del conto, come quello della banca.
 CATEGORIA_RISPARMIO = "Risparmi"
 
+# Lo spostamento fra liquidita' e deposito dentro Revolut (migrazione
+# §8.19). Sta qui e non solo in revolut_movimenti.py perche' anche il
+# form del conto personale deve saperlo tenere fuori dal suo menu.
+CATEGORIA_GIROCONTO_REVOLUT = "Giroconto Revolut"
+
 CAMPI_SCRITTURA = ("data", "descrizione", "importo", "tipo",
                    "metodo_pagamento", "categoria_link_id")
 
@@ -458,7 +463,18 @@ def _normalizza(dati: dict) -> dict:
     if out.get("importo") is not None:
         # Sempre positivo: la direzione la da' `tipo`, non il segno. Due
         # convenzioni sovrapposte si annullerebbero a vicenda.
-        out["importo"] = round(abs(float(out["importo"])), 2)
+        try:
+            out["importo"] = round(abs(float(out["importo"])), 2)
+        except (TypeError, ValueError):
+            raise ValueError("importo non valido")
+    if out.get("data") is not None:
+        # Qui e non in `crea`: mese e anno si ricavano dalla data con uno
+        # slicing, e su "non-una-data" lo slicing non fallisce — scrive
+        # spazzatura, o esplode piu' avanti con un 500.
+        try:
+            out["data"] = date.fromisoformat(str(out["data"])[:10]).isoformat()
+        except ValueError:
+            raise ValueError("data non valida")
     return out
 
 
@@ -470,7 +486,10 @@ def crea(client, dati: dict) -> dict:
     sotto lock. Se non risponde ripiega sull'insert diretto: `spese.id`
     e' IDENTITY e si genera comunque.
     """
-    d = _normalizza(dati)
+    try:
+        d = _normalizza(dati)
+    except ValueError as e:
+        return {"error": str(e)}
     quando = d.get("data") or date.today().isoformat()
     d["data"] = quando
     d["mese"] = int(quando[5:7])
@@ -510,7 +529,10 @@ def crea(client, dati: dict) -> dict:
 
 def aggiorna(client, mid: int, dati: dict) -> dict:
     """Modifica un movimento. Cambiando la data risistema mese e anno."""
-    d = _normalizza(dati)
+    try:
+        d = _normalizza(dati)
+    except ValueError as e:
+        return {"error": str(e)}
     if not d:
         return {"error": "nessun campo da aggiornare"}
     if d.get("tipo") and d["tipo"] not in TIPI_CHIAVI:
