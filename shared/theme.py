@@ -128,9 +128,42 @@ __TENDA__
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 __FONTS__
 __PREFETCH__
-<style>__CSS__</style>
+__CSS__
 <style>__TENDACSS__</style>
+__SPECULAZIONE__
 </head>"""
+
+
+# ---------------------------------------------------------------------------
+# Velocita' fra una pagina e l'altra
+# ---------------------------------------------------------------------------
+# IL FOGLIO DI STILE STA FUORI DALLA PAGINA. Erano 62 KB di CSS scritti
+# dentro ogni pagina: a ogni click il telefono li riscaricava e li
+# rileggeva da capo, identici. Ora e' un file con l'impronta del contenuto
+# nel nome (/assets/app.<impronta>.css) e una cache di un anno: si scarica
+# una volta, e cambia URL da solo quando cambia il CSS. Resta scritto
+# dentro solo la pagina d'attesa, che il service worker serve quando il
+# server dorme — cioe' quando nessun altro file e' raggiungibile.
+from hashlib import sha1 as _sha1
+CSS_VERSIONE = _sha1(CSS.encode("utf-8")).hexdigest()[:10]
+CSS_URL = f"/assets/app.{CSS_VERSIONE}.css"
+
+# LA PAGINA SI CHIEDE PRIMA DEL CLICK. Speculation Rules: quando il mouse
+# si ferma su un link (o il dito lo tocca), il browser comincia a
+# scaricare la pagina; al click e' gia' li'. Solo pagine: le API, i
+# download e l'uscita restano fuori, perche' una richiesta partita senza
+# un click non deve fare niente. I browser che non le conoscono ignorano
+# lo script.
+_SPECULAZIONE = """<script type="speculationrules">
+{"prefetch": [{"where": {"and": [
+  {"href_matches": "/*"},
+  {"not": {"href_matches": "/api/*"}},
+  {"not": {"href_matches": "/*/api/*"}},
+  {"not": {"href_matches": "/logout*"}},
+  {"not": {"href_matches": "/assets/*"}},
+  {"not": {"selector_matches": "[download], [target=_blank], [data-no-prefetch]"}}
+]}, "eagerness": "moderate"}]}
+</script>"""
 
 
 _FONT_PRELOAD = "".join(
@@ -163,7 +196,9 @@ def page_head(title: str, prefetch: list[str] | None = None,
             .replace("__TITLE__", title)
             .replace("__FONTS__", _FONT_PRELOAD)
             .replace("__PREFETCH__", pf)
-            .replace("__CSS__", CSS)
+            .replace("__CSS__", f"<style>{CSS}</style>" if attesa
+                     else f'<link rel="stylesheet" href="{CSS_URL}">')
+            .replace("__SPECULAZIONE__", "" if attesa else _SPECULAZIONE)
             .replace("__TENDACSS__", TENDA_CSS))
 
 

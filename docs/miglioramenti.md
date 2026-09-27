@@ -274,6 +274,18 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 
 ## Fatti (storico — per non riproporli)
 
+### [2026-09-27] L'import WeBank buttava il secondo di due movimenti identici nello stesso file
+`api_importa_salva` confrontava con un **insieme** di (data, importo, descrizione) e ci aggiungeva ogni riga salvata: due caffè da 1,10 allo stesso bar nello stesso giorno → il secondo scartato come «già presente», in silenzio. Ora `shared/importazione.py::segna_doppioni` conta le copie (il secondo è un doppione solo se a database ce ne sono due), su descrizione ripulita. `tools/verifica_import.py` lo prova.
+
+### [2026-09-27] Dal giugno 2026 le descrizioni dei pagamenti con carta non venivano ripulite
+La banca è passata a «pagamento con carta - carta \*2058-esercente  milano  mi  ita», che `clean_bank_description` non riconosceva: lo stesso McDonald's aveva due descrizioni diverse a database, e il controllo doppioni (che le confronta) non vedeva più lo stesso movimento riscaricato. Riconosciuto il formato nuovo; il controllo doppioni confronta ora la descrizione ripulita (`suggerimenti.chiave`), indipendente dal formato.
+
+### [2026-09-27] Le letture a pagine ordinavano solo per data
+Con più di mille righe (il saldo del personale ne legge 1.082) la seconda pagina è una seconda richiesta, e a parità di data l'ordine non è garantito: una riga a cavallo poteva uscire due volte o nessuna. Aggiunto `id` come spareggio in tutte le letture paginate (README §7).
+
+### [2026-09-27] Ogni click riscaricava 120 KB non compressi e faceva le query in fila
+CSS in un file con impronta e cache di un anno, gzip sulle risposte di testo, Speculation Rules sui link, query indipendenti in parallelo (`shared/parallelo.py`) su home, Conti, personale e Revolut, categorie lette una volta per richiesta. README «Velocità».
+
 ### [2026-09-27] Revolut non aveva movimenti: le entrate non avevano né tipo né categoria
 Da §8.19 i movimenti Revolut si leggono dall'estratto consolidato con la stessa forma di `spese` (importo positivo, tipo, categorie `cfg_*`), con quadratura apertura + movimenti = chiusura prima di salvare, impronta anti-doppione e ponte con i bonifici «Risparmi» di WeBank (`spese/revolut_movimenti.py`, `tools/verifica_revolut.py`).
 

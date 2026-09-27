@@ -640,6 +640,9 @@ class _Query:
         self.filters.append(("lte", col, val)); return self
 
     def order(self, col, desc=False):
+        # Piu' chiamate = piu' criteri, il primo e' il principale: come
+        # PostgREST. Serve allo spareggio per id delle letture a pagine.
+        self._ordini = getattr(self, "_ordini", []) + [(col, desc)]
         self._order, self._desc = col, desc; return self
 
     def limit(self, n):
@@ -715,10 +718,10 @@ class _Query:
                     _rispecchia_v_spese(r, togli=True)
             return _Res([])
 
-        if self._order:
-            sel = sorted(sel, key=lambda r: (r.get(self._order) is None,
-                                             r.get(self._order)),
-                         reverse=self._desc)
+        # Ordinamento stabile dal criterio meno importante al principale.
+        for col, desc in reversed(getattr(self, "_ordini", [])):
+            sel = sorted(sel, key=lambda r, c=col: (r.get(c) is None, r.get(c)),
+                         reverse=desc)
         if self._range:
             start, end = self._range
             sel = sel[start:end + 1]

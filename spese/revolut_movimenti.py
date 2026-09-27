@@ -194,7 +194,7 @@ def tutti(client, dal: str | None = None, al: str | None = None) -> list[dict] |
                 q = q.gte("data", dal)
             if al:
                 q = q.lte("data", al)
-            pagina = _righe(q.order("data", desc=False)
+            pagina = _righe(q.order("data", desc=False).order("id")
                             .range(offset, offset + passo - 1).execute())
         except Exception as e:
             return None if _manca_tabella(str(e)) else _con_nomi(out, _mappa_link(client))
@@ -398,7 +398,7 @@ def risparmi_webank(client, dal: str, al: str) -> list[dict]:
                             .select("id,data,tipo,importo,descrizione,categoria")
                             .eq("categoria", D.CATEGORIA_RISPARMIO)
                             .gte("data", dal).lte("data", al)
-                            .order("data", desc=False)
+                            .order("data", desc=False).order("id")
                             .range(offset, offset + passo - 1).execute())
         except Exception:
             return out

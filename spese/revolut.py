@@ -804,8 +804,13 @@ def revolut_pagina():
         return _render('<div class="notice warn">Supabase non configurato.</div>',
                        breadcrumb)
 
-    rev = saldo_revolut(client)
-    passato = storico(client)
+    # Le letture indipendenti partono insieme (vedi app._in_parallelo).
+    from shared.parallelo import in_parallelo as _in_parallelo
+    rev, passato, movimenti = _in_parallelo(lambda: saldo_revolut(client),
+                                            lambda: storico(client),
+                                            lambda: RM.tutti(client))
+    passato = passato or []
+    rev = rev or saldo_revolut(client)
 
     if not rev["disponibile"]:
         corpo = f'''<div class="empty">{icon("wallet")}
@@ -933,12 +938,14 @@ def revolut_pagina():
           </div>
         </div>'''
 
-    coer = _riquadro_coerenza(coerenza(client, rev))
+    dati_coer, dati_ponte = _in_parallelo(
+        lambda: coerenza(client, rev),
+        lambda: RM.ponte(client, movimenti) if movimenti else None)
+    coer = _riquadro_coerenza(dati_coer)
 
     # --- I movimenti ----------------------------------------------------
-    movimenti = RM.tutti(client)
     blocco_mov = _card_movimenti(movimenti)
-    blocco_ponte = RM.card_ponte(RM.ponte(client, movimenti)) if movimenti else ""
+    blocco_ponte = RM.card_ponte(dati_ponte) if dati_ponte else ""
     righe_storico = "".join(f'''
       <div class="row">
         <span class="k">{data_it(s.get("data"))}</span>

@@ -339,6 +339,59 @@ non è spendere.
 
 Vedi [§ 8.11](#811--i-risparmi-diventano-movimenti-veri-necessaria).
 
+#### Importare un estratto, su qualunque conto
+
+Tre conti, tre file, **una sola procedura** (`shared/importazione.py`):
+
+| Conto | Pagina | File |
+|---|---|---|
+| WeBank Personale | `/conti/webank/personale/importa` | export .xlsx di WeBank |
+| WeBank P.IVA | `/conti/webank/piva/importa` | lo stesso formato, dal conto P.IVA |
+| Revolut | `/conti/revolut/importa` | estratto consolidato .xlsx (saldi **e** movimenti) |
+
+Si carica il file, e prima di scrivere qualunque cosa la revisione mostra
+ogni riga con: se è **già registrata** (spenta, non si salva), se
+**somiglia** a un movimento già registrato con un'altra data (spenta, si
+riaccende con un click), e la **categoria proposta**. I filtri, «applica
+alle selezionate», «accetta tutte le proposte» e il salvataggio (a blocchi
+da cento, così anche il primo import da mille righe arriva in fondo) sono
+gli stessi sulle tre pagine.
+
+**I doppioni contano le copie.** Due caffè identici lo stesso giorno sono
+due righe identiche anche a database: il secondo del file è «già
+registrato» solo se a database ce ne sono due. Prima il controllo usava un
+insieme, e il secondo caffè di un file nuovo spariva come doppione del primo.
+
+**Sulla P.IVA due cose non si importano dal file**: i giroconti verso il
+personale (li scrive la ripartizione della fattura, al netto) e gli incassi
+delle fatture (si registrano dalla fattura, così restano collegati: dal
+file arrivano segnalati).
+
+#### La categoria proposta, imparata dallo storico
+
+`shared/suggerimenti.py`. Non c'è una tabella di regole: la memoria **sono
+i movimenti già categorizzati** — correggi una riga, e dal movimento dopo
+la proposta lo sa. WeBank personale e Revolut imparano insieme (stesso
+albero di categorie, stessi esercenti); la P.IVA ha il suo storico.
+
+Due misure, insieme:
+
+- **la descrizione**, ripulita di tutto quello che non è l'esercente
+  («pagamento con carta - carta \*2058-», l'ora, «ita») e confrontata per
+  trigrammi di lettere e per parole — regge «Mil Ano» contro «Milano» e
+  l'ordine diverso delle parole;
+- **l'importo**, perché allo stesso bancone lo storico vero dice *Caffè* a
+  1,10, 2,20, 3,30 e *Cibo* a 14,80, 16,59. Votano i sette esempi **più
+  vicini** per esercente e importo (non la maggioranza: trenta caffè
+  batterebbero sempre sei pranzi), e un multiplo esatto conta come
+  vicino — 4,40 sono quattro caffè.
+
+Provato sullo storico vero (leave-one-out: ogni riga nascosta a turno e
+indovinata dalle altre): **81% giuste**, 84% fra quelle che la revisione
+preseleziona da sola; le altre si mostrano con la percentuale e «usa».
+Lo stesso motore risponde a `/spese/api/suggerisci`, e i tre form «nuovo
+movimento» propongono la categoria mentre scrivi descrizione e importo.
+
 #### I salvadanai sono già le categorie dell'app
 
 | Salvadanaio Revolut | Quota in `impostazioni` |
@@ -1038,6 +1091,16 @@ Lo stesso vale per il tetto applicativo: `spese/dati.py::movimenti()`
 tronca a 300 apposta, perché serve una lista da mostrare. **Non usarla per
 i totali** — la sua docstring lo dice, ed è stato comunque fatto: il saldo
 dell'anno su `/spese` contava solo i 300 movimenti più recenti.
+
+### Una lettura a pagine vuole un ordine senza pareggi
+
+Paginare con `.range()` non basta: la seconda pagina è una **seconda
+richiesta**, e se l'ordine è solo per data, a parità di data Postgres non
+promette di restituire le righe nello stesso ordine due volte. Una riga a
+cavallo fra due pagine può uscire in entrambe o in nessuna, e il saldo
+sbaglia di quell'importo, in silenzio e non sempre. `spese` ha già più di
+mille righe: il saldo del personale legge due pagine. Per questo ogni
+lettura paginata ordina per data **e poi per `id`**.
 
 ### Il giroconto ha segno opposto sui due conti
 
@@ -2363,6 +2426,24 @@ Cosa serve saperne:
 - **Funziona anche offline**: senza rete la tenda compare lo stesso, e
   quando la rete torna entra da sola.
 
+### Velocità
+
+Il tempo fra un click e la pagina era quasi tutto **attesa**: di rete verso
+il telefono e di rete verso il database.
+
+- **Il foglio di stile sta fuori dalla pagina** (`/assets/app.<impronta>.css`,
+  in cache per un anno, cambia URL quando cambia il CSS). Erano 62 KB
+  riscaricati a ogni click.
+- **Le risposte sono compresse** (gzip in `app.py::_comprimi`): una pagina
+  passa da ~120 KB a ~20 KB.
+- **La pagina si chiede prima del click**: le Speculation Rules in testa a
+  ogni pagina fanno partire il download quando il mouse si ferma su un
+  link o il dito lo tocca (API, download e uscita esclusi).
+- **Le domande indipendenti al database partono insieme**
+  (`shared/parallelo.py`): home, Conti, conto personale e Revolut. Con
+  80 ms di rete per domanda, la home passa da ~1,5 s a ~0,3 s.
+- **Le categorie si leggono una volta per richiesta**, non a ogni menu.
+
 ### In locale
 
 ```bash
@@ -2448,6 +2529,8 @@ virgolette (PEP 701), che su 3.11 non compilano.
 | `verifica_facsimile.py` | controlli sul PDF generato |
 | `verifica_js.py` | apre tutte le pagine e fallisce se una ha JavaScript rotto |
 | `verifica_menu.py` | apre tutte le pagine e controlla che ogni tendina di dati sia alfabetica per descrizione (le eccezioni volute sono elencate nel file) |
+| `verifica_revolut.py` | l'estratto Revolut finto dall'inizio alla fine: saldi, movimenti, quadratura, doppioni, reimport, saldo, ponte con WeBank |
+| `verifica_import.py` | suggerimenti di categoria (McDonald's: caffè a 1,10, pranzo a 15), doppioni che contano le copie, giro completo degli import dei tre conti |
 | `verifica_rotte.py` | chiama ogni GET con id veri, ripete tutte le pagine su sette scenari di tabelle vuote, e prova i payload malformati sulle API (le risposte non testuali le riconosce dal `Content-Type`, non da un elenco scritto a mano) |
 
 ### Analisi funzionale continua

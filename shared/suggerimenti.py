@@ -283,7 +283,7 @@ def _tutte(client, tabella: str, select: str) -> list[dict]:
     while True:
         try:
             r = (client.table(tabella).select(select).order("data", desc=True)
-                 .range(offset, offset + passo - 1).execute())
+                 .order("id").range(offset, offset + passo - 1).execute())
             pagina = getattr(r, "data", None) or []
         except Exception:
             return out

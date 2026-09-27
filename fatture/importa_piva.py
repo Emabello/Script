@@ -61,7 +61,7 @@ def _esistenti(sb, righe: list[dict]) -> list[dict]:
     while True:
         try:
             r = (sb.table("b2f_spese_piva").select("data,tipo,importo,descrizione")
-                 .gte("data", dal).lte("data", al).order("data")
+                 .gte("data", dal).lte("data", al).order("data").order("id")
                  .range(offset, offset + 999).execute())
             pagina = r.data or []
         except Exception:

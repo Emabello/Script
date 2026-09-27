@@ -434,7 +434,7 @@ def saldo_piva(sb, al: str | None = None) -> dict:
     while True:
         try:
             r = (sb.table("b2f_spese_piva").select("importo,tipo,data")
-                   .lte("data", al).order("data", desc=False)
+                   .lte("data", al).order("data", desc=False).order("id")
                    .range(offset, offset + passo - 1).execute())
             pagina = r.data or []
         except Exception:

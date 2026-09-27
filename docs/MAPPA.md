@@ -25,6 +25,10 @@ Ultimo aggiornamento: 2026-08-25 · 36 file di codice e configurazione.
 | Risparmi, salvadanai, Revolut | `spese/revolut.py` |
 | Movimenti Revolut, ponte con WeBank | `spese/revolut_movimenti.py` |
 | I movimenti dei tre conti in una forma sola | `shared/registro.py` |
+| Import da estratto (tutti i conti): doppioni, pannello di revisione | `shared/importazione.py` |
+| Categoria proposta dallo storico | `shared/suggerimenti.py` · API `/spese/api/suggerisci` |
+| Import del conto P.IVA | `fatture/importa_piva.py` |
+| Query in parallelo | `shared/parallelo.py` |
 | Le ore di un mese, per fatturarle | `shared/ore.py` |
 | Quanto vale una giornata | `b2f_parametri_fiscali.tariffa_giornaliera` |
 | Stati della fattura, rivalsa | `fatture/costanti.py` |
@@ -564,6 +568,36 @@ stesso albero `cfg_*` del personale (migrazione §8.19).
 
 > **Trappola**: `CATEGORIA_INTERNO` è esclusa dai totali ma NON dal saldo
 > per sezione — è lì che si muove davvero.
+
+### `shared/suggerimenti.py` · la categoria imparata dallo storico
+
+`Storico(righe)` indicizza gli esempi per descrizione ripulita (`chiave()`:
+solo lettere, senza «pagamento con carta», carta, ora, paese) e
+`suggerisci(descrizione, importo, tipo, ammesse)` fa votare i 7 esempi più
+vicini per esercente (trigrammi o parole) e importo (uguale, multiplo,
+rapporto). Ritorna etichetta, nome, fiducia, `sicura` (≥ 0,6), motivo.
+`storico_personale()` = `spese` + `b2f_revolut_movimenti` (stesso albero);
+`storico_piva()` = `b2f_spese_piva`. `storico_pronto()` lo tiene un minuto
+per i form.
+
+> **Trappola**: il `tipo` filtra gli esempi — un'entrata non impara dalle
+> uscite. Le categorie escluse per conto si passano in `ammesse`.
+
+### `shared/importazione.py` · l'import uguale per tutti i conti
+
+`segna_doppioni(esistenti, righe)`: `presente` (conta le copie, impronta =
+data, tipo, importo, `chiave()` della descrizione) e `sospetto` (stesso
+importo entro 4 giorni). `proponi(storico, righe, ammesse)`: categoria
+applicata solo se sicura. `pannello(voci, salva_url, obbligatoria)`: la
+revisione (JS `IMPORT.carica(righe, avvisi)`), salvataggio a blocchi da 100
+verso un endpoint che risponde `{salvate, duplicati, errori}` per `idx`.
+`suggerimento_form(conto)`: la proposta nei form manuali.
+
+### `fatture/importa_piva.py` · import del conto P.IVA
+
+Stesso file WeBank, categorie P.IVA. I giroconti verso il personale arrivano
+bloccati (`presente` con motivo), gli incassi delle fatture come sospetti;
+il salvataggio rifiuta comunque `giroconto_personale`.
 
 ### `shared/registro.py` · i tre conti in una forma sola
 

@@ -110,7 +110,34 @@ def voci_categoria(client) -> list[dict]:
 
     Ritorna una riga per accoppiamento, con l'id del legame — che e' il
     valore da scrivere in `spese.categoria_link_id` — e i due nomi.
+
+    Letta una volta per richiesta: una pagina la chiede anche quattro o
+    cinque volte (menu, nomi delle righe, suggerimenti, validazione), e
+    ogni volta era un giro fino al database per la stessa risposta.
     """
+    memo = _memo_richiesta()
+    if memo is not None and "voci_categoria" in memo:
+        return [dict(v) for v in memo["voci_categoria"]]
+    voci = _voci_categoria(client)
+    if memo is not None and voci:
+        memo["voci_categoria"] = voci
+    return [dict(v) for v in voci]
+
+
+def _memo_richiesta() -> dict | None:
+    """Un dizionario che vive quanto la richiesta HTTP in corso, o None."""
+    try:
+        from flask import g, has_request_context
+    except ImportError:
+        return None
+    if not has_request_context():
+        return None
+    if not hasattr(g, "b2f_memo"):
+        g.b2f_memo = {}
+    return g.b2f_memo
+
+
+def _voci_categoria(client) -> list[dict]:
     try:
         r = (client.table("cfg_categoria_sottocategoria")
              .select("id, categoria_id, sottocategoria_id,"
@@ -177,7 +204,11 @@ def _query_movimenti(client, anno=None, mese=None, tipo=None, categoria=None,
     per un totale. Condivisa da `movimenti()` e `totali_periodo()` cosi'
     i filtri restano uno solo, non due copie da tenere allineate.
     """
-    q = client.table("v_spese").select("*").order("data", desc=True)
+    # L'id come spareggio: `righe_periodo` legge a pagine da mille, e a
+    # parita' di data Postgres non promette lo stesso ordine a due richieste
+    # diverse — una riga a cavallo fra due pagine uscirebbe due volte o
+    # nessuna, e il totale sbaglierebbe senza errore (README §7).
+    q = client.table("v_spese").select("*").order("data", desc=True).order("id", desc=True)
     if anno:
         q = q.eq("anno", anno)
     if mese:
@@ -334,7 +365,7 @@ def risparmio_totale(client, al: str | None = None) -> float:
         try:
             pagina = _righe(client.table("v_spese").select("importo,tipo,data,categoria")
                             .eq("categoria", CATEGORIA_RISPARMIO).lte("data", al)
-                            .order("data", desc=False)
+                            .order("data", desc=False).order("id")
                             .range(offset, offset + passo - 1).execute())
         except Exception:
             return round(tot, 2)
@@ -407,7 +438,7 @@ def saldo_conto(client, al: str | None = None) -> dict:
                  .lte("data", al))
             if dal:
                 q = q.gt("data", dal)
-            pagina = _righe(q.order("data", desc=False)
+            pagina = _righe(q.order("data", desc=False).order("id")
                             .range(offset, offset + passo - 1).execute())
         except Exception:
             return vuoto
@@ -882,7 +913,7 @@ def dettaglio_periodo(client, dal: str, al: str) -> dict:
             pagina = _righe(client.table("v_spese")
                             .select("importo,tipo,data,categoria")
                             .gte("data", dal).lte("data", al)
-                            .order("data", desc=False)
+                            .order("data", desc=False).order("id")
                             .range(offset, offset + passo - 1).execute())
         except Exception:
             return vuoto

@@ -94,20 +94,29 @@ def movimenti_lista():
                  categoria=categoria or None, sottocategoria=sottocategoria or None,
                  metodo=metodo or None, importo_min=importo_min,
                  importo_max=importo_max, cerca=cerca or None)
-    righe = D.movimenti(client, limite=300, **filtri)
     # KPI e ripartizione devono contare TUTTO il periodo filtrato, non
     # solo le righe mostrate in lista: un anno pieno puo' avere piu' di
     # 300 movimenti (qui ne bastano 461 su un anno solo), e sommare le
     # sole righe visibili darebbe un saldo troncato per difetto. Una sola
     # query non troncata alimenta sia i totali sia la ripartizione, cosi'
-    # non possono disallinearsi fra loro.
-    righe_complete = D.righe_periodo(client, **filtri)
+    # non possono disallinearsi fra loro — e la lista e' la sua testa: le
+    # righe sono gia' in ordine di data, dalla piu' recente.
+    #
+    # Le quattro letture sono indipendenti e partono insieme: in fila
+    # costavano quattro viaggi fino al database uno dopo l'altro.
+    from shared.parallelo import in_parallelo as _in_parallelo
+    righe_complete, conto, anni, voci_cat = _in_parallelo(
+        lambda: D.righe_periodo(client, **filtri),
+        lambda: D.saldo_conto(client, oggi.isoformat()),
+        lambda: D.anni_disponibili(client),
+        lambda: D.voci_categoria(client))
+    righe_complete = righe_complete or []
+    righe = righe_complete[:300]
     t = D.totali(righe_complete)
-
-    anni = D.anni_disponibili(client)
+    anni = anni or []
+    voci_cat = voci_cat or []
     if anno not in anni:
         anni = sorted(set(anni + [anno]), reverse=True)
-    voci_cat = D.voci_categoria(client)
     categorie = ordina({v["categoria"] for v in voci_cat})
     sottocategorie = ordina({v["sottocategoria"] for v in voci_cat if v["sottocategoria"]})
 
@@ -190,7 +199,7 @@ def movimenti_lista():
     # quello che dice la banca. Stava sulla dashboard "/spese", che non
     # esiste piu': era l'unico numero suo: gli altri riquadri e l'elenco
     # delle sezioni li danno gia' questa pagina e il menu.
-    conto = D.saldo_conto(client, oggi.isoformat())
+    conto = conto or {}
     tile_conto = ""
     if conto.get("disponibile"):
         segno = "−" if conto["saldo"] < 0 else ""

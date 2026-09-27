@@ -128,7 +128,10 @@ def _tutte(client, tabella: str, select: str = "*", ordine: str | None = None,
         try:
             q = client.table(tabella).select(select)
             if ordine:
-                q = q.order(ordine, desc=desc)
+                # L'id come spareggio: a parita' di data l'ordine non e'
+                # garantito da una richiesta all'altra, e una riga a cavallo
+                # di due pagine uscirebbe due volte o nessuna (README §7).
+                q = q.order(ordine, desc=desc).order("id")
             r = q.range(offset, offset + passo - 1).execute()
             pagina = getattr(r, "data", None) or []
         except Exception:
