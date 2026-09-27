@@ -953,6 +953,12 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
+    // Navigation preload: la richiesta della pagina parte mentre il
+    // worker si sveglia, invece che dopo. Sul telefono il risveglio del
+    // worker puo' costare decine di millisecondi a ogni navigazione.
+    try{
+      if (self.registration.navigationPreload) await self.registration.navigationPreload.enable();
+    }catch(err){}
     const nomi = await caches.keys();
     await Promise.all(nomi.filter(n => n !== CACHE).map(n => caches.delete(n)));
     await self.clients.claim();
@@ -974,7 +980,7 @@ self.addEventListener('fetch', (e) => {
   }
 
   if (req.mode !== 'navigate') return;
-  e.respondWith(navigazione(req));
+  e.respondWith(navigazione(req, e.preloadResponse));
 });
 
 // La pagina, appena l'app le risponde, manda un colpetto: se la tenda
@@ -986,10 +992,12 @@ self.addEventListener('message', (e) => {
   if (e.data === 'rammenda') e.waitUntil(rammenda());
 });
 
-async function navigazione(req){
+async function navigazione(req, preload){
   let rete = null;
   try{
-    rete = await fetch(req);
+    let pronta = null;
+    try{ pronta = preload ? await preload : null; }catch(err){ pronta = null; }
+    rete = pronta || await fetch(req);
     // I redirect delle navigazioni tornano opachi: niente header da
     // leggere, e non c'e' niente da decidere. Passano.
     if (rete.type === 'opaqueredirect' || rete.redirected) return rete;

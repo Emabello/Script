@@ -40,6 +40,7 @@ from .costanti import (CATEGORIE_SPESE_PIVA, MESI_NOMI, STATI_EMESSE,
                        TIPI_SPESE_PIVA)
 from shared.theme import render_page
 from shared.design import icon as _icon, info as _info
+from shared.importazione import suggerimento_form as _suggerimento_form
 from shared.supabase_client import get_client, is_configured
 from shared.fmt import eur as _fmt_eur, data_it as _fmt_date, pct
 
@@ -433,7 +434,7 @@ def saldo_piva(sb, al: str | None = None) -> dict:
     while True:
         try:
             r = (sb.table("b2f_spese_piva").select("importo,tipo,data")
-                   .lte("data", al).order("data", desc=False)
+                   .lte("data", al).order("data", desc=False).order("id")
                    .range(offset, offset + passo - 1).execute())
             pagina = r.data or []
         except Exception:
@@ -1501,8 +1502,11 @@ def _movimento_label(m: dict) -> str:
 @fatture_bp.get("/conti/webank/piva")
 def spese_piva_list():
     sb, err = _supabase_or_error()
-    breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("Spese P.IVA", "")]
+    # Il conto sta sotto «Conti», come gli altri due: il percorso di prima
+    # (Fatture › Situazione fiscale › Spese P.IVA) era quello di quando la
+    # pagina viveva dentro le fatture, e su telefono il «torna indietro»
+    # portava alla situazione fiscale invece che ai conti.
+    breadcrumb = [("Conti", "/conti"), ("WeBank P.IVA", "")]
     if err:
         return _render(err, breadcrumb=breadcrumb, fab=("Nuovo movimento P.IVA", "/conti/webank/piva/nuova"))
 
@@ -1551,6 +1555,7 @@ def spese_piva_list():
         onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('tipo',this.value)}}else{{u.searchParams.delete('tipo')}};location.href=u">
         <option value="">Tutti i tipi</option>{tipo_opts}
       </select>
+      <a class="btn ghost" href="/conti/webank/piva/importa">{_icon("download")}Importa da banca</a>
     </div>
     '''
 
@@ -1698,6 +1703,7 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
       </div>
     </div>
     </div>
+    {"" if bloccato else _suggerimento_form("piva")}
     <div id="toast" class="toast"></div>
     <script>
     function toast(msg, cls) {{
@@ -1747,8 +1753,7 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
 
 @fatture_bp.get("/conti/webank/piva/nuova")
 def spesa_piva_new():
-    breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("WeBank P.IVA", "/conti/webank/piva"), ("Nuovo", "")]
+    breadcrumb = [("Conti", "/conti"), ("WeBank P.IVA", "/conti/webank/piva"), ("Nuovo", "")]
     return _render(_movimento_form_html(None), section="conti-piva", eyebrow="Nuovo movimento",
                    title_html='<em>Nuovo</em> movimento', breadcrumb=breadcrumb)
 
@@ -1756,8 +1761,7 @@ def spesa_piva_new():
 @fatture_bp.get("/conti/webank/piva/<int:mid>")
 def spesa_piva_edit(mid):
     sb, err = _supabase_or_error()
-    breadcrumb = [("Fatture", "/fatture"), ("Situazione fiscale", "/fatture/situazione"),
-                  ("WeBank P.IVA", "/conti/webank/piva"), (str(mid), "")]
+    breadcrumb = [("Conti", "/conti"), ("WeBank P.IVA", "/conti/webank/piva"), (str(mid), "")]
     if err:
         return _render(err, breadcrumb=breadcrumb)
     try:

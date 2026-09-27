@@ -23,6 +23,12 @@ Ultimo aggiornamento: 2026-08-25 · 36 file di codice e configurazione.
 | Scrivere sul conto personale | `spese/dati.py` — **unico posto** |
 | Saldo reale dei conti | `fatture/fiscale.py::saldo_piva` · `spese/dati.py::saldo_conto` · `spese/revolut.py::saldo_revolut` |
 | Risparmi, salvadanai, Revolut | `spese/revolut.py` |
+| Movimenti Revolut, ponte con WeBank | `spese/revolut_movimenti.py` |
+| I movimenti dei tre conti in una forma sola | `shared/registro.py` |
+| Import da estratto (tutti i conti): doppioni, pannello di revisione | `shared/importazione.py` |
+| Categoria proposta dallo storico | `shared/suggerimenti.py` · API `/spese/api/suggerisci` |
+| Import del conto P.IVA | `fatture/importa_piva.py` |
+| Query in parallelo | `shared/parallelo.py` |
 | Le ore di un mese, per fatturarle | `shared/ore.py` |
 | Quanto vale una giornata | `b2f_parametri_fiscali.tariffa_giornaliera` |
 | Stati della fattura, rivalsa | `fatture/costanti.py` |
@@ -510,12 +516,20 @@ Liquidità, risparmi e investimenti su Revolut. Esiste perché **è lì che
 finisce il risparmio**: senza, quel denaro usciva dal conto personale
 (`v_risparmi_mese` lo sottrae) e non entrava da nessuna parte.
 
-- HTML: `/revolut` — saldi, import dell'estratto, editor dei salvadanai,
+- HTML: `/conti/revolut` — saldi, ultimi movimenti, ponte con WeBank,
+  import dell'estratto (saldi **e** movimenti), editor dei salvadanai,
   storico degli snapshot.
 - JSON: `GET|POST /api/revolut`, `POST /api/revolut/leggi` (multipart:
   legge il file e basta, non scrive).
 - `parse_estratto(bytes, nome_file)`: legge l'estratto consolidato di
-  Revolut. `saldo_revolut(client, al)`: l'ultimo snapshot a quella data.
+  Revolut (.xlsx o .csv): saldi di chiusura e d'apertura, movimenti
+  (colonne trovate per nome), quadrature per conto. Se il file è
+  l'export dei movimenti («account-statement»: colonne Prodotto e Data
+  di completamento) passa a `parse_movimenti_revolut(righe, nome_file)`,
+  che restituisce la stessa forma più i `salvadanai` ricostruiti dalle
+  descrizioni del deposito. `_impronta_movimento` è la stessa per i due
+  formati (in valuta usa `importo_valuta`). `saldo_revolut(client, al)`: l'ultimo
+  snapshot a quella data più i movimenti registrati dopo (`dopo`).
   `coerenza(client, rev)`: il confronto fra risparmio dichiarato e saldo
   reale dei salvadanai.
 - `SALVADANAI` tiene insieme i cinque secchielli e la quota di
@@ -539,6 +553,71 @@ finisce il risparmio**: senza, quel denaro usciva dal conto personale
 > vecchio, e chi lo guarda deve poterlo distinguere.
 
 Richiede la tabella `b2f_revolut` — migrazione README §8.10.
+
+### `spese/revolut_movimenti.py` · i movimenti di Revolut
+
+Le righe dell'estratto Revolut nella stessa forma di `spese`: importo
+positivo, `tipo` entrata/uscita, categoria come `categoria_link_id` sullo
+stesso albero `cfg_*` del personale (migrazione §8.19).
+
+- HTML: `/conti/revolut/movimenti` (filtri come il personale; `anno=0` =
+  tutti gli anni, `categoria=-` = senza categoria), `/nuovo`, `/<id>`.
+- JSON: `GET|POST /spese/api/revolut/movimenti`, `PATCH|DELETE .../<id>`,
+  `POST .../importa` (salta le impronte già presenti senza toccarle).
+- `tutti(client)` → None se manca la tabella (≠ lista vuota). `totali()`
+  tiene fuori i «Giroconto Revolut» (liquidità↔deposito).
+  `dopo_la_fotografia()` alimenta `saldo_revolut`: fotografia + movimenti
+  successivi. `abbina()`/`ponte()`: bonifici «Risparmi» WeBank↔Revolut,
+  stesso importo, −1…+5 giorni. `prepara_import()`: categoria proposta
+  (gemella WeBank → sezione → parole) e flag `presente`.
+
+> **Trappola**: `CATEGORIA_INTERNO` è esclusa dai totali ma NON dal saldo
+> per sezione — è lì che si muove davvero.
+
+### `shared/suggerimenti.py` · la categoria imparata dallo storico
+
+`Storico(righe)` indicizza gli esempi per descrizione ripulita (`chiave()`:
+solo lettere, senza «pagamento con carta», carta, ora, paese) e
+`suggerisci(descrizione, importo, tipo, ammesse)` fa votare i 7 esempi più
+vicini per esercente (trigrammi o parole) e importo (uguale, multiplo,
+rapporto). Ritorna etichetta, nome, fiducia, `sicura` (≥ 0,6), motivo.
+`storico_personale()` = `spese` + `b2f_revolut_movimenti` (stesso albero);
+`storico_piva()` = `b2f_spese_piva`. `storico_pronto()` lo tiene un minuto
+per i form.
+
+Prima dei vicini c'è la **memoria esatta** (stessa chiave, importo e tipo →
+la decisione più vicina nel tempo a `quando`). Le città in coda si tolgono
+(`CITTA_BASE` + `_citta_imparate`: code condivise da ≥3 esercenti con
+categorie diverse), le parole pesano per rarità. Il risultato porta anche
+`tipo`, che l'API usa per proporre la direzione nei form.
+
+> **Trappola**: il `tipo` filtra gli esempi — un'entrata non impara dalle
+> uscite. Le categorie escluse per conto si passano in `ammesse`. Qualunque
+> modifica alla formula va rimisurata con `tools/verifica_suggerimenti.py`:
+> la prova di memoria deve restare al 100%.
+
+### `shared/importazione.py` · l'import uguale per tutti i conti
+
+`segna_doppioni(esistenti, righe)`: `presente` (conta le copie, impronta =
+data, tipo, importo, `chiave()` della descrizione) e `sospetto` (stesso
+importo entro 4 giorni). `proponi(storico, righe, ammesse)`: categoria
+applicata solo se sicura. `pannello(voci, salva_url, obbligatoria)`: la
+revisione (JS `IMPORT.carica(righe, avvisi)`), salvataggio a blocchi da 100
+verso un endpoint che risponde `{salvate, duplicati, errori}` per `idx`.
+`suggerimento_form(conto)`: la proposta nei form manuali.
+
+### `fatture/importa_piva.py` · import del conto P.IVA
+
+Stesso file WeBank, categorie P.IVA. I giroconti verso il personale arrivano
+bloccati (`presente` con motivo), gli incassi delle fatture come sospetti;
+il salvataggio rifiuta comunque `giroconto_personale`.
+
+### `shared/registro.py` · i tre conti in una forma sola
+
+`registro(client)`: ogni movimento di personale, P.IVA e Revolut con gli
+stessi campi (`conto`, `tipo`, `segno`, `categoria` come nome,
+`trasferimento`). Il «giroconto» della P.IVA diventa un'uscita. Alimenta il
+foglio «Tutti i movimenti» dell'export.
 
 ### `spese/importa.py` — 435 righe · import da estratto conto
 

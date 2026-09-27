@@ -42,7 +42,7 @@ consigliato ed effettivo sulla stessa riga confronta due periodi diversi.
 COME E' FATTO
 -------------
 Un foglio "Indice" con i collegamenti a tutti gli altri, e ogni foglio con
-un collegamento di ritorno: su dodici fogli la barra delle linguette non
+un collegamento di ritorno: su quattordici fogli la barra delle linguette non
 basta piu'. Ogni foglio dati ha intestazioni bloccate e filtro automatico,
 perche' un export che non si puo' ordinare e filtrare e' una stampa.
 
@@ -56,6 +56,7 @@ from datetime import date, datetime
 
 from spese import dati as D
 from spese import revolut as R
+from spese import revolut_movimenti as RM
 
 
 # Il foglio non e' l'app: qui non ci sono i token del tema, ci sono i
@@ -127,7 +128,10 @@ def _tutte(client, tabella: str, select: str = "*", ordine: str | None = None,
         try:
             q = client.table(tabella).select(select)
             if ordine:
-                q = q.order(ordine, desc=desc)
+                # L'id come spareggio: a parita' di data l'ordine non e'
+                # garantito da una richiesta all'altra, e una riga a cavallo
+                # di due pagine uscirebbe due volte o nessuna (README §7).
+                q = q.order(ordine, desc=desc).order("id")
             r = q.range(offset, offset + passo - 1).execute()
             pagina = getattr(r, "data", None) or []
         except Exception:
@@ -325,9 +329,11 @@ def _foglio_conti(wb, client, S, ctx):
         if chiave == "altro":
             continue
         voci_rev.append((f"  salvadanaio · {nome_app}", _n(reali.get(chiave)), EUR))
+    dopo = rev.get("dopo") or {}
     voci_rev += [
         ("Risparmi in tutto", _n(rev.get("risparmi")), EUR),
         ("Investimenti", _n(rev.get("investimenti")), EUR),
+        ("Movimenti dopo la fotografia", _n(dopo.get("conto")) + _n(dopo.get("risparmi")), EUR),
         ("SALDO OGGI", _n(rev.get("saldo")), EUR),
     ]
     r = _coppie(ws, r, "Revolut", voci_rev, S)
@@ -406,6 +412,69 @@ def _foglio_piva(wb, client, S):
         _zebra(ws, prima, r - 1, len(col), S)
         r = _riga(ws, r, [f"{r - prima} movimenti", None, None, None, "Totale",
                           f"=SUM(F{prima}:F{r - 1})", None, None],
+                  col, S, grassetto=True, fondo=S["fill_tot"])
+    return ws, len(righe)
+
+
+def _foglio_revolut(wb, client, S):
+    ws, r = _apri(wb, "Movimenti Revolut", "Revolut — ogni movimento",
+                  "Entrate e uscite di Revolut con le stesse categorie del conto "
+                  "personale. «Giroconto Revolut» è il passaggio fra liquidità e "
+                  "deposito: stesso euro visto due volte, fuori dai totali.", S)
+    col = [("Data", 12, DATA), ("Parte", 14, None), ("Tipo", 10, None),
+           ("Categoria", 20, None), ("Sottocategoria", 20, None),
+           ("Descrizione", 44, None), ("Importo", 14, EUR), ("Fonte", 10, None),
+           ("Note", 30, None)]
+    r = _testata(ws, r, col, S)
+    righe = RM.tutti(client) or []
+    prima = r
+    for m in reversed(righe):
+        imp = abs(_n(m.get("importo"))) * (1 if m.get("tipo") == "entrata" else -1)
+        r = _riga(ws, r, [_d(m.get("data")),
+                          RM.SEZIONI_LABEL.get(m.get("sezione"), m.get("sezione")),
+                          m.get("tipo"), m.get("categoria") or "(da categorizzare)",
+                          m.get("sottocategoria"), m.get("descrizione"), imp,
+                          m.get("fonte"), m.get("note")], col, S)
+    if r > prima:
+        _zebra(ws, prima, r - 1, len(col), S)
+        r = _riga(ws, r, [f"{r - prima} movimenti", None, None, None, None, "Totale",
+                          f"=SUM(G{prima}:G{r - 1})", None, None],
+                  col, S, grassetto=True, fondo=S["fill_tot"])
+    return ws, len(righe)
+
+
+def _foglio_registro(wb, client, S):
+    """
+    I tre conti in un foglio solo, nella stessa forma (shared/registro.py).
+
+    E' la domanda che nessun foglio per conto sa fare: «quanto ho speso a
+    luglio, con qualunque carta». Il filtro su «Trasferimento = no» toglie
+    i giroconti fra conti tuoi, che altrimenti comparirebbero due volte —
+    in uscita da un conto e in entrata sull'altro.
+    """
+    from shared.registro import CONTI_LABEL, registro
+    ws, r = _apri(wb, "Tutti i movimenti", "I tre conti, un registro solo",
+                  "Ogni movimento di WeBank Personale, WeBank P.IVA e Revolut con "
+                  "gli stessi campi. Filtra «Trasferimento = no» per vedere solo "
+                  "quello che entra ed esce davvero dal tuo patrimonio.", S)
+    col = [("Data", 12, DATA), ("Conto", 18, None), ("Tipo", 10, None),
+           ("Categoria", 22, None), ("Sottocategoria", 20, None),
+           ("Descrizione", 44, None), ("Importo", 14, EUR),
+           ("Trasferimento", 13, None), ("Anno", 8, INT), ("Mese", 8, INT)]
+    r = _testata(ws, r, col, S)
+    righe = registro(client)
+    prima = r
+    for m in reversed(righe):
+        d = _d(m["data"])
+        r = _riga(ws, r, [d, CONTI_LABEL.get(m["conto"], m["conto"]), m["tipo"],
+                          m["categoria"] or "(senza categoria)", m["sottocategoria"],
+                          m["descrizione"], m["importo"] * m["segno"],
+                          "sì" if m["trasferimento"] else "no",
+                          d.year if d else None, d.month if d else None], col, S)
+    if r > prima:
+        _zebra(ws, prima, r - 1, len(col), S)
+        r = _riga(ws, r, [f"{r - prima} movimenti", None, None, None, None, "Totale",
+                          f"=SUM(G{prima}:G{r - 1})", None, None, None],
                   col, S, grassetto=True, fondo=S["fill_tot"])
     return ws, len(righe)
 
@@ -1047,7 +1116,7 @@ def _foglio_indice(wb, S, ctx, fogli: list):
     """
     L'indice, che e' il primo foglio e l'unico che si apre da solo.
 
-    Su dodici fogli le linguette in fondo non bastano piu': servono un
+    Su quattordici fogli le linguette in fondo non bastano piu': servono un
     elenco che dica che cosa c'e' dentro ciascuno e un collegamento che
     ci porti. Sopra l'elenco, i quattro numeri per cui uno apre il file.
     """
@@ -1100,6 +1169,11 @@ DESCRIZIONI = {
                  "sottocategoria, importo col segno, metodo di pagamento.",
     "Conto P.IVA": "Ogni riga del conto partita IVA: incassi, costi e "
                    "giroconti verso il personale.",
+    "Movimenti Revolut": "Ogni riga di Revolut, liquidità e deposito, con le "
+                         "stesse categorie del conto personale.",
+    "Tutti i movimenti": "I tre conti in un registro solo, con gli stessi "
+                         "campi e la colonna che separa i trasferimenti fra "
+                         "conti tuoi da entrate e spese vere.",
     "Periodi di paga": "Da uno stipendio al successivo: base del calcolo, "
                        "risparmio consigliato con ENTRAMBE le regole (app e "
                        "Budget.xlsx), quanto è stato messo via e quale "
@@ -1189,8 +1263,10 @@ def costruisci(client) -> io.BytesIO:
         ("Conti",           lambda: _foglio_conti(wb, client, S, ctx)),
         ("Periodi di paga", lambda: _foglio_periodi(wb, client, S, ctx)),
         ("Salvadanai",      lambda: _foglio_salvadanai(wb, client, S, ctx)),
+        ("Tutti i movimenti", lambda: _foglio_registro(wb, client, S)),
         ("Movimenti",       lambda: _foglio_movimenti(wb, client, S)),
         ("Conto P.IVA",     lambda: _foglio_piva(wb, client, S)),
+        ("Movimenti Revolut", lambda: _foglio_revolut(wb, client, S)),
         ("Fatture",         lambda: _foglio_fatture(wb, client, S, ctx)),
         ("Clienti",         lambda: _foglio_clienti(wb, client, S)),
         (f'Fisco {ctx["anno"]}', lambda: _foglio_fisco(wb, client, S, ctx)),

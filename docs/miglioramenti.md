@@ -18,6 +18,24 @@ come), **Stato**.
 
 ## Aperti
 
+### [2026-09-27] Undici esercenti hanno due categorie allo stesso importo
+**Cosa**: `tools/verifica_suggerimenti.py` trova 11 gruppi (42 movimenti) con stesso esercente, stesso importo, stessa direzione e categorie diverse — McDonald's 2,20 € Caffè ×13 e Cibo ×2, Iper Portello 1,90 € Caffè ×3 e Cibo ×2, Cless Ticket ATM 2,20 € una volta Personale e una volta Viaggi.
+**Perché si rompe**: non è la formula a sbagliare — la memoria esatta le riproduce tutte (100%) —, sono i dati a dire due cose. La conseguenza concreta è a valle: la ripartizione per sottocategoria di un mese dipende da quale delle due scelte è stata fatta quel giorno, e «quanto spendo in caffè» non ha una risposta stabile. Per la categoria principale conta poco (sono quasi tutte dentro Personale), tranne il biglietto ATM, che sposta 2,20 € fra Personale e Viaggi.
+**Impatto**: letture per sottocategoria; il budget per categoria principale solo per il caso ATM.
+**Stato**: aperto — è una scelta tua caso per caso (magari «un caffè al McDonald's sotto i 3 € è sempre Caffè»). Rilanciare lo strumento dopo ogni import tiene l'elenco aggiornato.
+
+### [2026-09-27] La seconda tranche dello stesso giroconto apre un periodo, e il rientro verso la P.IVA diventa «speso»
+**Cosa**: la fattura 2026/001 è arrivata sul personale in tre movimenti veri (README §8.18): +2.000,00 il 05/08, +1.491,85 il 13/08, −1.068,33 il 02/09, tutti categoria «Giroconto P.IVA» e agganciati alla stessa fattura. `v_periodi_stipendio` apre un periodo su **ogni** entrata con quella categoria, senza guardare `fattura_giroconto_id`; e `v_risparmi_mese` conta come `totale_speso` ogni uscita che non sia «Risparmi» — compresa l'uscita «Giroconto P.IVA».
+**Perché si rompe**: (1) la tranche del 13/08 non è un nuovo stipendio, è il resto dello stesso: il periodo 05/08→12/08 dura otto giorni e il 13/08→02/09 riparte con la base del precedente dentro — è esattamente il meccanismo della voce del 24/09 («due stipendi chiedono due volte»), e qui la causa non è un secondo stipendio ma **un bonifico spezzato**. (2) il rientro di 1.068,33 il 02/09 finisce in «Totale Speso» del periodo 13/08→02/09: la pagina Risparmi dice 1.807,10 € spesi quando le uscite di consumo sono 738,77. Sulla *base* del calcolo l'effetto è giusto (i soldi sono usciti davvero), sull'etichetta no: chi legge «speso» pensa a spese.
+**Impatto**: il periodo del 13/08 e il suo consigliato; il «dove vanno i soldi» di agosto con 1.068 € di spesa che non è spesa.
+**Stato**: aperto — tocca `v_periodi_stipendio`/`v_risparmi_mese`, quindi va deciso insieme alla voce del 24/09. La strada naturale: un periodo si apre alla **prima** entrata di una fattura (`fattura_giroconto_id` distinto), e le uscite «Giroconto P.IVA» si sottraggono dal bonifico del periodo invece di sommarsi allo speso.
+
+### [2026-09-27] Le spese pagate con Revolut restano fuori dal budget dei periodi
+**Cosa**: da §8.19 i movimenti Revolut hanno le stesse categorie del personale, ma `v_risparmi_mese` e la ripartizione «dove vanno le uscite» leggono solo `spese`.
+**Perché si rompe**: una vacanza pagata con la carta Revolut, attingendo al salvadanaio «Vacanze», è «Viaggi» esattamente come una pagata con WeBank, ma nei totali per categoria dei periodi non compare. Caso concreto: 1.200 € di hotel pagati da Revolut ad agosto → il periodo di agosto dice «Viaggi 0» e la ripartizione annuale sottostima i viaggi di 1.200 €. Il saldo non sbaglia (sono due conti diversi e ciascuno ha il suo), sbaglia la risposta a «quanto spendo in viaggi».
+**Impatto**: solo sulle letture per categoria; nessun saldo è toccato. Diventa visibile appena si importa lo storico Revolut.
+**Stato**: aperto. Il registro unico (`shared/registro.py`, foglio «Tutti i movimenti» dell'export) già risponde alla domanda su tutti i conti; resta da decidere se le pagine per categoria debbano guardare anche Revolut (probabile: sì, escludendo i trasferimenti) o restare «per conto».
+
 ### [2026-09-24] Un mese con due stipendi chiede di risparmiare due volte sugli stessi soldi — è tutto l'arretrato storico
 **Cosa**: il risparmio consigliato è `percentuale × base`, e la base è **quanto c'è sul conto a fine periodo**, residuo del periodo precedente compreso. Il periodo si apre a ogni stipendio o giroconto P.IVA. Quindi la quota non si applica una volta al mese: si applica **una volta per stipendio**, sullo stesso denaro.
 
@@ -102,12 +120,6 @@ Di riflesso, sporca anche il resto: il banner dell'arretrato di agosto 2026 dice
 **Cosa**: `xs_server.py::oauth_start` costruisce l'URL di autorizzazione senza `state`, e `oauth_callback` non ne verifica nessuno: prende `code` dalla query e lo scambia.
 **Perché si rompe**: è la CSRF classica dell'OAuth. Un attaccante avvia il flusso col **proprio** account Google, si ferma sul redirect, e fa aprire quell'URL di callback a te mentre sei sbloccato — un link basta, e `SameSite=Lax` non protegge, perché un callback OAuth è una navigazione GET di primo livello, dove il cookie viene mandato. L'app scambia il codice dell'attaccante e salva **il suo** refresh token in `_gstate`: da quel momento l'import e l'export del timesheet leggono e scrivono sul calendario di un altro.
 **Impatto**: richiede che tu clicchi un link mentre sei dentro. Le ore esportate finirebbero sul calendario dell'attaccante. La cura è quella standard: un `state` casuale messo in sessione allo `start` e confrontato al `callback`.
-**Stato**: aperto.
-
-### [2026-09-20] Tre endpoint vanno in 500 su un payload malformato, invece di rispondere 400
-**Cosa**: trovati dalla nuova passata «payload malformati» di `tools/verifica_rotte.py`. (1) `spese/dati.py::_normalizza` fa `round(abs(float(out["importo"])), 2)` senza `try`: `importo: "abc"` è un `ValueError` che esce come 500. (2) `spese/dati.py::crea` fa `d["mese"] = int(quando[5:7])` sulla data grezza: `data: "non-una-data"` è un altro 500. (3) `fatture/storico.py::api_fattura_create` fa `int(data["anno"])` **prima** del `try`.
-**Perché si rompe**: in (1) e (2) i controlli che esistono — «tipo non valido», «importo mancante» — girano **dopo** le due righe che esplodono, quindi non possono intercettare niente. E un 500 non è un 400 con un messaggio diverso: Flask risponde HTML, il `fetch` del form fa `r.json()`, il parse fallisce, e l'utente legge «Errore rete: Unexpected token '<'» invece di «importo non valido». Il modo giusto è già scritto due funzioni più in là, in `registra_bonifico_risparmio`, che mette il `float()` dentro un `try` e ritorna `{"error": "importo non valido"}`.
-**Impatto**: l'interfaccia manda dati puliti, quindi in uso normale non si vede. Si vede quando qualcosa va storto — ed è esattamente il momento in cui un messaggio chiaro servirebbe.
 **Stato**: aperto.
 
 ### [2026-09-20] Il campo «Numero» dell'editor ha due parser diversi, e il facsimile può dire un numero che il database non ha
@@ -267,6 +279,33 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 ---
 
 ## Fatti (storico — per non riproporli)
+
+### [2026-09-27] I due formati di Revolut avrebbero raddoppiato 25–47 movimenti a vicenda
+Consolidato ed export dei movimenti dello stesso periodo: 929 impronte comuni su 976. Il resto era lo stesso movimento scritto in due modi — gli yen e le sterline egiziane convertiti in euro con cambi diversi (e «13.600,00 EGP» non si leggeva proprio: `_importo` conosceva solo €/$/£/¥), e i bonifici fra persone che l'export chiama «Revolut Bank UAB». Ora in valuta l'impronta usa l'importo nella valuta, `_importo` toglie qualunque codice di tre lettere, e l'import Revolut passa anche il secondo controllo dei doppioni contro tutti i movimenti già salvati (non solo quelli manuali), sezione per sezione: 976 su 976 riconosciuti. «Balance migration…» (aprile 2026) è un giroconto interno.
+
+### [2026-09-27] I suggerimenti non riproducevano le decisioni già prese
+Rigiocata su tutto lo storico (522 movimenti), la formula riproponeva la categoria giusta solo nel 95,2% dei casi: votavano i vicini, e un esercente con trenta caffè sovrastava il pranzo allo stesso importo categorizzato apposta. Ora a parità di esercente, importo e direzione vale la decisione più vicina nel tempo (memoria 100%), le città in coda non contano, le parole comuni pesano meno e un importo mai visto non si preseleziona. Banco di prova ripetibile: `tools/verifica_suggerimenti.py`.
+
+### [2026-09-27] L'import WeBank buttava il secondo di due movimenti identici nello stesso file
+`api_importa_salva` confrontava con un **insieme** di (data, importo, descrizione) e ci aggiungeva ogni riga salvata: due caffè da 1,10 allo stesso bar nello stesso giorno → il secondo scartato come «già presente», in silenzio. Ora `shared/importazione.py::segna_doppioni` conta le copie (il secondo è un doppione solo se a database ce ne sono due), su descrizione ripulita. `tools/verifica_import.py` lo prova.
+
+### [2026-09-27] Dal giugno 2026 le descrizioni dei pagamenti con carta non venivano ripulite
+La banca è passata a «pagamento con carta - carta \*2058-esercente  milano  mi  ita», che `clean_bank_description` non riconosceva: lo stesso McDonald's aveva due descrizioni diverse a database, e il controllo doppioni (che le confronta) non vedeva più lo stesso movimento riscaricato. Riconosciuto il formato nuovo; il controllo doppioni confronta ora la descrizione ripulita (`suggerimenti.chiave`), indipendente dal formato.
+
+### [2026-09-27] Le letture a pagine ordinavano solo per data
+Con più di mille righe (il saldo del personale ne legge 1.082) la seconda pagina è una seconda richiesta, e a parità di data l'ordine non è garantito: una riga a cavallo poteva uscire due volte o nessuna. Aggiunto `id` come spareggio in tutte le letture paginate (README §7).
+
+### [2026-09-27] Ogni click riscaricava 120 KB non compressi e faceva le query in fila
+CSS in un file con impronta e cache di un anno, gzip sulle risposte di testo, Speculation Rules sui link, query indipendenti in parallelo (`shared/parallelo.py`) su home, Conti, personale e Revolut, categorie lette una volta per richiesta. README «Velocità».
+
+### [2026-09-27] Revolut non aveva movimenti: le entrate non avevano né tipo né categoria
+Da §8.19 i movimenti Revolut si leggono dall'estratto consolidato con la stessa forma di `spese` (importo positivo, tipo, categorie `cfg_*`), con quadratura apertura + movimenti = chiusura prima di salvare, impronta anti-doppione e ponte con i bonifici «Risparmi» di WeBank (`spese/revolut_movimenti.py`, `tools/verifica_revolut.py`).
+
+### [2026-09-27] Tre endpoint andavano in 500 su un payload malformato
+`spese/dati.py::_normalizza` ora valida importo e data prima di usarli, `fatture/storico.py::api_fattura_create` converte i numeri dentro un `try`: 400 con un messaggio. `tools/verifica_rotte.py`: 0 da guardare su 25 payload.
+
+### [2026-09-27] Il conto P.IVA aveva ancora il percorso «Fatture › Situazione fiscale»
+Il breadcrumb (e quindi il «torna indietro» su telefono) di `/conti/webank/piva` portava alla situazione fiscale: ora è «Conti › WeBank P.IVA», come gli altri due conti.
 
 ### [2026-09-24] `v_risparmi_mese` calcola con la percentuale storica ma non la espone, e chi la voleva la ricavava dividendo
 **Cosa**: la vista sceglie la riga di `impostazioni` giusta per ogni periodo (`where i.valido_dal <= a.data_bonifico order by i.valido_dal desc limit 1`) e ci calcola il consigliato — ma fra le sue colonne quella percentuale **non c'è**. `spese/risparmi.py` la ricostruiva come `consigliato / base`, e lo stesso faceva il primo export.

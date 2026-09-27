@@ -117,7 +117,17 @@ xs_server.ALLOW_NO_PIN.update({
     # bloccata, ed e' quella che il service worker si mette in cache.
     "attesa",
     "ping",
+    # Il foglio di stile serve anche alla schermata del PIN: senza, quella
+    # schermata si vedrebbe senza stile. Non contiene dati.
+    "foglio_di_stile",
 })
+
+
+# I file statici (font, jsPDF) non cambiano fra un deploy e l'altro: il
+# browser li tiene per un mese invece di richiederli a ogni pagina. Prima
+# ogni click faceva tre o quattro richieste «e' cambiato?» per i font,
+# e con un server che ne serve una alla volta passavano davanti alla pagina.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 30
 
 
 @app.after_request
@@ -133,6 +143,57 @@ def _firma_risposta(resp):
     pagina d'attesa dalla cache.
     """
     resp.headers["X-B2F"] = "hub"
+    from flask import request as _rq
+    if _rq.endpoint in ("manifest", "icon192", "icon512", "appleicon"):
+        resp.headers["Cache-Control"] = "public, max-age=86400"
+    return _comprimi(resp)
+
+
+# Tipi che vale la pena comprimere: testo. Un xlsx o un'immagine sono gia'
+# compressi, e rifarlo costa tempo senza guadagno.
+_COMPRIMIBILI = ("text/html", "text/css", "application/json",
+                 "application/javascript", "text/javascript")
+
+
+def _comprimi(resp):
+    """
+    Gzip sulle risposte di testo, se il browser lo accetta.
+
+    Una pagina dell'app pesa sui 120 KB, e fino a oggi viaggiava cosi'
+    com'era: su una rete mobile e' il tempo che separa il click dalla
+    pagina. Compressa ne pesa un quinto. Lo fa l'app e non un proxy
+    perche' davanti a Render non c'e' niente che lo faccia al posto suo.
+    """
+    import gzip
+    from flask import request as _rq
+    if (resp.status_code != 200 or resp.direct_passthrough
+            or "gzip" not in (_rq.headers.get("Accept-Encoding") or "")
+            or resp.headers.get("Content-Encoding")
+            or (resp.mimetype or "") not in _COMPRIMIBILI):
+        return resp
+    dati = resp.get_data()
+    if len(dati) < 1400:
+        return resp
+    resp.set_data(gzip.compress(dati, compresslevel=5))
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Content-Length"] = str(len(resp.get_data()))
+    resp.headers.add("Vary", "Accept-Encoding")
+    return resp
+
+
+@app.get("/assets/app.<versione>.css")
+def foglio_di_stile(versione):
+    """
+    Il CSS dell'app, fuori dalle pagine (vedi shared/theme.py, CSS_URL).
+    Con l'impronta giusta si tiene in cache un anno: quando il CSS cambia,
+    cambia l'URL. Con un'impronta vecchia (una pagina rimasta aperta da
+    prima di un deploy) si serve quello attuale, ma senza cache lunga.
+    """
+    from shared.design import CSS
+    from shared.theme import CSS_VERSIONE
+    resp = Response(CSS, mimetype="text/css")
+    resp.headers["Cache-Control"] = ("public, max-age=31536000, immutable"
+                                     if versione == CSS_VERSIONE else "no-cache")
     return resp
 
 
@@ -167,26 +228,32 @@ def _greet_name() -> str:
         return ""
 
 
+from shared.parallelo import in_parallelo as _in_parallelo  # noqa: E402
+
+
 def _saldi_conti(sb, al: str) -> dict:
     """
     I tre conti, a una data. Estratta a parte perche' serve sia alla
     home (dentro _dashboard_data, insieme a tutto il resto) sia alla
-    pagina dedicata /saldi (da sola, senza il resto della dashboard).
+    pagina dedicata /conti (da sola, senza il resto della dashboard).
+    I tre saldi non dipendono l'uno dall'altro: si calcolano insieme.
     """
     from fatture.fiscale import saldo_piva
     from spese import dati as personale
     from spese.revolut import saldo_revolut
-    return {
-        "piva": saldo_piva(sb, al),
-        "personale": personale.saldo_conto(sb, al),
-        "revolut": saldo_revolut(sb, al),
-    }
+    piva, pers, rev = _in_parallelo(lambda: saldo_piva(sb, al),
+                                    lambda: personale.saldo_conto(sb, al),
+                                    lambda: saldo_revolut(sb, al))
+    vuoto = {"al": al, "disponibile": False}
+    return {"piva": piva or vuoto, "personale": pers or vuoto,
+            "revolut": rev or vuoto}
 
 
 def _dashboard_data() -> dict:
     """
-    Dati della home. Ogni blocco e' isolato in un try: se una query
-    fallisce la dashboard perde quel riquadro, non l'intera pagina.
+    Dati della home. Ogni blocco e' una funzione a se': partono tutte
+    insieme (`_in_parallelo`) e se una fallisce la dashboard perde quel
+    riquadro, non l'intera pagina.
     """
     if not is_configured():
         return {"errore": "Supabase non configurato. Aggiungi <code>SUPABASE_URL</code> "
@@ -201,27 +268,27 @@ def _dashboard_data() -> dict:
     sb = get_client()
     today = date.today()
     anno = today.year
-    out: dict = {"anno": anno}
 
     # I tre conti, ad oggi. Sono la prima cosa che si guarda aprendo
     # l'app, e sono l'unico numero che nessun'altra pagina dava: /spese
     # mostra il saldo del mese e /fatture/spese-piva quello dell'anno
     # filtrato, non quanto c'e' davvero sui conti.
-    try:
-        out["saldi"] = _saldi_conti(sb, today.isoformat())
-    except Exception:
-        pass
+    def saldi():
+        return {"saldi": _saldi_conti(sb, today.isoformat())}
 
     # Situazione fiscale: da qui arrivano incassato del mese, scadenze e
     # la base per il calcolo dell'accantonamento.
-    try:
-        s = situazione_data(sb, anno)
+    def fisco():
+        out = {}
+        try:
+            s = situazione_data(sb, anno)
+        except Exception as e:
+            return {"errore": f"Situazione fiscale non disponibile: {str(e)[:160]}"}
         mese = s["mensile"][today.month - 1]
         incassato_mese = mese["incasso"]
         out["incassato_mese"] = incassato_mese
         out["scadenze"] = [(x["data"], x["descrizione"], x["importo"])
                            for x in s["scadenze"] if x["importo"] > 0]
-
         scomposizione = acc.scomponi(
             incassato_mese, s["parametri"],
             fatturato_riferimento=s["totali"]["incasso"],
@@ -239,68 +306,61 @@ def _dashboard_data() -> dict:
                 uid="accHome",
                 anno_saldo=today.year, anno_acconto=today.year + 1,
             )
-    except Exception as e:
-        out["errore"] = f"Situazione fiscale non disponibile: {str(e)[:160]}"
+        return out
 
-    try:
+    def n_fatture():
         r = (sb.table("b2f_fatture").select("*", count="exact", head=True)
                .eq("anno", anno).in_("stato", list(STATI_EMESSE)).execute())
-        out["n_fatture_anno"] = r.count
-    except Exception:
-        pass
+        return {"n_fatture_anno": r.count}
 
-    try:
+    def ultime_fatture():
         r = (sb.table("b2f_fatture")
                .select("id,numero,data,totale,stato,cliente_snapshot")
                .in_("stato", list(STATI_EMESSE))
                .order("data", desc=True).limit(4).execute())
-        out["ultime_fatture"] = [
+        return {"ultime_fatture": [
             (f["id"], f.get("numero") or "—", cliente_label(f),
              f.get("data"), f.get("totale"))
             for f in (r.data or [])
-        ]
-    except Exception:
-        pass
+        ]}
 
     # Saldo del mese dallo stesso livello dati di /spese, non da una
     # query fatta qui: erano due conteggi diversi sulla stessa domanda —
     # questo ignorava le righe storiche con tipo=giroconto, che /spese
     # invece contava come entrate, e i due numeri non tornavano fra loro.
-    try:
+    def saldo_mese():
         righe_mese = personale.righe_periodo(sb, anno=anno, mese=today.month)
-        out["saldo_spese_mese"] = personale.totali(righe_mese)["saldo"]
-    except Exception:
-        pass
+        return {"saldo_spese_mese": personale.totali(righe_mese)["saldo"]}
 
     # "E' arrivato lo stipendio e non hai ancora messo via niente": e'
     # l'unico avviso della home che chiede di fare qualcosa, e compare
     # solo quando c'e' davvero qualcosa da fare (vedi
     # spese/dati.py::avviso_risparmio). Se comparisse sempre, in un mese
     # nessuno lo leggerebbe piu'.
-    try:
-        avviso = personale.avviso_risparmio(sb)
-        if avviso:
-            out["avviso_risparmio"] = avviso
-    except Exception:
-        pass
+    def avviso():
+        a = personale.avviso_risparmio(sb)
+        return {"avviso_risparmio": a} if a else {}
 
-    try:
+    def ultimi_movimenti():
         r = (sb.table("spese").select("data,importo,descrizione,tipo")
                .order("data", desc=True).limit(4).execute())
-        out["ultimi_movimenti"] = [
+        return {"ultimi_movimenti": [
             ((m.get("descrizione") or "—"), m.get("data"),
              float(m.get("importo") or 0), m.get("tipo") or "")
             for m in (r.data or [])
-        ]
-    except Exception:
-        pass
+        ]}
 
+    out: dict = {"anno": anno}
+    for pezzo in _in_parallelo(saldi, fisco, n_fatture, ultime_fatture,
+                               saldo_mese, avviso, ultimi_movimenti):
+        out.update(pezzo or {})
     return out
 
 
 @app.get("/")
 def launchpad():
-    html = render_launchpad(greet_name=_greet_name(), dati=_dashboard_data())
+    nome, dati = _in_parallelo(_greet_name, _dashboard_data)
+    html = render_launchpad(greet_name=nome or "", dati=dati or {})
     return Response(html, mimetype="text/html")
 
 
@@ -308,45 +368,42 @@ def launchpad():
 def conti_page():
     saldi = None
     coerenza_html = ""
+    verifiche = {}
     if is_configured():
+        from spese import dati as personale
+        from fatture.fiscale import saldo_piva
         sb = get_client()
-        try:
-            saldi = _saldi_conti(sb, date.today().isoformat())
-        except Exception:
-            saldi = None
-        # Il confronto risparmio dichiarato/reale vive gia' su /spese/revolut:
-        # qui compare solo se Revolut e' collegato, stessa logica, nessuna
-        # query in piu' se non serve.
+
+        # Il controllo contro l'estratto. Va fatto **alla data
+        # dell'estratto**, non a oggi: fra quel giorno e adesso ci sono
+        # movimenti veri, e la differenza non sarebbe un errore ma il
+        # normale scorrere del conto. Non dipende dai saldi di oggi, quindi
+        # parte insieme a loro (`_in_parallelo`).
+        def verifica(conto, calcola):
+            v = personale.ultima_verifica(sb, conto)
+            if not v:
+                return None
+            return personale.verifica_saldo(sb, conto, calcola(v["data"])["saldo"], v["data"])
+
+        saldi, v_pers, v_piva = _in_parallelo(
+            lambda: _saldi_conti(sb, date.today().isoformat()),
+            lambda: verifica("personale", lambda al: personale.saldo_conto(sb, al)),
+            lambda: verifica("piva", lambda al: saldo_piva(sb, al)))
+        if v_pers:
+            verifiche["personale"] = v_pers
+        if v_piva:
+            verifiche["piva"] = v_piva
+
+        # Il confronto risparmio dichiarato/reale vive gia' su
+        # /conti/revolut: qui compare solo se Revolut e' collegato.
         if saldi and (saldi.get("revolut") or {}).get("disponibile"):
             try:
                 from spese.revolut import coerenza, _riquadro_coerenza
                 coerenza_html = _riquadro_coerenza(coerenza(sb, saldi["revolut"]))
             except Exception:
                 coerenza_html = ""
-    # Il controllo contro l'estratto. Va fatto **alla data dell'estratto**,
-    # non a oggi: fra quel giorno e adesso ci sono movimenti veri, e la
-    # differenza non sarebbe un errore ma il normale scorrere del conto.
-    verifiche = {}
-    if is_configured() and saldi:
-        from spese import dati as personale
-        from fatture.fiscale import saldo_piva
-        sb2 = get_client()
-        try:
-            v = personale.ultima_verifica(sb2, "personale")
-            if v:
-                al = v["data"]
-                verifiche["personale"] = personale.verifica_saldo(
-                    sb2, "personale", personale.saldo_conto(sb2, al)["saldo"], al)
-        except Exception:
-            pass
-        try:
-            v = personale.ultima_verifica(sb2, "piva")
-            if v:
-                al = v["data"]
-                verifiche["piva"] = personale.verifica_saldo(
-                    sb2, "piva", saldo_piva(sb2, al)["saldo"], al)
-        except Exception:
-            pass
+        if not saldi:
+            verifiche = {}
 
     html = render_conti_page(saldi, coerenza_html, verifiche)
     return Response(html, mimetype="text/html")

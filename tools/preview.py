@@ -210,6 +210,11 @@ DB["cfg_categorie"] = [
     # Nata con la migrazione §8.11: i bonifici verso i salvadanai Revolut
     # sono uscite vere del conto, non un numero dichiarato a parte.
     {"id": 10, "nome": "Risparmi",       "ordine": 10, "attiva": True},
+    # Nate con la §8.19, per i movimenti di Revolut (vedi
+    # spese/revolut_movimenti.py). Stesso albero del conto personale.
+    {"id": 11, "nome": "Giroconto Revolut", "ordine": 0, "attiva": True},
+    {"id": 12, "nome": "Interessi",      "ordine": 0, "attiva": True},
+    {"id": 13, "nome": "Investimenti",   "ordine": 0, "attiva": True},
     {"id": 9, "nome": "Èlite (disattiva)", "ordine": 9, "attiva": False},
 ]
 DB["cfg_sottocategorie"] = [
@@ -234,6 +239,9 @@ _COPPIE = [
     ("Altre entrate", []),
     ("Giroconto P.IVA", []),
     ("Risparmi", []),
+    ("Giroconto Revolut", []),
+    ("Interessi", []),
+    ("Investimenti", []),
     ("Èlite (disattiva)", []),
 ]
 DB["cfg_categoria_sottocategoria"] = []
@@ -295,6 +303,48 @@ def _riga_v_spese(r):
 
 
 DB["v_spese"] = [_riga_v_spese(r) for r in DB["spese"]]
+
+
+# I movimenti di Revolut (migrazione §8.19). Scelti per far vedere ogni
+# caso che la pagina deve saper mostrare: il bonifico «Risparmi» con la
+# sua gemella su WeBank (il 400 del 25/07, riga 11 di `spese`), uno SENZA
+# gemella (il 150 del 02/08: il ponte deve segnalarlo), lo spostamento
+# interno fra liquidita' e deposito visto dalle due parti, gli interessi,
+# spese con carta categorizzate come sul personale, una da categorizzare,
+# e due movimenti DOPO la fotografia del 12/08 — cosi' il saldo mostra
+# «fotografia + movimenti dopo» invece di restare fermo.
+def _rev(mid, data, tipo, importo, desc, cat, sub=None, sezione="conto",
+         fonte="estratto"):
+    return {"id": mid, "data": data, "tipo": tipo, "importo": importo,
+            "descrizione": desc, "categoria_link_id": _link_id(cat, sub) if cat else None,
+            "sezione": sezione, "fonte": fonte, "chiave": f"finta-{mid}",
+            "note": None}
+
+
+DB["b2f_revolut_movimenti"] = [
+    _rev(1, "2026-07-01", "entrata", 3.12, "Interessi maturati", "Interessi",
+         sezione="risparmi"),
+    _rev(2, "2026-07-18", "uscita", 42.50, "Trattoria Da Nino", "Personale",
+         "Ristoranti"),
+    _rev(3, "2026-07-20", "uscita", 18.90, "Ryanair", "Viaggi", "Voli"),
+    _rev(4, "2026-07-25", "entrata", 400.00, "Bonifico da Emanuele Bellotti",
+         "Risparmi"),
+    _rev(5, "2026-07-26", "uscita", 400.00, "Al Deposito senza vincoli",
+         "Giroconto Revolut"),
+    _rev(6, "2026-07-26", "entrata", 400.00, "Dal conto personale",
+         "Giroconto Revolut", sezione="risparmi"),
+    _rev(7, "2026-08-01", "entrata", 3.31, "Interessi maturati", "Interessi",
+         sezione="risparmi"),
+    _rev(8, "2026-08-02", "entrata", 150.00, "Bonifico da Emanuele Bellotti",
+         "Risparmi"),
+    _rev(9, "2026-08-04", "uscita", 12.00, "Amazon Prime", None),
+    _rev(10, "2026-08-06", "uscita", 100.00, "Al conto investimenti",
+         "Investimenti"),
+    _rev(11, "2026-08-18", "uscita", 64.30, "Hotel Bellavista", "Viaggi",
+         "Hotel", fonte="manuale"),
+    _rev(12, "2026-08-20", "uscita", 9.40, "Caffè Centrale", "Personale",
+         "Caffè", fonte="manuale"),
+]
 
 # v_risparmi_mese: i nomi delle colonne hanno spazi e maiuscole come nella
 # vista vera (spese/dati.py::periodi_risparmio li traduce).
@@ -590,6 +640,9 @@ class _Query:
         self.filters.append(("lte", col, val)); return self
 
     def order(self, col, desc=False):
+        # Piu' chiamate = piu' criteri, il primo e' il principale: come
+        # PostgREST. Serve allo spareggio per id delle letture a pagine.
+        self._ordini = getattr(self, "_ordini", []) + [(col, desc)]
         self._order, self._desc = col, desc; return self
 
     def limit(self, n):
@@ -665,10 +718,10 @@ class _Query:
                     _rispecchia_v_spese(r, togli=True)
             return _Res([])
 
-        if self._order:
-            sel = sorted(sel, key=lambda r: (r.get(self._order) is None,
-                                             r.get(self._order)),
-                         reverse=self._desc)
+        # Ordinamento stabile dal criterio meno importante al principale.
+        for col, desc in reversed(getattr(self, "_ordini", [])):
+            sel = sorted(sel, key=lambda r, c=col: (r.get(c) is None, r.get(c)),
+                         reverse=desc)
         if self._range:
             start, end = self._range
             sel = sel[start:end + 1]

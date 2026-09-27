@@ -79,6 +79,11 @@ CATEGORIA_STIPENDIO = "Stipendio"
 # calcola SOLO dai movimenti del conto, come quello della banca.
 CATEGORIA_RISPARMIO = "Risparmi"
 
+# Lo spostamento fra liquidita' e deposito dentro Revolut (migrazione
+# §8.19). Sta qui e non solo in revolut_movimenti.py perche' anche il
+# form del conto personale deve saperlo tenere fuori dal suo menu.
+CATEGORIA_GIROCONTO_REVOLUT = "Giroconto Revolut"
+
 CAMPI_SCRITTURA = ("data", "descrizione", "importo", "tipo",
                    "metodo_pagamento", "categoria_link_id")
 
@@ -105,7 +110,49 @@ def voci_categoria(client) -> list[dict]:
 
     Ritorna una riga per accoppiamento, con l'id del legame — che e' il
     valore da scrivere in `spese.categoria_link_id` — e i due nomi.
+
+    Letta una volta per richiesta: una pagina la chiede anche quattro o
+    cinque volte (menu, nomi delle righe, suggerimenti, validazione), e
+    ogni volta era un giro fino al database per la stessa risposta.
     """
+    memo = _memo_richiesta()
+    if memo is not None and "voci_categoria" in memo:
+        return [dict(v) for v in memo["voci_categoria"]]
+    # E fra una richiesta e l'altra, per un minuto: le categorie cambiano
+    # poche volte l'anno, e ogni pagina dei conti le chiede. Un minuto e'
+    # il ritardo massimo con cui una categoria appena creata compare nei
+    # menu.
+    import time
+    adesso = time.monotonic()
+    pronte = _VOCI_CACHE.get(id(client))
+    if pronte and adesso - pronte[0] < 60:
+        voci = pronte[1]
+    else:
+        voci = _voci_categoria(client)
+        if voci:
+            _VOCI_CACHE[id(client)] = (adesso, voci)
+    if memo is not None and voci:
+        memo["voci_categoria"] = voci
+    return [dict(v) for v in voci]
+
+
+_VOCI_CACHE: dict = {}
+
+
+def _memo_richiesta() -> dict | None:
+    """Un dizionario che vive quanto la richiesta HTTP in corso, o None."""
+    try:
+        from flask import g, has_request_context
+    except ImportError:
+        return None
+    if not has_request_context():
+        return None
+    if not hasattr(g, "b2f_memo"):
+        g.b2f_memo = {}
+    return g.b2f_memo
+
+
+def _voci_categoria(client) -> list[dict]:
     try:
         r = (client.table("cfg_categoria_sottocategoria")
              .select("id, categoria_id, sottocategoria_id,"
@@ -172,7 +219,11 @@ def _query_movimenti(client, anno=None, mese=None, tipo=None, categoria=None,
     per un totale. Condivisa da `movimenti()` e `totali_periodo()` cosi'
     i filtri restano uno solo, non due copie da tenere allineate.
     """
-    q = client.table("v_spese").select("*").order("data", desc=True)
+    # L'id come spareggio: `righe_periodo` legge a pagine da mille, e a
+    # parita' di data Postgres non promette lo stesso ordine a due richieste
+    # diverse — una riga a cavallo fra due pagine uscirebbe due volte o
+    # nessuna, e il totale sbaglierebbe senza errore (README §7).
+    q = client.table("v_spese").select("*").order("data", desc=True).order("id", desc=True)
     if anno:
         q = q.eq("anno", anno)
     if mese:
@@ -329,7 +380,7 @@ def risparmio_totale(client, al: str | None = None) -> float:
         try:
             pagina = _righe(client.table("v_spese").select("importo,tipo,data,categoria")
                             .eq("categoria", CATEGORIA_RISPARMIO).lte("data", al)
-                            .order("data", desc=False)
+                            .order("data", desc=False).order("id")
                             .range(offset, offset + passo - 1).execute())
         except Exception:
             return round(tot, 2)
@@ -402,7 +453,7 @@ def saldo_conto(client, al: str | None = None) -> dict:
                  .lte("data", al))
             if dal:
                 q = q.gt("data", dal)
-            pagina = _righe(q.order("data", desc=False)
+            pagina = _righe(q.order("data", desc=False).order("id")
                             .range(offset, offset + passo - 1).execute())
         except Exception:
             return vuoto
@@ -458,7 +509,18 @@ def _normalizza(dati: dict) -> dict:
     if out.get("importo") is not None:
         # Sempre positivo: la direzione la da' `tipo`, non il segno. Due
         # convenzioni sovrapposte si annullerebbero a vicenda.
-        out["importo"] = round(abs(float(out["importo"])), 2)
+        try:
+            out["importo"] = round(abs(float(out["importo"])), 2)
+        except (TypeError, ValueError):
+            raise ValueError("importo non valido")
+    if out.get("data") is not None:
+        # Qui e non in `crea`: mese e anno si ricavano dalla data con uno
+        # slicing, e su "non-una-data" lo slicing non fallisce — scrive
+        # spazzatura, o esplode piu' avanti con un 500.
+        try:
+            out["data"] = date.fromisoformat(str(out["data"])[:10]).isoformat()
+        except ValueError:
+            raise ValueError("data non valida")
     return out
 
 
@@ -470,7 +532,10 @@ def crea(client, dati: dict) -> dict:
     sotto lock. Se non risponde ripiega sull'insert diretto: `spese.id`
     e' IDENTITY e si genera comunque.
     """
-    d = _normalizza(dati)
+    try:
+        d = _normalizza(dati)
+    except ValueError as e:
+        return {"error": str(e)}
     quando = d.get("data") or date.today().isoformat()
     d["data"] = quando
     d["mese"] = int(quando[5:7])
@@ -510,7 +575,10 @@ def crea(client, dati: dict) -> dict:
 
 def aggiorna(client, mid: int, dati: dict) -> dict:
     """Modifica un movimento. Cambiando la data risistema mese e anno."""
-    d = _normalizza(dati)
+    try:
+        d = _normalizza(dati)
+    except ValueError as e:
+        return {"error": str(e)}
     if not d:
         return {"error": "nessun campo da aggiornare"}
     if d.get("tipo") and d["tipo"] not in TIPI_CHIAVI:
@@ -860,7 +928,7 @@ def dettaglio_periodo(client, dal: str, al: str) -> dict:
             pagina = _righe(client.table("v_spese")
                             .select("importo,tipo,data,categoria")
                             .gte("data", dal).lte("data", al)
-                            .order("data", desc=False)
+                            .order("data", desc=False).order("id")
                             .range(offset, offset + passo - 1).execute())
         except Exception:
             return vuoto

@@ -41,6 +41,10 @@ PAGINE = [
     ("movimenti",  "/conti/webank/personale"),
     ("risparmi",   "/risparmi"),
     ("revolut",    "/conti/revolut"),
+    ("rev-movim",  "/conti/revolut/movimenti"),
+    ("rev-import", "/conti/revolut/importa"),
+    ("piva-import","/conti/webank/piva/importa"),
+    ("rev-modif",  "/conti/revolut/movimenti/2"),
     ("importa",    "/conti/webank/personale/importa"),
     ("ore",        "/ore"),
 ]

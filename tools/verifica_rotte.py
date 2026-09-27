@@ -70,18 +70,22 @@ PAGINE = ["/", "/saldi", "/fatture/", "/fatture/storico", "/fatture/nuova",
           "/fatture/parametri", "/fatture/emittente", "/fatture/spese-piva",
           "/fatture/spese-piva/nuova", "/spese/", "/spese/movimenti",
           "/spese/movimenti/nuovo", "/spese/risparmi", "/spese/revolut",
-          "/spese/importa", "/health"]
+          "/spese/importa", "/conti/revolut/movimenti",
+          "/conti/revolut/movimenti/nuovo", "/conti/revolut/importa",
+          "/conti/webank/piva/importa", "/health"]
 
 VUOTI = [
     ("database completamente vuoto",
      ["b2f_fatture", "b2f_clienti", "spese", "v_spese", "b2f_spese_piva",
-      "b2f_revolut", "impostazioni", "v_risparmi_mese", "risparmi_periodo",
+      "b2f_revolut", "b2f_revolut_movimenti", "impostazioni", "v_risparmi_mese",
+      "risparmi_periodo",
       "b2f_emittente", "b2f_parametri_fiscali", "b2f_saldi_verifica"]),
     ("senza emittente e parametri", ["b2f_emittente", "b2f_parametri_fiscali"]),
     ("senza apertura del conto", ["impostazioni"]),
     ("senza movimenti", ["spese", "v_spese", "v_risparmi_mese"]),
     ("senza fatture", ["b2f_fatture"]),
     ("senza snapshot Revolut", ["b2f_revolut"]),
+    ("senza movimenti Revolut", ["b2f_revolut_movimenti"]),
     ("senza categorie",
      ["cfg_categorie", "cfg_sottocategorie", "cfg_categoria_sottocategoria"]),
 ]
@@ -98,6 +102,17 @@ MALFORMATI = [
     ("PATCH", "/spese/api/risparmi", {"x": 1}),
     ("POST",  "/spese/api/revolut", {}),
     ("POST",  "/spese/api/revolut", {"data": "non-data", "conto": "x"}),
+    ("POST",  "/spese/api/revolut/movimenti", {}),
+    ("POST",  "/spese/api/revolut/movimenti", {"importo": "x", "data": "y", "tipo": "z"}),
+    ("POST",  "/spese/api/revolut/movimenti/importa", {}),
+    ("POST",  "/spese/api/revolut/movimenti/importa", {"righe": "non una lista"}),
+    ("POST",  "/spese/api/revolut/movimenti/importa", {"righe": [{"chiave": "k", "importo": "?"}]}),
+    ("PATCH", "/spese/api/revolut/movimenti/999999", {"tipo": "giroconto"}),
+    ("POST",  "/spese/api/importa/salva", {"righe": "no"}),
+    ("POST",  "/spese/api/importa/salva", {"righe": [{"idx": 0, "importo": "x", "categoria": 1}]}),
+    ("POST",  "/fatture/api/spese-piva/importa/salva", {}),
+    ("POST",  "/fatture/api/spese-piva/importa/salva", {"righe": [{"idx": 0, "importo": "x", "categoria": "pec"}]}),
+    ("POST",  "/fatture/api/spese-piva/importa/carica", {}),
     ("POST",  "/spese/api/importa/salva", {}),
     ("POST",  "/fatture/api/fatture", {}),
     ("POST",  "/fatture/api/fatture", {"anno": "abc", "progressivo": "x", "data": "y",
@@ -123,7 +138,8 @@ def _url_concreti(rule):
     if "<int:cid>" in rule:
         return [rule.replace("<int:cid>", str(i)) for i in _id("b2f_clienti")]
     if "<int:mid>" in rule:
-        tab = "b2f_spese_piva" if "spese-piva" in rule else "spese"
+        tab = ("b2f_spese_piva" if "spese-piva" in rule or "/piva/" in rule
+               else "b2f_revolut_movimenti" if "revolut" in rule else "spese")
         return [rule.replace("<int:mid>", str(i)) for i in _id(tab)]
     return [rule] if "<" not in rule else []
 
