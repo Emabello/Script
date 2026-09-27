@@ -18,6 +18,12 @@ come), **Stato**.
 
 ## Aperti
 
+### [2026-09-27] Undici esercenti hanno due categorie allo stesso importo
+**Cosa**: `tools/verifica_suggerimenti.py` trova 11 gruppi (42 movimenti) con stesso esercente, stesso importo, stessa direzione e categorie diverse — McDonald's 2,20 € Caffè ×13 e Cibo ×2, Iper Portello 1,90 € Caffè ×3 e Cibo ×2, Cless Ticket ATM 2,20 € una volta Personale e una volta Viaggi.
+**Perché si rompe**: non è la formula a sbagliare — la memoria esatta le riproduce tutte (100%) —, sono i dati a dire due cose. La conseguenza concreta è a valle: la ripartizione per sottocategoria di un mese dipende da quale delle due scelte è stata fatta quel giorno, e «quanto spendo in caffè» non ha una risposta stabile. Per la categoria principale conta poco (sono quasi tutte dentro Personale), tranne il biglietto ATM, che sposta 2,20 € fra Personale e Viaggi.
+**Impatto**: letture per sottocategoria; il budget per categoria principale solo per il caso ATM.
+**Stato**: aperto — è una scelta tua caso per caso (magari «un caffè al McDonald's sotto i 3 € è sempre Caffè»). Rilanciare lo strumento dopo ogni import tiene l'elenco aggiornato.
+
 ### [2026-09-27] La seconda tranche dello stesso giroconto apre un periodo, e il rientro verso la P.IVA diventa «speso»
 **Cosa**: la fattura 2026/001 è arrivata sul personale in tre movimenti veri (README §8.18): +2.000,00 il 05/08, +1.491,85 il 13/08, −1.068,33 il 02/09, tutti categoria «Giroconto P.IVA» e agganciati alla stessa fattura. `v_periodi_stipendio` apre un periodo su **ogni** entrata con quella categoria, senza guardare `fattura_giroconto_id`; e `v_risparmi_mese` conta come `totale_speso` ogni uscita che non sia «Risparmi» — compresa l'uscita «Giroconto P.IVA».
 **Perché si rompe**: (1) la tranche del 13/08 non è un nuovo stipendio, è il resto dello stesso: il periodo 05/08→12/08 dura otto giorni e il 13/08→02/09 riparte con la base del precedente dentro — è esattamente il meccanismo della voce del 24/09 («due stipendi chiedono due volte»), e qui la causa non è un secondo stipendio ma **un bonifico spezzato**. (2) il rientro di 1.068,33 il 02/09 finisce in «Totale Speso» del periodo 13/08→02/09: la pagina Risparmi dice 1.807,10 € spesi quando le uscite di consumo sono 738,77. Sulla *base* del calcolo l'effetto è giusto (i soldi sono usciti davvero), sull'etichetta no: chi legge «speso» pensa a spese.
@@ -273,6 +279,9 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 ---
 
 ## Fatti (storico — per non riproporli)
+
+### [2026-09-27] I suggerimenti non riproducevano le decisioni già prese
+Rigiocata su tutto lo storico (522 movimenti), la formula riproponeva la categoria giusta solo nel 95,2% dei casi: votavano i vicini, e un esercente con trenta caffè sovrastava il pranzo allo stesso importo categorizzato apposta. Ora a parità di esercente, importo e direzione vale la decisione più vicina nel tempo (memoria 100%), le città in coda non contano, le parole comuni pesano meno e un importo mai visto non si preseleziona. Banco di prova ripetibile: `tools/verifica_suggerimenti.py`.
 
 ### [2026-09-27] L'import WeBank buttava il secondo di due movimenti identici nello stesso file
 `api_importa_salva` confrontava con un **insieme** di (data, importo, descrizione) e ci aggiungeva ogni riga salvata: due caffè da 1,10 allo stesso bar nello stesso giorno → il secondo scartato come «già presente», in silenzio. Ora `shared/importazione.py::segna_doppioni` conta le copie (il secondo è un doppione solo se a database ce ne sono due), su descrizione ripulita. `tools/verifica_import.py` lo prova.

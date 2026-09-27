@@ -580,8 +580,16 @@ rapporto). Ritorna etichetta, nome, fiducia, `sicura` (≥ 0,6), motivo.
 `storico_piva()` = `b2f_spese_piva`. `storico_pronto()` lo tiene un minuto
 per i form.
 
+Prima dei vicini c'è la **memoria esatta** (stessa chiave, importo e tipo →
+la decisione più vicina nel tempo a `quando`). Le città in coda si tolgono
+(`CITTA_BASE` + `_citta_imparate`: code condivise da ≥3 esercenti con
+categorie diverse), le parole pesano per rarità. Il risultato porta anche
+`tipo`, che l'API usa per proporre la direzione nei form.
+
 > **Trappola**: il `tipo` filtra gli esempi — un'entrata non impara dalle
-> uscite. Le categorie escluse per conto si passano in `ammesse`.
+> uscite. Le categorie escluse per conto si passano in `ammesse`. Qualunque
+> modifica alla formula va rimisurata con `tools/verifica_suggerimenti.py`:
+> la prova di memoria deve restare al 100%.
 
 ### `shared/importazione.py` · l'import uguale per tutti i conti
 

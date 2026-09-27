@@ -456,8 +456,16 @@ def suggerimento_form(conto: str) -> str:
       const cat = document.getElementById('f_categoria');
       if (!box || !cat) return;
       cat.closest('.field').appendChild(box);
-      let ultima = null, timer = null;
+      let ultima = null, timer = null, tipoToccato = false;
+      const tipoEl = document.getElementById('f_tipo');
+      if (tipoEl) tipoEl.addEventListener('change', e => {{ if (e.isTrusted) tipoToccato = true; }});
       function applica(p) {{
+        // Prima la direzione, se lo storico ne propone un'altra: la
+        // categoria giusta di un'entrata non e' fra quelle delle uscite.
+        if (p.tipo && tipoEl && tipoEl.value !== p.tipo) {{
+          tipoEl.value = p.tipo;
+          tipoEl.dispatchEvent(new Event('change', {{bubbles: true}}));
+        }}
         if (p.categoria !== undefined) {{
           // Con l'evento `change`, non solo il valore: e' quello che
           // ascoltano il menu Fiori della shell (per ridisegnarsi) e il
@@ -483,11 +491,17 @@ def suggerimento_form(conto: str) -> str:
           const p = await r.json();
           if (!r.ok || !p || !p.nome) {{ box.innerHTML = ''; return; }}
           ultima = p;
-          if (!cat.value && p.sicura) {{ applica(p); box.textContent = 'Categoria proposta: ' + p.motivo; return; }}
-          if (cat.value === p.categoria) {{ box.textContent = ''; return; }}
+          const cambiaTipo = p.tipo && tipoEl && tipoEl.value !== p.tipo;
+          if (!cat.value && p.sicura && !(cambiaTipo && tipoToccato)) {{
+            applica(p);
+            box.textContent = (cambiaTipo ? 'Tipo e categoria proposti: ' : 'Categoria proposta: ') + p.motivo;
+            return;
+          }}
+          if (cat.value === p.categoria && !cambiaTipo) {{ box.textContent = ''; return; }}
           box.innerHTML = 'Proposta: <strong></strong> (' + Math.round(p.fiducia * 100) +
             '%) · <a href="#">usa</a>';
-          box.querySelector('strong').textContent = p.nome;
+          box.querySelector('strong').textContent =
+            (cambiaTipo ? (p.tipo === 'entrata' ? 'Entrata · ' : 'Uscita · ') : '') + p.nome;
           box.querySelector('a').onclick = e => {{ e.preventDefault(); applica(ultima); }};
           box.title = p.motivo;
         }} catch (e) {{ box.innerHTML = ''; }}

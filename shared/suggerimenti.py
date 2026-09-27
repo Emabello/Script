@@ -49,6 +49,7 @@ accettato senza guardare e' peggio di nessun suggerimento.
 """
 import math
 import re
+from collections import Counter
 import unicodedata
 from datetime import date
 
@@ -67,6 +68,9 @@ SOMIGLIANZA_MINIMA = 0.45
 # Quanti esempi vicini votano. Pochi: il punto e' che votino i piu'
 # simili, non tutti quelli dello stesso esercente.
 VICINI = 7
+# In quanti giorni un esempio perde meta' del peso che ha in piu' degli
+# altri (vedi Storico._peso_tempo).
+MEMORIA_GIORNI = 120
 
 
 def chiave(descrizione: str | None) -> str:
@@ -89,6 +93,28 @@ def parole(descrizione: str | None) -> frozenset:
     s = "".join(c for c in unicodedata.normalize("NFKD", s)
                 if not unicodedata.combining(c))
     return frozenset(w for w in re.findall(r"[a-z]{3,}", s) if w not in _VUOTE)
+
+
+# Le citta' in coda alle descrizioni della banca («… Milano», «… Sirac Usa»)
+# fanno sembrare simili esercenti che non c'entrano niente: «Mazy Shahin
+# Siracusa» (un kebab) somigliava a «pv9168 siracusa» (un benzinaio) per
+# meta' delle lettere. Si tolgono dalla coda prima del confronto. L'elenco
+# base e' questo; il resto lo impara lo Storico (`_citta_imparate`).
+CITTA_BASE = ("milano", "milan", "roma", "torino", "napoli", "bergamo", "varese",
+              "monza", "como", "brescia", "verona", "genova", "bologna",
+              "firenze", "venezia", "padova", "mi", "it", "ita")
+
+
+def togli_citta(k: str, citta: frozenset) -> str:
+    """La chiave senza le citta' in coda (quante ce ne sono)."""
+    cambiato = True
+    while cambiato:
+        cambiato = False
+        for c in citta:
+            if len(k) - len(c) >= 2 and k.endswith(c):
+                k = k[: -len(c)]
+                cambiato = True
+    return k
 
 
 def trigrammi(k: str) -> frozenset:
@@ -159,20 +185,68 @@ class Storico:
             gruppi.setdefault(k, []).append(
                 (r.get("tipo"), imp, etichetta, str(r.get("data") or "")[:10],
                  r.get("descrizione") or ""))
-        self.gruppi = [(k, trigrammi(k), self._parole[k], esempi)
+        self.citta = frozenset(CITTA_BASE) | self._citta_imparate(gruppi)
+        # Le parole che compaiono in molti esercenti diversi (citta',
+        # «bonifico», «spesa») dicono poco di chi e' l'esercente: nel
+        # confronto per parole pesano meno di quelle rare.
+        df: dict = {}
+        for k in gruppi:
+            for w in self._parole[k]:
+                df[w] = df.get(w, 0) + 1
+        self._peso_parola = {w: 1.0 / (1.0 + math.log(n)) for w, n in df.items()}
+        self.gruppi = [(k, trigrammi(togli_citta(k, self.citta)), self._parole[k], esempi)
                        for k, esempi in gruppi.items()]
         self._cache: dict = {}
+
+    @staticmethod
+    def _citta_imparate(gruppi: dict) -> frozenset:
+        """
+        Le citta' dello storico: le code (ultime lettere di una descrizione,
+        ricomposte anche quando la banca le spezza, «Mil Ano») che si
+        ripetono in fondo a esercenti diversi. Una coda condivisa da tre
+        esercenti diversi non e' un pezzo di nome: e' dove stanno.
+        """
+        code: dict = {}
+        etichette_coda: dict = {}
+        for k, esempi in gruppi.items():
+            parole_ord = re.findall(r"[a-z]+", _RUMORE.sub(" ", esempi[0][4].lower()))
+            if len(parole_ord) < 2:
+                continue
+            viste = set()
+            for n in (1, 2):
+                coda = "".join(parole_ord[-n:])
+                if 4 <= len(coda) <= 14 and len(k) - len(coda) >= 2:
+                    viste.add(coda)
+            for c in viste:
+                code[c] = code.get(c, 0) + 1
+                etichette_coda.setdefault(c, set()).update(e[2] for e in esempi)
+        # E con categorie diverse: «Revolut» chiude tre descrizioni
+        # («Bonifico a Revolut», «Ricarica Revolut», «Rientro da Revolut»),
+        # ma sono tutte «Risparmi» — e' l'esercente, non una citta'.
+        return frozenset(c for c, n in code.items()
+                         if n >= 3 and len(etichette_coda[c]) >= 2)
+
+    def _simili_parole(self, p: frozenset, pg: frozenset) -> float:
+        """Parole in comune, pesate per quanto sono rare nello storico."""
+        peso = lambda w: self._peso_parola.get(w, 1.0)  # noqa: E731
+        unione = sum(peso(w) for w in p | pg)
+        return sum(peso(w) for w in p & pg) / unione if unione else 0.0
 
     def __len__(self):
         return sum(len(e) for _k, _t, _p, e in self.gruppi)
 
-    def _peso_tempo(self, quando: str) -> float:
-        """Un esempio recente pesa un po' di piu': le abitudini cambiano."""
+    def _peso_tempo(self, quando: str, rispetto_a: date | None = None) -> float:
+        """
+        Quanto pesa un esempio per la sua distanza nel tempo dal movimento
+        da categorizzare: le abitudini cambiano. Fino ad aprile 2026 il
+        McDonald's a 2,20 era «Cibo», da maggio e' «Caffè»: un esempio di
+        un anno prima pesa la meta' di uno della settimana prima.
+        """
         try:
-            giorni = (self.oggi - date.fromisoformat(quando)).days
+            giorni = abs(((rispetto_a or self.oggi) - date.fromisoformat(quando)).days)
         except ValueError:
             return 1.0
-        return 1.3 if giorni <= 180 else 1.0
+        return 0.5 + 0.5 * math.exp(-giorni / MEMORIA_GIORNI)
 
     def _vicini(self, k: str, p: frozenset = frozenset()):
         """
@@ -183,19 +257,19 @@ class Storico:
         """
         if k in self._cache:
             return self._cache[k]
-        t = trigrammi(k)
+        t = trigrammi(togli_citta(k, self.citta))
         out = []
         for kg, tg, pg, esempi in self.gruppi:
             s = 1.0 if kg == k else somiglianza(t, tg)
             if p and pg and s < 1.0:
-                s = max(s, 0.95 * len(p & pg) / len(p | pg))
+                s = max(s, 0.95 * self._simili_parole(p, pg))
             if s >= SOMIGLIANZA_MINIMA:
                 out.append((s, esempi))
         self._cache[k] = out
         return out
 
     def suggerisci(self, descrizione: str | None, importo, tipo: str | None,
-                   ammesse: set | None = None) -> dict | None:
+                   ammesse: set | None = None, quando: str | None = None) -> dict | None:
         """
         La categoria proposta per un movimento, o None se lo storico non
         ha niente di abbastanza simile.
@@ -211,6 +285,10 @@ class Storico:
             imp = abs(float(importo or 0))
         except (TypeError, ValueError):
             imp = 0.0
+        try:
+            rif = date.fromisoformat(str(quando)[:10]) if quando else None
+        except ValueError:
+            rif = None
 
         # I VICINI PIU' PROSSIMI, non la maggioranza. Allo stesso bancone
         # ci sono trenta caffe' e sei pranzi: a maggioranza, un pranzo da
@@ -229,7 +307,49 @@ class Storico:
                 distanza_imp = (0.0 if a >= 1.0 else 0.12 if a >= 0.85
                                 else abs(math.log(max(imp, 0.01) / max(imp_e, 0.01))))
                 d = 2.5 * (1 - s) + distanza_imp
-                candidati.append((d, etichetta, perche, s, desc, quando))
+                candidati.append((d, etichetta, perche, s, desc, quando, tipo_e))
+        # LA MEMORIA ESATTA viene prima dei vicini. Stesso esercente, stesso
+        # importo, stessa direzione: e' una decisione che hai gia' preso, e
+        # vale quella PIU' VICINA NEL TEMPO al movimento — non la
+        # maggioranza di tutte le volte. Se hai cambiato idea (il McDonald's
+        # a 2,20 da «Cibo» ad aprile a «Caffè» da maggio), un movimento di
+        # oggi prende la decisione di oggi, e uno di aprile — reimportando
+        # un estratto vecchio — quella di aprile. Per questo, rigiocato su
+        # tutto lo storico, ogni movimento riceve la categoria che ha.
+        esatti = [c for c in candidati if c[0] == 0.0]
+        if esatti:
+            giorno_rif = rif or self.oggi
+
+            def distanza(c):
+                try:
+                    return abs((date.fromisoformat(c[5]) - giorno_rif).days)
+                except ValueError:
+                    return 10 ** 6
+            esatti.sort(key=lambda c: (-distanza(c), c[5]))
+            ultima = esatti[-1][1]
+            uguali = sum(1 for c in esatti if c[1] == ultima)
+            quota = uguali / len(esatti)
+            fiducia = max(quota, 0.75) if uguali >= 2 else max(quota * 0.7, 0.62)
+            n = len(esatti)
+            motivo = (f'{"stesso esercente e stesso importo" if n == 1 else f"{n} volte stesso esercente e stesso importo"}'
+                      f' («{esatti[-1][4][:32].strip()}»)'
+                      + (f', la più vicina nel tempo come {self.nomi.get(ultima, ultima)}' if uguali < n else ""))
+            altre: dict = {}
+            for c in esatti:
+                if c[1] != ultima:
+                    altre[c[1]] = altre.get(c[1], 0) + 1
+            return {
+                "etichetta": ultima,
+                "nome": self.nomi.get(ultima, str(ultima)),
+                "tipo": esatti[-1][6],
+                "fiducia": round(fiducia, 2),
+                "sicura": fiducia >= FIDUCIA_MINIMA,
+                "esempi": n,
+                "motivo": motivo,
+                "alternative": [(self.nomi.get(e, str(e)), round(v / n, 2))
+                                for e, v in sorted(altre.items(), key=lambda x: -x[1])[:2]],
+            }
+
         candidati.sort(key=lambda x: x[0])
         vicini = candidati[:VICINI]
 
@@ -237,8 +357,12 @@ class Storico:
         esempi_per: dict = {}
         motivi: dict = {}
         simile: dict = {}
-        for d, etichetta, perche, s, desc, quando in vicini:
-            w = self._peso_tempo(quando) / (0.15 + d)
+        vicino_imp: dict = {}
+        tipi: dict = {}
+        for d, etichetta, perche, s, desc, quando, tipo_e in vicini:
+            tipi.setdefault(etichetta, Counter())[tipo_e] += 1
+            vicino_imp[etichetta] = min(vicino_imp.get(etichetta, 99.0), d - 2.5 * (1 - s))
+            w = self._peso_tempo(quando, rif) / (0.15 + d)
             pesi[etichetta] = pesi.get(etichetta, 0.0) + w
             esempi_per[etichetta] = esempi_per.get(etichetta, 0) + 1
             if perche and (etichetta not in motivi or perche == "stesso importo"):
@@ -255,6 +379,13 @@ class Storico:
         # Un esempio solo e' un indizio, non una regola: la fiducia si
         # ammorbidisce finche' gli esempi sono pochi.
         fiducia *= min(1.0, 0.55 + 0.15 * n)
+        # E un esercente noto a un importo mai visto e' mezzo indizio: i
+        # «Giappone» dello storico erano bonifici da 140-500 €, e una spesa
+        # da 9 € in Giappone non e' un bonifico. Se l'esempio piu' vicino
+        # per importo e' lontano piu' del triplo, la proposta si mostra ma
+        # non si preseleziona.
+        if vicino_imp.get(migliore, 0) > math.log(3):
+            fiducia *= 0.6
         simili_tot = len(candidati)
         pezzi = [f'{n} dei {min(VICINI, simili_tot)} movimenti più vicini'
                  if simili_tot > 1 else '1 movimento simile']
@@ -265,6 +396,7 @@ class Storico:
         return {
             "etichetta": migliore,
             "nome": self.nomi.get(migliore, str(migliore)),
+            "tipo": tipi[migliore].most_common(1)[0][0] if tipi.get(migliore) else tipo,
             "fiducia": round(fiducia, 2),
             "sicura": fiducia >= FIDUCIA_MINIMA,
             "esempi": n,

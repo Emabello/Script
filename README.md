@@ -386,11 +386,36 @@ Due misure, insieme:
   batterebbero sempre sei pranzi), e un multiplo esatto conta come
   vicino — 4,40 sono quattro caffè.
 
-Provato sullo storico vero (leave-one-out: ogni riga nascosta a turno e
-indovinata dalle altre): **81% giuste**, 84% fra quelle che la revisione
-preseleziona da sola; le altre si mostrano con la percentuale e «usa».
+**La memoria esatta viene prima di tutto**: stesso esercente, stesso
+importo, stessa direzione è una decisione già presa, e vale quella **più
+vicina nel tempo** al movimento — se hai cambiato idea (il McDonald's a
+2,20 era «Cibo» ad aprile e «Caffè» da maggio), un movimento di oggi prende
+la scelta di oggi e uno di aprile, reimportando un estratto vecchio, quella
+di aprile. Le città in coda alle descrizioni («… Siracusa», «… Mil Ano»)
+non contano nel confronto, le parole comuni a molti esercenti pesano meno,
+e un esercente noto a un importo mai visto (i «Giappone» erano bonifici da
+140–500 €, non spese da 9 €) si propone senza preselezionarlo.
+
+Il banco di prova è `tools/verifica_suggerimenti.py`, sullo storico vero
+(522 movimenti con descrizione al 27/09/2026):
+
+| Prova | Cosa misura | Giuste | Categoria principale |
+|---|---|---|---|
+| memoria | ogni movimento, con tutto lo storico | **100%** | 100% |
+| leave-one-out | ogni movimento nascosto e indovinato dagli altri | 69,5% | 93,5% |
+| cronologico | solo con i movimenti arrivati *prima* | 69,5% | 94,1% |
+
+Fra quelle che la revisione preseleziona da sola, 76% hanno giusta anche la
+sottocategoria; la categoria principale — quella che conta per il budget —
+è giusta in 94 casi su 100. Il resto è ambiguità dei dati, non della
+formula: lo strumento elenca le **incoerenze** (11 al 27/09: stesso
+esercente, stesso importo, categorie diverse — Iper Portello 1,90 € è
+Caffè tre volte e Cibo due), che sono il modo di alzare le altre due prove.
+
 Lo stesso motore risponde a `/spese/api/suggerisci`, e i tre form «nuovo
-movimento» propongono la categoria mentre scrivi descrizione e importo.
+movimento» propongono la categoria — e il tipo, se lo storico dice che
+quella descrizione è sempre stata un'entrata — mentre scrivi descrizione e
+importo.
 
 #### I salvadanai sono già le categorie dell'app
 
@@ -2530,6 +2555,7 @@ virgolette (PEP 701), che su 3.11 non compilano.
 | `verifica_js.py` | apre tutte le pagine e fallisce se una ha JavaScript rotto |
 | `verifica_menu.py` | apre tutte le pagine e controlla che ogni tendina di dati sia alfabetica per descrizione (le eccezioni volute sono elencate nel file) |
 | `verifica_revolut.py` | l'estratto Revolut finto dall'inizio alla fine: saldi, movimenti, quadratura, doppioni, reimport, saldo, ponte con WeBank |
+| `verifica_suggerimenti.py` | i suggerimenti sullo storico vero (dal database o da file): memoria (deve fare 100%), leave-one-out, cronologico, e l'elenco delle incoerenze |
 | `verifica_import.py` | suggerimenti di categoria (McDonald's: caffè a 1,10, pranzo a 15), doppioni che contano le copie, giro completo degli import dei tre conti |
 | `verifica_rotte.py` | chiama ogni GET con id veri, ripete tutte le pagine su sette scenari di tabelle vuote, e prova i payload malformati sulle API (le risposte non testuali le riconosce dal `Content-Type`, non da un elenco scritto a mano) |
 

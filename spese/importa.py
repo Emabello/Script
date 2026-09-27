@@ -438,12 +438,24 @@ def api_suggerisci():
         voci = [v for v in D.voci_categoria(client) if v["categoria"] not in escluse]
         ammesse = {v["link_id"] for v in voci}
         per_link = {v["link_id"]: v for v in voci}
-    p = SG.storico_pronto(client, conto).suggerisci(
-        request.args.get("descrizione"), importo, tipo, ammesse)
+    storico = SG.storico_pronto(client, conto)
+    descrizione = request.args.get("descrizione")
+    p = storico.suggerisci(descrizione, importo, tipo, ammesse)
+    # Anche la direzione: se con il tipo scelto nel form non c'e' niente
+    # di simile, ma senza vincolo di tipo si' — «Bonifico da Sileron» e'
+    # sempre stato un'entrata —, si propone il tipo insieme alla categoria.
+    tipo_suggerito = None
+    if tipo:
+        libero = storico.suggerisci(descrizione, importo, None, ammesse)
+        if libero and libero.get("tipo") and libero["tipo"] != tipo and (
+                not p or libero["fiducia"] > p["fiducia"]):
+            p, tipo_suggerito = libero, libero["tipo"]
     if not p:
         return jsonify({})
     out = {"nome": p["nome"], "fiducia": p["fiducia"], "sicura": p["sicura"],
            "motivo": p["motivo"], "valore": p["etichetta"]}
+    if tipo_suggerito:
+        out["tipo"] = tipo_suggerito
     if conto == "piva":
         out["categoria"] = p["etichetta"]
     else:

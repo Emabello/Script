@@ -107,6 +107,50 @@ def main():
     p = s.suggerisci("Mcdonald'S 35 Mil Ano", 1.10, "uscita", ammesse={"cibo"})
     controlla(p and p["etichetta"] == "cibo", "le categorie non ammesse non si propongono")
 
+    print("\n== la memoria: le decisioni gia' prese")
+    righe_m = [
+        {"data": "2026-04-09", "tipo": "uscita", "importo": 2.20, "descrizione": "Mcdonald'S Milano",
+         "etichetta": "cibo", "nome": "Personale › Cibo"},
+        {"data": "2026-06-04", "tipo": "uscita", "importo": 2.20, "descrizione": "Mcdonald'S 35 Mil Ano",
+         "etichetta": "caffe", "nome": "Personale › Caffè"},
+        {"data": "2026-07-04", "tipo": "uscita", "importo": 2.20, "descrizione": "Mcdonald'S 35 Mil Ano",
+         "etichetta": "caffe", "nome": "Personale › Caffè"},
+        {"data": "2026-05-04", "tipo": "uscita", "importo": 61.87,
+         "descrizione": "spesa pagobancomat - carta*2058-16:06-pv9168 siracusa ita",
+         "etichetta": "benzina", "nome": "Viaggi › Benzina"},
+        {"data": "2026-05-04", "tipo": "uscita", "importo": 7.90,
+         "descrizione": "Pasticceria Manue Le Srl Siracusa", "etichetta": "vcibo", "nome": "Viaggi › Cibo"},
+        {"data": "2026-05-04", "tipo": "uscita", "importo": 71.50,
+         "descrizione": "Aretusa Summer Sr L Siracusa", "etichetta": "vcena", "nome": "Viaggi › Cena"},
+        {"data": "2025-03-07", "tipo": "uscita", "importo": 500.0, "descrizione": "Giappone",
+         "etichetta": "risparmi", "nome": "Risparmi"},
+        {"data": "2025-03-13", "tipo": "uscita", "importo": 250.0, "descrizione": "Giappone",
+         "etichetta": "risparmi", "nome": "Risparmi"},
+    ]
+    sm = SG.Storico(righe_m)
+    tutte_giuste = all(sm.suggerisci(r["descrizione"], r["importo"], r["tipo"],
+                                     quando=r["data"])["etichetta"] == r["etichetta"]
+                       for r in righe_m)
+    controlla(tutte_giuste, "ogni decisione dello storico viene riproposta uguale (memoria 100%)")
+    p = sm.suggerisci("Mcdonald'S 35 Milano", 2.20, "uscita", quando="2026-09-10")
+    controlla(p["etichetta"] == "caffe", "oggi vale la decisione più recente (Caffè, non il Cibo di aprile)")
+    p = sm.suggerisci("Mcdonald'S Milano", 2.20, "uscita", quando="2026-04-10")
+    controlla(p["etichetta"] == "cibo", "un estratto di aprile riprende la decisione di aprile")
+    controlla("siracusa" in sm.citta,
+              "le città che chiudono esercenti diversi vengono riconosciute")
+    p = sm.suggerisci("Mazy Shahin Sirac Usa", 8.0, "uscita")
+    controlla(not p or p["etichetta"] != "benzina",
+              f"un kebab a Siracusa non diventa benzina per via della città ({p and p['nome']})")
+    p = sm.suggerisci("Giappone", 9.20, "uscita")
+    controlla(p and not p["sicura"], "stesso nome ma importo lontanissimo: proposta mostrata, non preselezionata")
+
+    print("\n== il tipo proposto nel form")
+    app0 = preview.application.test_client()
+    j = app0.get("/spese/api/suggerisci?conto=personale&descrizione=BONIFICO%20ISTANTANEO%20DA%20"
+                 "B2FORGE%20SRL&importo=1200&tipo=uscita").get_json()
+    controlla(j.get("tipo") == "entrata" and j.get("categoria") == "Stipendio",
+              f"«Bonifico da B2FORGE» scritto come uscita: propone entrata · Stipendio ({j})")
+
     print("\n== doppioni: le copie si contano")
     caffe = {"data": "2026-09-02", "tipo": "uscita", "importo": 1.10,
              "descrizione": "Mcdonald'S 35 Milano"}
