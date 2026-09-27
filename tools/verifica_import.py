@@ -144,6 +144,27 @@ def main():
     p = sm.suggerisci("Giappone", 9.20, "uscita")
     controlla(p and not p["sicura"], "stesso nome ma importo lontanissimo: proposta mostrata, non preselezionata")
 
+    print("\n== robustezza: qualunque input, nessun crash")
+    guasti = 0
+    for d in (None, "", "   ", "€€€", "😀☕ bar", "a" * 5000, "McDonald's\x00",
+              "ÀÉÎÕÜ caffè", "123456", "-", "carta *2058-"):
+        for imp in (None, "", "abc", 0, -2.2, 1e12, float("nan"), float("inf"), "1,10"):
+            for tipo in (None, "", "entrata", "uscita", "giroconto", "???"):
+                for quando in (None, "", "2026-13-45", "ieri", "2026-09-01"):
+                    try:
+                        sm.suggerisci(d, imp, tipo, quando=quando)
+                    except Exception:
+                        guasti += 1
+    for storico in ([], [{}], [{"descrizione": None, "etichetta": None}],
+                    [{"descrizione": "bar", "etichetta": "x", "importo": "z",
+                      "data": None, "tipo": None}],
+                    [{"descrizione": "bar", "etichetta": "x", "importo": float("nan")}]):
+        try:
+            SG.Storico(storico).suggerisci("bar", 1, "uscita")
+        except Exception:
+            guasti += 1
+    controlla(guasti == 0, f"2.970 input strani (vuoti, NaN, emoji, date sbagliate): {guasti} crash")
+
     print("\n== il tipo proposto nel form")
     app0 = preview.application.test_client()
     j = app0.get("/spese/api/suggerisci?conto=personale&descrizione=BONIFICO%20ISTANTANEO%20DA%20"
@@ -224,8 +245,9 @@ def main():
     controlla(len(mov) == 3, f"letto il file P.IVA: {len(mov)} righe")
     controlla(per.get(900.0, {}).get("presente") and "giroconto" in per[900.0].get("nota", ""),
               "il giroconto verso il personale è bloccato, col motivo")
-    controlla("fattura" in (per.get(4100.0, {}).get("sospetto") or "").lower(),
-              "l'incasso di una fattura è segnalato: si registra dalla fattura")
+    inc = per.get(4100.0, {})
+    controlla(inc.get("presente") or "fattura" in (inc.get("sospetto") or "").lower(),
+              "l'incasso di una fattura già registrato non si reimporta")
     controlla(per.get(45.0, {}).get("categoria") == "pec",
               f'la PEC prende la categoria dallo storico P.IVA ({per.get(45.0, {}).get("suggerimento")})')
     prima = len(DB["b2f_spese_piva"])

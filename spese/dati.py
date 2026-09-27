@@ -118,10 +118,25 @@ def voci_categoria(client) -> list[dict]:
     memo = _memo_richiesta()
     if memo is not None and "voci_categoria" in memo:
         return [dict(v) for v in memo["voci_categoria"]]
-    voci = _voci_categoria(client)
+    # E fra una richiesta e l'altra, per un minuto: le categorie cambiano
+    # poche volte l'anno, e ogni pagina dei conti le chiede. Un minuto e'
+    # il ritardo massimo con cui una categoria appena creata compare nei
+    # menu.
+    import time
+    adesso = time.monotonic()
+    pronte = _VOCI_CACHE.get(id(client))
+    if pronte and adesso - pronte[0] < 60:
+        voci = pronte[1]
+    else:
+        voci = _voci_categoria(client)
+        if voci:
+            _VOCI_CACHE[id(client)] = (adesso, voci)
     if memo is not None and voci:
         memo["voci_categoria"] = voci
     return [dict(v) for v in voci]
+
+
+_VOCI_CACHE: dict = {}
 
 
 def _memo_richiesta() -> dict | None:

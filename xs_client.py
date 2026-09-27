@@ -66,6 +66,18 @@ class XSClient:
     def __init__(self, base_url=BASE_URL):
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
+        # Il server ora serve piu' richieste insieme (gunicorn con i
+        # thread, vedi Procfile): una sessione sola verso il portale, con
+        # il suo login e i suoi cookie, non deve essere usata da due
+        # richieste contemporaneamente. Un lucchetto per client.
+        import threading
+        _lucchetto = threading.RLock()
+        _originale = self.session.request
+
+        def _in_fila(*a, **k):
+            with _lucchetto:
+                return _originale(*a, **k)
+        self.session.request = _in_fila
         # un user-agent "normale" evita rifiuti di alcuni server
         self.session.headers.update(
             {"User-Agent": "Mozilla/5.0 (compatible; XSClient/0.1)"}

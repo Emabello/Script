@@ -56,6 +56,13 @@ from datetime import date
 # I pezzi di descrizione che non dicono niente dell'esercente: il modo di
 # pagamento, la carta, l'ora, il paese. Si tolgono prima del confronto.
 _RUMORE = re.compile(
+    # I prefissi che dicono COME si e' pagato, non A CHI: «bonifico a
+    # favore di Alessandro Cappi» e «bonifico a favore di Emanuele
+    # Bellotti» si somigliavano per diciassette lettere su ventisei, e
+    # un bonifico a un amico diventava la ricarica della carta Hype.
+    r"bonifico a favore di|bonifico istantaneo da|bonifico da|bon\.da|"
+    r"vostra disposizione|addebito diretto( sepa)?( core| sdd)?|\bsdd\b|"
+    r"disp\.?\s*giro conto|"
     r"pagamento con carta|spesa pagobancomat|pagobancomat|carta\s*\*?\s*\d+|"
     r"\b\d{1,2}[:.]\d{2}\b|-da contab\w*|\bdigit\b|\bcontactless\b|"
     r"\b(ita|it a|italia|ity)\s*$",
@@ -134,7 +141,7 @@ def somiglianza(a: frozenset, b: frozenset) -> float:
 def affinita_importo(nuovo: float, visto: float) -> tuple[float, str | None]:
     """
     Quanto un importo gia' visto parla per quello nuovo, fra 0,15 e 1, e
-    perche'. Stesso importo: 1. Multiplo (2..8 volte, o la meta' o un
+    perche'. Stesso importo: 1. Multiplo (2..4 volte, o la meta' o un
     terzo): 0,85. Altrimenti decresce col rapporto: il doppio non-multiplo
     vale gia' poco, dieci volte tanto quasi niente.
     """
@@ -145,7 +152,9 @@ def affinita_importo(nuovo: float, visto: float) -> tuple[float, str | None]:
     for grande, piccolo, dice in ((nuovo, visto, "multiplo"), (visto, nuovo, "sottomultiplo")):
         n = grande / piccolo
         k = round(n)
-        if 2 <= k <= 8 and abs(grande - k * piccolo) < 0.015:
+        # Fino a quattro: tre caffe' si', otto caffe' no — un 8,80 al
+        # McDonald's e' un pranzo, anche se e' esattamente 8 × 1,10.
+        if 2 <= k <= 4 and abs(grande - k * piccolo) < 0.015:
             return 0.85, f"{dice} di € {piccolo:.2f}".replace(".", ",")
     rapporto = abs(math.log(nuovo / visto))
     return max(0.15, 0.7 * math.exp(-1.6 * rapporto)), None
@@ -179,6 +188,8 @@ class Storico:
             try:
                 imp = abs(float(r.get("importo") or 0))
             except (TypeError, ValueError):
+                continue
+            if not math.isfinite(imp):
                 continue
             self.nomi[etichetta] = r.get("nome") or str(etichetta)
             self._parole.setdefault(k, parole(r.get("descrizione")))
@@ -284,6 +295,8 @@ class Storico:
         try:
             imp = abs(float(importo or 0))
         except (TypeError, ValueError):
+            imp = 0.0
+        if not math.isfinite(imp):
             imp = 0.0
         try:
             rif = date.fromisoformat(str(quando)[:10]) if quando else None

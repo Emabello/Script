@@ -27,7 +27,10 @@ import json
 from collections import Counter
 from datetime import date
 
+from .suggerimenti import CITTA_BASE, togli_citta
 from .suggerimenti import chiave as chiave_descrizione
+
+_CITTA = frozenset(CITTA_BASE)
 
 # Quanti giorni di scarto rendono due movimenti uguali "sospetti". Serve
 # solo a SEGNALARE, mai a scartare: tre caffe' da 1,10 in due giorni sono
@@ -46,8 +49,46 @@ def _impronta(r: dict) -> tuple:
     """Data, tipo, importo e descrizione ripulita: lo stesso movimento
     riscaricato la ripete identica anche se la pulizia della descrizione
     e' cambiata nel frattempo (spazi, maiuscole, prefissi della carta)."""
+    # Senza la citta' e la provincia in coda: la stessa spesa e' a database
+    # come «…iper portello  milano  mi  ita» (descrizione grezza, prima che
+    # l'import la ripulisse) e nel file nuovo come «Iper Portello Mil Ano».
     return (str(r.get("data") or "")[:10], r.get("tipo"),
-            _num(r.get("importo")), chiave_descrizione(r.get("descrizione")))
+            _num(r.get("importo")), _esercente(r.get("descrizione")))
+
+
+def _esercente(descrizione) -> str:
+    k = chiave_descrizione(descrizione)
+    return togli_citta(k, _CITTA) or k
+
+
+def _togli(rimasti: dict, impronta: tuple) -> None:
+    """Consuma dall'indice del secondo passaggio la riga appena abbinata."""
+    lista = rimasti.get(impronta[:3])
+    if lista and impronta[3] in lista:
+        lista.remove(impronta[3])
+
+
+# Descrizioni che non nominano la controparte: l'export dei movimenti
+# Revolut scrive «Revolut Bank UAB» dove il consolidato dice «Pagamento da
+# parte di MARIO ROSSI». Non somigliano a niente, ma non smentiscono
+# niente: stessa data, stessa direzione, stesso importo bastano.
+_SENZA_NOME = {"revolutbankuab", "revolutbank"}   # nella forma di `_esercente`
+
+
+def _stesso_movimento(rimasti: dict, r: dict, imp: tuple):
+    """L'impronta della riga a database che e' questo movimento, o None."""
+    from .suggerimenti import somiglianza, trigrammi
+    anonimo = imp[3] in _SENZA_NOME
+    for giorno in filter(None, (imp[0], r.get("data_valuta"))):
+        lista = rimasti.get((giorno, imp[1], imp[2]))
+        if not lista:
+            continue
+        for esercente in list(lista):
+            if (imp[2] >= 100 or esercente == imp[3] or anonimo or esercente in _SENZA_NOME
+                    or somiglianza(trigrammi(esercente), trigrammi(imp[3])) >= 0.75):
+                lista.remove(esercente)
+                return (giorno, imp[1], imp[2], esercente)
+    return None
 
 
 def segna_doppioni(esistenti: list[dict], righe: list[dict]) -> dict:
@@ -72,15 +113,41 @@ def segna_doppioni(esistenti: list[dict], righe: list[dict]) -> dict:
         per_importo.setdefault(chiave, []).append(
             (str(e.get("data") or "")[:10], (e.get("descrizione") or "").strip()))
 
+    # Secondo passaggio, per chi non ha l'impronta identica: lo stesso
+    # movimento con la descrizione scritta in un altro modo. Stessa
+    # direzione, stesso importo, stessa data (contabile o valuta), e in
+    # piu' una descrizione molto simile («Lidl 1482 Novate Milane» e
+    # «…novate milami», troncata dalla banca) oppure un importo da almeno
+    # 100 € — due bonifici identici da 2.000,00 nello stesso giorno non
+    # succedono, mentre due caffe' da 1,10 si'. Anche qui le copie si
+    # consumano una per una.
+    rimasti: dict = {}
+    for e in esistenti:
+        chiave = (str(e.get("data") or "")[:10], e.get("tipo"), _num(e.get("importo")))
+        rimasti.setdefault(chiave, []).append(_esercente(e.get("descrizione")))
     presenti = sospetti = 0
     for r in righe:
         imp = _impronta(r)
         if imp[2] is None:
             continue            # importo illeggibile: lo dira' il salvataggio
-        if disponibili[imp] > 0:
-            disponibili[imp] -= 1
+        # La stessa impronta con la data valuta: l'estratto WeBank ne porta
+        # due (contabile e valuta), e lo storico le ha usate entrambe.
+        alt = ((r["data_valuta"],) + imp[1:]) if r.get("data_valuta") else None
+        trovata = imp if disponibili[imp] > 0 else (
+            alt if alt and disponibili[alt] > 0 else None)
+        if trovata:
+            disponibili[trovata] -= 1
+            _togli(rimasti, trovata)
             r["presente"] = True
-            r["nota"] = "già registrato"
+            r["nota"] = ("già registrato" if trovata == imp
+                         else "già registrato con la data valuta")
+            presenti += 1
+            continue
+        simile = _stesso_movimento(rimasti, r, imp)
+        if simile:
+            disponibili[simile] -= 1
+            r["presente"] = True
+            r["nota"] = "già registrato con un'altra descrizione"
             presenti += 1
             continue
         try:

@@ -138,6 +138,12 @@ def parse_bank_xlsx(file_bytes: bytes) -> dict:
     colonna_data_incerta = idx_data is None
     if idx_data is None:
         idx_data = 0
+    # La data valuta, quando c'e'. Non e' quella che si salva (si salva la
+    # contabile, come sempre), ma serve a riconoscere i movimenti gia'
+    # registrati: in passato alcuni sono entrati con una data e alcuni con
+    # l'altra, e lo stesso Iper del 08/07 (valuta) e del 09/07 (contabile)
+    # sembrava due spese diverse.
+    idx_valuta = trova("data valuta")
     idx_imp = trova("importo")
     idx_desc = trova("causale", "descrizione")
     if idx_imp is None or idx_desc is None:
@@ -188,8 +194,21 @@ def parse_bank_xlsx(file_bytes: bytes) -> dict:
         raw_desc = row[idx_desc] if idx_desc < len(row) else ""
         raw_desc = "" if raw_desc is None else str(raw_desc)
 
+        valuta = None
+        if idx_valuta is not None and idx_valuta < len(row):
+            v_raw = row[idx_valuta]
+            if isinstance(v_raw, datetime):
+                valuta = v_raw.date().isoformat()
+            elif isinstance(v_raw, date):
+                valuta = v_raw.isoformat()
+            elif isinstance(v_raw, str):
+                try:
+                    valuta = datetime.strptime(v_raw.strip(), "%d/%m/%Y").date().isoformat()
+                except ValueError:
+                    valuta = None
         out.append({
             "data": d.isoformat(),
+            "data_valuta": valuta if valuta != d.isoformat() else None,
             "tipo": "entrata" if imp > 0 else "uscita",
             "importo": round(abs(imp), 2),
             "descrizione": clean_bank_description(raw_desc),

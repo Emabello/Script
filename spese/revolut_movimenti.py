@@ -67,6 +67,7 @@ Rotte JSON:
   DELETE /spese/api/revolut/movimenti/<id>
 """
 import json
+import re
 from datetime import date, timedelta
 
 from flask import Response, jsonify, request
@@ -434,47 +435,51 @@ def ponte(client, righe: list[dict] | None = None) -> dict | None:
 # Suggerimento della categoria, all'import
 # ---------------------------------------------------------------------------
 
-_PAROLE = (
-    # (categoria, parole che la riconoscono nella descrizione). L'ordine
-    # conta: "interessi" viene prima del deposito, perche' gli interessi
-    # si leggono proprio nella sezione deposito.
-    (CATEGORIA_INTERESSI, ("interess", "interest", "ritenuta", "withholding")),
-    (CATEGORIA_INVESTIMENTI, ("investment", "investiment", "trading",
-                              "broker", "stock", "azioni", "cripto", "crypto")),
-    (CATEGORIA_INTERNO, ("deposito", "salvadanai", "savings", "vault",
-                         "pocket", "conto personale")),
-)
+# Le descrizioni che l'estratto Revolut usa davvero (consolidato del
+# 27/09/2026, 976 movimenti), per le tre categorie che sono fatti del
+# conto e non abitudini di spesa.
+_INTERESSI = re.compile(r"interess|interest|ritenuta|withholding", re.I)
+_INVESTIMENTI = re.compile(r"investiment|investment|portfolio|trading|broker|"
+                           r"\brobo\b|azioni|stock|cripto|crypto", re.I)
+# Soldi che si spostano fra le parti di Revolut: dal conto a un salvadanaio
+# («Accredita EUR Emergenze da EUR», «A EUR Casa»), indietro («Prelievo da
+# Pocket», «Da EUR Vacanze»), fra valute («Conversione in JPY»), o il
+# trasloco del conto in un'altra entita' Revolut («Balance migration…»,
+# aprile 2026: esce e rientra lo stesso importo, lo stesso giorno).
+_INTERNI = re.compile(r"accredita\s+eur|prelievo da pocket|^\s*(a|da)\s+eur\b|"
+                      r"conversione in [a-z]{3}\b|deposito senza vincoli|balance migration|"
+                      r"\bpocket\b|\bvault\b|conto di risparmio|savings", re.I)
 
 
 def suggerisci(mov: dict, gemella: bool = False) -> str | None:
     """
-    La categoria che l'import propone per una riga dell'estratto. Solo
-    una proposta: la riga resta modificabile prima di salvare.
+    La categoria che l'import propone per una riga dell'estratto, quando
+    e' un FATTO del conto e non una scelta: il resto lo propone lo storico
+    (shared/suggerimenti.py), e quello che nemmeno lo storico conosce
+    resta da scegliere.
 
-    Tre fonti, in ordine di affidabilita':
+    1. **la gemella su WeBank**: un bonifico «Risparmi» dello stesso
+       importo nei giorni giusti — questa riga e' la sua altra meta'.
+    2. **gli interessi** del deposito.
+    3. **gli investimenti**: «Al conto di investimento», «To Robo portfolio».
+    4. **i giroconti interni**: conto ↔ salvadanai, cambi di valuta.
 
-    1. **la gemella su WeBank**: se sul conto personale c'e' un bonifico
-       Risparmi dello stesso importo nei giorni giusti, questa riga e' la
-       sua altra meta'. E' un fatto, non un'euristica sulle parole.
-    2. **la sezione**: nel deposito entrano ed escono solo spostamenti
-       dalla liquidita' e interessi — un movimento del deposito che non e'
-       un interesse e' un giroconto interno.
-    3. **le parole** della descrizione, per interessi, investimenti e
-       spostamenti verso il deposito visti dalla liquidita'.
-
-    Tutto il resto — la cena, il biglietto del treno — resta senza
-    categoria e lo scegli tu: indovinarlo da un nome di esercente
-    sbaglierebbe abbastanza spesso da non potersi fidare di nessuna.
+    Una spesa pagata DA un salvadanaio (un volo dalle «Vacanze») non e' un
+    giroconto: esce da Revolut davvero. Per questo la sezione da sola non
+    decide piu' niente — decidono le parole e la categoria che Revolut
+    stessa assegna («Esercente», «Cambio valuta»).
     """
     if gemella:
         return D.CATEGORIA_RISPARMIO
-    desc = (mov.get("descrizione") or "").lower()
-    for categoria, parole in _PAROLE:
-        if any(p in desc for p in parole):
-            if categoria == CATEGORIA_INTERNO and mov.get("sezione") != "conto":
-                continue
-            return categoria
-    if mov.get("sezione") == "risparmi":
+    desc = (mov.get("descrizione") or "")
+    banca = (mov.get("categoria_banca") or "").lower()
+    if _INTERESSI.search(desc):
+        return CATEGORIA_INTERESSI
+    if banca == "esercente":
+        return None
+    if _INVESTIMENTI.search(desc):
+        return CATEGORIA_INVESTIMENTI
+    if banca == "cambio valuta" or _INTERNI.search(desc):
         return CATEGORIA_INTERNO
     return None
 
@@ -534,15 +539,28 @@ def prepara_import(client, letti: list[dict]) -> tuple[list[dict], list[dict]]:
 
     avvisi = []
     nuove = [r for r in out if not r.get("presente")]
-    manuali = [r for r in (tutti(client, dal_w, al_w) or []) if r.get("fonte") == "manuale"]
-    if manuali:
-        IM.segna_doppioni(manuali, nuove)
+    # Chi non ha l'impronta uguale si confronta con tutto quello che e'
+    # gia' salvato e non e' stato riconosciuto: i movimenti scritti a mano
+    # e quelli di un estratto nell'ALTRO formato. Il consolidato e l'export
+    # dei movimenti chiamano lo stesso bonifico in due modi («Pagamento da
+    # parte di MARIO ROSSI» / «Revolut Bank UAB»): stessa data, stesso
+    # importo, due impronte. Sezione per sezione, perche' il versamento al
+    # deposito esce dal conto ed entra nel deposito lo stesso giorno.
+    riconosciute = {m.get("chiave") for m in letti} & presenti
+    salvati = [r for r in (tutti(client, dal_w, al_w) or [])
+               if r.get("chiave") not in riconosciute]
+    for sezione in SEZIONI_CHIAVI:
+        esistenti = [r for r in salvati if (r.get("sezione") or "conto") == sezione]
+        if esistenti:
+            IM.segna_doppioni(esistenti,
+                              [r for r in nuove if (r.get("sezione") or "conto") == sezione])
+    nuove = [r for r in nuove if not r.get("presente")]
     ammesse = {v["valore"] for v in voci_pannello(client)}
     proposte = IM.proponi(SG.storico_personale(client), nuove, ammesse)
     n_presenti = len(out) - len(nuove)
     if n_presenti:
-        avvisi.append({"testo": f"{n_presenti} movimenti erano già stati salvati da un "
-                                f"estratto precedente: restano come sono."})
+        avvisi.append({"testo": f"{n_presenti} movimenti erano già registrati "
+                                f"(da un estratto precedente o a mano): restano come sono."})
     if gemelle:
         avvisi.append({"testo": f"{len(gemelle)} entrate hanno il loro bonifico «Risparmi» "
                                 f"su WeBank, e sono già categorizzate così."})

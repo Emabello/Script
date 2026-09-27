@@ -522,8 +522,13 @@ finisce il risparmio**: senza, quel denaro usciva dal conto personale
 - JSON: `GET|POST /api/revolut`, `POST /api/revolut/leggi` (multipart:
   legge il file e basta, non scrive).
 - `parse_estratto(bytes, nome_file)`: legge l'estratto consolidato di
-  Revolut: saldi di chiusura e d'apertura, movimenti (colonne trovate
-  per nome), quadrature per conto. `saldo_revolut(client, al)`: l'ultimo
+  Revolut (.xlsx o .csv): saldi di chiusura e d'apertura, movimenti
+  (colonne trovate per nome), quadrature per conto. Se il file è
+  l'export dei movimenti («account-statement»: colonne Prodotto e Data
+  di completamento) passa a `parse_movimenti_revolut(righe, nome_file)`,
+  che restituisce la stessa forma più i `salvadanai` ricostruiti dalle
+  descrizioni del deposito. `_impronta_movimento` è la stessa per i due
+  formati (in valuta usa `importo_valuta`). `saldo_revolut(client, al)`: l'ultimo
   snapshot a quella data più i movimenti registrati dopo (`dopo`).
   `coerenza(client, rev)`: il confronto fra risparmio dichiarato e saldo
   reale dei salvadanai.

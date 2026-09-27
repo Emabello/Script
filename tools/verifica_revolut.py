@@ -103,6 +103,8 @@ def main():
     controlla(R._importo("12.50") == 12.5, "12.50 col punto -> 12.5 (non 1250)")
     controlla(R._importo("1.234") == 1234, "1.234 -> 1234 (migliaia)")
     controlla(R._importo("") is None, "cella vuota -> None")
+    controlla(R._importo("13.600,00 EGP") == 13600, "13.600,00 EGP -> 13600 (codice valuta)")
+    controlla(R._importo("-428¥") == -428, "-428¥ -> -428")
     controlla(str(R._data("3 ago 2026")) == "2026-08-03", "3 ago 2026")
     controlla(str(R._data("03/08/2026")) == "2026-08-03", "03/08/2026")
     controlla(str(R._data("2026-08-03 10:12")) == "2026-08-03", "2026-08-03 10:12")
@@ -146,6 +148,70 @@ def main():
     controlla((letto_v["conto"], letto_v["risparmi"], len(letto_v["movimenti"]))
               == (letto["conto"], letto["risparmi"], 8),
               "titoli in coda («Conti correnti Riepiloghi»): stessi numeri")
+
+    print("\n== export dei movimenti («account-statement», CSV)")
+    csv_mov = "\n".join([
+        "Tipo,Prodotto,Data di inizio,Data di completamento,Descrizione,Importo,Costo,Valuta,State,Saldo",
+        "Ricarica,Attuale,2026-08-01 09:00:00,2026-08-01 09:00:00,Bonifico da Emanuele Bellotti,300,0,EUR,COMPLETATO,300",
+        "Pagamento con carta,Attuale,2026-08-02 12:00:00,2026-08-03 08:00:00,Caffè Centrale,-1.2,0,EUR,COMPLETATO,298.8",
+        "Pagamento con carta,Attuale,2026-08-02 12:30:00,2026-08-03 08:00:00,Caffè Centrale,-1.2,0,EUR,COMPLETATO,297.6",
+        "Cambia valuta,Attuale,2026-08-04 10:00:00,2026-08-04 10:00:00,Conversione in USD,-100,0,EUR,COMPLETATO,197.6",
+        "Cambia valuta,Attuale,2026-08-04 10:00:00,2026-08-04 10:00:00,Conversione in USD,110,0,USD,COMPLETATO,110",
+        "Pagamento con carta,Attuale,2026-08-05 10:00:00,2026-08-05 10:00:00,Diner NYC,-55,0,USD,COMPLETATO,55",
+        "Pagamento,Attuale,2026-08-06 10:00:00,2026-08-06 10:00:00,Amazon,-20,0,EUR,ANNULLATO,",
+        "Trasferimento,Attuale,2026-08-07 10:00:00,2026-08-07 10:00:00,A EUR Casa,-150,0,EUR,COMPLETATO,47.6",
+        "Pagamento,Deposito,2026-08-07 10:00:00,2026-08-07 10:00:00,A EUR Casa,150,0,EUR,COMPLETATO,150",
+        "Pagamento,Deposito,2026-08-08 10:00:00,2026-08-08 10:00:00,A EUR Vacanze,50,0,EUR,COMPLETATO,200",
+        'Interessi,Deposito,2026-08-09 05:00:00,2026-08-09 05:00:00,"Interessi netti pagati nel conto ""Casa"" in data Aug 9, 2026",0.25,0.05,EUR,COMPLETATO,200.2',
+    ])
+    lm = R.parse_estratto(csv_mov.encode("utf-8"), "account-statement_2026-08-01_2026-08-31_it-it.csv")
+    controlla(lm.get("formato") == "movimenti", "riconosciuto come export movimenti")
+    controlla(lm["data"] == "2026-08-31", f'data dal nome del file ({lm["data"]})')
+    controlla(lm["conto"] == 47.6, f'liquidità dal saldo progressivo ({lm["conto"]})')
+    controlla(lm["risparmi"] == 200.2, f'deposito dal saldo progressivo ({lm["risparmi"]})')
+    controlla(lm["salvadanai"] == {"casa": 150.2, "vacanze": 50.0},
+              f'salvadanai ricostruiti dalle descrizioni ({lm["salvadanai"]})')
+    controlla(all(q["ok"] for q in lm["quadrature"]), "tutte le quadrature tornano")
+    mm = lm["movimenti"]
+    controlla(not any(m["descrizione"] == "Amazon" for m in mm), "l'operazione annullata è saltata")
+    interessi = next(m for m in mm if m["descrizione"].startswith("Interessi"))
+    controlla(interessi["importo"] == 0.2, "interessi al netto della ritenuta (0,25 − 0,05)")
+    diner = next(m for m in mm if m["descrizione"] == "Diner NYC")
+    controlla(diner["importo"] == 50.0 and diner["valuta"] == "USD",
+              f'dollari in euro al cambio della conversione ({diner["importo"]})')
+    caffe_m = [m for m in mm if m["descrizione"] == "Caffè Centrale"]
+    controlla(len(caffe_m) == 2 and caffe_m[0]["chiave"] != caffe_m[1]["chiave"],
+              "due caffè identici restano due movimenti")
+    # Lo stesso movimento letto dal consolidato e dall'export ha la stessa
+    # impronta: reimportare con l'altro formato non raddoppia niente.
+    controlla(R._impronta_movimento({"sezione": "risparmi", "data": "2026-08-09", "tipo": "entrata",
+                                     "importo": 0.2, "descrizione":
+                                     'Interessi netti pagati nel conto "Casa"'})
+              == R._impronta_movimento(interessi),
+              "impronta indipendente dal formato (senza «in data …»)")
+    # In valuta i due formati convertono in euro con cambi diversi: conta
+    # l'importo nella valuta, che e' lo stesso.
+    controlla(R._impronta_movimento({"sezione": "conto", "data": "2026-08-05", "tipo": "uscita",
+                                     "importo": 50.61, "valuta": "USD", "importo_valuta": 55.0,
+                                     "descrizione": "Diner NYC"})
+              == R._impronta_movimento(diner), "in valuta l'impronta non dipende dal cambio")
+
+    print("\n== lo stesso estratto nell'altro formato non raddoppia")
+    from shared import importazione as IM
+    esistenti = [{"data": "2025-12-22", "tipo": "entrata", "importo": 60.0,
+                  "descrizione": "Pagamento da parte di MARIO ROSSI"},
+                 {"data": "2025-10-09", "tipo": "entrata", "importo": 2000.0,
+                  "descrizione": "Pagamento da parte di MARIO ROSSI"}]
+    file_ = [{"data": "2025-12-22", "tipo": "entrata", "importo": 60.0,
+              "descrizione": "Revolut Bank UAB"},
+             {"data": "2025-10-09", "tipo": "entrata", "importo": 2000.0,
+              "descrizione": "Revolut Bank UAB"},
+             {"data": "2025-12-23", "tipo": "entrata", "importo": 60.0,
+              "descrizione": "Revolut Bank UAB"}]
+    IM.segna_doppioni(esistenti, file_)
+    controlla(file_[0].get("presente") and file_[1].get("presente"),
+              "«Revolut Bank UAB» riconosciuto come il bonifico col nome (stesso giorno e importo)")
+    controlla(not file_[2].get("presente"), "…ma non quello di un altro giorno")
 
     print("\n== una riga mancante si vede prima di salvare")
     monco = [r for r in RIGHE if "Trattoria" not in r]

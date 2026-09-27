@@ -280,6 +280,9 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 
 ## Fatti (storico — per non riproporli)
 
+### [2026-09-27] I due formati di Revolut avrebbero raddoppiato 25–47 movimenti a vicenda
+Consolidato ed export dei movimenti dello stesso periodo: 929 impronte comuni su 976. Il resto era lo stesso movimento scritto in due modi — gli yen e le sterline egiziane convertiti in euro con cambi diversi (e «13.600,00 EGP» non si leggeva proprio: `_importo` conosceva solo €/$/£/¥), e i bonifici fra persone che l'export chiama «Revolut Bank UAB». Ora in valuta l'impronta usa l'importo nella valuta, `_importo` toglie qualunque codice di tre lettere, e l'import Revolut passa anche il secondo controllo dei doppioni contro tutti i movimenti già salvati (non solo quelli manuali), sezione per sezione: 976 su 976 riconosciuti. «Balance migration…» (aprile 2026) è un giroconto interno.
+
 ### [2026-09-27] I suggerimenti non riproducevano le decisioni già prese
 Rigiocata su tutto lo storico (522 movimenti), la formula riproponeva la categoria giusta solo nel 95,2% dei casi: votavano i vicini, e un esercente con trenta caffè sovrastava il pranzo allo stesso importo categorizzato apposta. Ora a parità di esercente, importo e direzione vale la decisione più vicina nel tempo (memoria 100%), le città in coda non contano, le parole comuni pesano meno e un importo mai visto non si preseleziona. Banco di prova ripetibile: `tools/verifica_suggerimenti.py`.
 

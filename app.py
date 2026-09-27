@@ -123,6 +123,13 @@ xs_server.ALLOW_NO_PIN.update({
 })
 
 
+# I file statici (font, jsPDF) non cambiano fra un deploy e l'altro: il
+# browser li tiene per un mese invece di richiederli a ogni pagina. Prima
+# ogni click faceva tre o quattro richieste «e' cambiato?» per i font,
+# e con un server che ne serve una alla volta passavano davanti alla pagina.
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 60 * 60 * 24 * 30
+
+
 @app.after_request
 def _firma_risposta(resp):
     """
@@ -136,6 +143,9 @@ def _firma_risposta(resp):
     pagina d'attesa dalla cache.
     """
     resp.headers["X-B2F"] = "hub"
+    from flask import request as _rq
+    if _rq.endpoint in ("manifest", "icon192", "icon512", "appleicon"):
+        resp.headers["Cache-Control"] = "public, max-age=86400"
     return _comprimi(resp)
 
 

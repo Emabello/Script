@@ -141,7 +141,8 @@ def _demojibake(s) -> str:
 def _importo(s: str) -> float | None:
     """"8.525,39€" -> 8525.39. None se la cella non e' un importo."""
     t = (s or "").replace("\xa0", " ").replace(" ", "").strip()
-    t = re.sub(r"[€$£¥+]|EUR", "", t).strip()
+    # Il simbolo o il codice della valuta: «€», «¥», ma anche «13.600,00 EGP».
+    t = re.sub(r"[€$£¥+]|[A-Z]{3}", "", t).strip()
     # "12.50" senza virgola: il punto e' il separatore decimale, non
     # quello delle migliaia. Letto all'italiana diventava 1250 — un
     # errore di cento volte, su un movimento che sembrava normalissimo.
@@ -202,6 +203,16 @@ def _righe_csv(file_bytes: bytes) -> list[list[str]]:
     insieme il testo e lo si rilegge come CSV vero — non si puo' leggere
     per celle, perche' celle non ce ne sono.
     """
+    if not file_bytes.startswith(b"PK"):
+        # Il consolidato si scarica anche come .csv: stesso contenuto, e
+        # gli stessi accenti passati due volte per la codifica sbagliata.
+        # (Un xlsx e' uno zip, e uno zip comincia sempre con «PK».)
+        try:
+            testo = file_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            testo = file_bytes.decode("cp1252", errors="replace")
+        testo = "\n".join(_demojibake(r) for r in testo.splitlines())
+        return list(csv.reader(io.StringIO(testo)))
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
     ws = wb.active
     testo = "\n".join(_demojibake(r[0]) for r in ws.iter_rows(values_only=True))
@@ -217,7 +228,10 @@ def _data_estratto(righe, nome_file: str = ""):
     data e' la fine. Se manca (file rinominato) si ripiega sull'ultimo
     movimento presente, che e' comunque dentro il periodo.
     """
-    date_nome = re.findall(r"(20\d{6})", nome_file or "")
+    # Due forme del nome: «..._20240910_20260812_...» e, nel csv,
+    # «..._2024-09-10_2026-09-27_...».
+    date_nome = [d.replace("-", "") for d in
+                 re.findall(r"(20\d{2}-?\d{2}-?\d{2})", nome_file or "")]
     if date_nome:
         try:
             return datetime.strptime(date_nome[-1], "%Y%m%d").date()
@@ -273,12 +287,27 @@ def _intestazione_movimenti(celle: list[str]) -> dict | None:
     i_desc = trova("descri")
     if i_data is None or i_desc is None:
         return None
+    # Le colonne con il SEGNO: «Denaro in entrata/uscita» (una colonna
+    # sola, «-5,50€» o «100,00€») o «Importo». Sui conti in valuta sono
+    # due con lo stesso nome, la valuta del conto e il controvalore in
+    # euro: si tengono tutte e la riga sceglie quella in euro.
+    firmati = [i for i, c in enumerate(basse)
+               if ("entrat" in c and "uscit" in c)
+               or (("importo" in c or "amount" in c)
+                   and not any(e in c for e in ("saldo", "balance")))]
+    uscita = trova("uscit", "money out", "addebit", "paid out")
+    entrata = trova("entrat", "money in", "accredit", "paid in")
+    if uscita in firmati or entrata in firmati:
+        uscita = entrata = None
     return {
         "data": i_data,
         "desc": i_desc,
-        "uscita": trova("uscit", "money out", "addebit", "paid out"),
-        "entrata": trova("entrat", "money in", "accredit", "paid in"),
-        "importo": trova("importo", "amount", escludi=("saldo", "balance")),
+        "categoria": trova("categoria", "category", "tipo", "type"),
+        "uscita": uscita,
+        "entrata": entrata,
+        "firmati": firmati,
+        # Il deposito elenca solo gli interessi, con «Net interest».
+        "interessi": trova("net interest", "interessi netti"),
         "saldo": trova("saldo", "balance"),
     }
 
@@ -296,10 +325,39 @@ def _chiave_movimento(m: dict, n: int) -> str:
     verrebbe scartato come doppione del primo.
     """
     import hashlib
-    base = "|".join([m["sezione"], m["conto"], m["data"], m["tipo"],
-                     f'{m["importo"]:.2f}', m["descrizione"].strip().lower(),
-                     str(n)])
+    base = "|".join(_impronta_movimento(m) + (str(n),))
     return hashlib.sha1(base.encode("utf-8")).hexdigest()[:24]
+
+
+def _impronta_movimento(m: dict) -> tuple:
+    """
+    Quello che identifica un movimento **qualunque sia il file** da cui
+    arriva: parte di Revolut (liquidita' o risparmi), data, direzione,
+    importo, descrizione. Non il nome del conto — il consolidato dice
+    «Emergenze», l'export dei movimenti dice solo «Risparmi» —, cosi'
+    importare i due formati dello stesso periodo non raddoppia niente.
+    """
+    # In valuta l'importo in euro dipende dal cambio, e i due formati ne
+    # usano due diversi (il consolidato quello del giorno, l'export quello
+    # ricavato dalle conversioni): conta l'importo nella valuta del conto,
+    # che e' lo stesso in entrambi (-428 ¥ resta -428 ¥).
+    if m.get("valuta", "EUR") != "EUR" and m.get("importo_valuta") is not None:
+        importo = f'{m["valuta"]} {m["importo_valuta"]:.2f}'
+    else:
+        importo = f'{m["importo"]:.2f}'
+    return (m["sezione"], m["data"], m["tipo"], importo,
+            _descrizione_canonica(m["descrizione"]))
+
+
+def _descrizione_canonica(desc: str) -> str:
+    """
+    La descrizione ridotta a quello che non cambia fra i due formati:
+    minuscole, spazi singoli, senza la data ripetuta negli interessi
+    («… in data 20 apr 2026» nel consolidato, «… in data Apr 20, 2026»
+    nell'export dei movimenti).
+    """
+    d = re.sub(r"\s+in data .*$", "", str(desc or ""), flags=re.I)
+    return re.sub(r"\s+", " ", d).strip().lower()
 
 
 def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
@@ -328,6 +386,9 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
     righe = _righe_csv(file_bytes)
     if not righe:
         raise ValueError("Il file è vuoto.")
+    intestazione = [c.strip().lower() for c in righe[0]]
+    if "prodotto" in intestazione and "data di completamento" in intestazione:
+        return parse_movimenti_revolut(righe, nome_file)
 
     modo = None             # 'saldi' | 'movimenti' | None
     sezione = None          # 'conto' | 'risparmi' | 'investimenti' | None
@@ -337,6 +398,8 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
     aperture: dict[tuple, float] = {}
     movimenti: list[dict] = []
     viste: dict[tuple, int] = {}
+    sezione_blocco = None
+    blocchi_interessi: set = set()
     investimenti_trovati = False
     avvisi: list[str] = []
     in_valuta = 0
@@ -358,8 +421,10 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
         # sempre con la valuta fra parentesi.
         basso_testa = testa.lower()
         titolo = len(piene) == 1 and not re.search(r"\([A-Z]{3}\)\s*$", testa)
-        if titolo and re.search(r"(^|\s)(riepiloghi|riepilogo|summaries|summary)(\s|$)",
-                                basso_testa):
+        # Solo il plurale: «Riepilogo delle transazioni» e «Interest and
+        # Tax Summary» stanno DENTRO un conto, e trattarli come titoli di
+        # sezione azzerava il conto in lettura — zero movimenti letti.
+        if titolo and re.search(r"(^|\s)(riepiloghi|summaries)(\s|$)", basso_testa):
             modo = "saldi"
             sezione = _sezione_da_titolo(testa)
             if sezione == "investimenti":
@@ -379,11 +444,23 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
             continue
 
         # Nome del conto: unica cella piena, nella forma "Qualcosa (EUR)".
+        # I salvadanai («Emergenze», «Fondo casa»…) stanno fra i conti
+        # correnti dell'estratto, ma sono risparmi: la sezione la decide
+        # il nome, non il titolo sotto cui compaiono.
         if len(piene) == 1:
             m = re.fullmatch(r"(.+?)\s*\(([A-Z]{3})\)", testa)
             if m:
-                conto_corrente = (re.sub(r"\s+", " ", m.group(1)).strip(), m.group(2))
+                nome_conto = re.sub(r"\s+", " ", m.group(1)).strip()
+                # «Conto personale» c'e' in euro, in yen, in sterline egiziane:
+                # stesso nome, conti diversi. Fuori dall'euro il nome porta la
+                # valuta, o i movimenti in yen finirebbero nella quadratura
+                # del conto in euro.
+                if m.group(2) != "EUR":
+                    nome_conto = f"{nome_conto} ({m.group(2)})"
+                conto_corrente = (nome_conto, m.group(2))
                 colonne = None
+                sezione_blocco = ("risparmi" if _chiave_salvadanaio(conto_corrente[0])
+                                  else sezione)
             continue
 
         if modo == "saldi":
@@ -397,10 +474,10 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
             if not importi:
                 continue
             if basso.startswith(("saldo di apertura", "opening balance")):
-                aperture[(sezione, conto_corrente[0])] = round(importi[-1], 2)
+                aperture[(sezione_blocco, conto_corrente[0])] = round(importi[-1], 2)
             elif basso.startswith(("saldo di chiusura", "closing balance")):
                 dettaglio.append({
-                    "sezione": sezione,
+                    "sezione": sezione_blocco,
                     "nome": conto_corrente[0],
                     "valuta": conto_corrente[1],
                     "saldo": round(importi[-1], 2),
@@ -423,36 +500,60 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
         quando = _data(cella(colonne["data"]))
         if not quando:
             continue            # righe di servizio: totali, note, ripetizioni
-        uscita = _importo(cella(colonne["uscita"]))
-        entrata = _importo(cella(colonne["entrata"]))
-        if uscita is None and entrata is None and colonne["importo"] is not None:
-            firmato = _importo(cella(colonne["importo"]))
+        in_euro = conto_corrente[1] == "EUR"
+        uscita = entrata = in_originale = None
+        if colonne["firmati"]:
+            # Sui conti in valuta c'e' anche il controvalore in euro: si
+            # prende quello. Un movimento in yen non si somma agli euro, e
+            # inventare un cambio darebbe un saldo sbagliato con l'aria di
+            # giusto; il controvalore e' quello che la banca ha applicato.
+            celle_imp = [cella(i) for i in colonne["firmati"]]
+            scelta = next((c for c in celle_imp if "€" in c or "EUR" in c), None)
+            if scelta is None and in_euro:
+                scelta = celle_imp[0]
+            firmato = _importo(scelta) if scelta is not None else None
+            originale = next((c for c in celle_imp if c.strip() and "€" not in c
+                              and "EUR" not in c), None) if not in_euro else None
+            in_originale = _importo(originale) if originale is not None else None
             if firmato is not None:
                 (entrata, uscita) = (firmato, None) if firmato >= 0 else (None, -firmato)
+            elif not in_euro:
+                in_valuta += 1
+                continue
+        elif colonne["interessi"] is not None:
+            entrata = _importo(cella(colonne["interessi"]))
+            blocchi_interessi.add((sezione_blocco, conto_corrente[0]))
+        else:
+            if not in_euro:
+                in_valuta += 1
+                continue
+            uscita = _importo(cella(colonne["uscita"]))
+            entrata = _importo(cella(colonne["entrata"]))
         if uscita:
             tipo, importo = "uscita", abs(uscita)
         elif entrata:
             tipo, importo = "entrata", abs(entrata)
+        elif uscita == 0 or entrata == 0:
+            continue            # movimento da zero (un interesse di 0,00)
         else:
             illeggibili += 1
             continue
-        if conto_corrente[1] != "EUR":
-            # Un movimento in dollari non si somma a quelli in euro: il
-            # controvalore non e' nella riga, e inventarlo con un cambio
-            # qualunque darebbe un saldo sbagliato con l'aria di giusto.
-            in_valuta += 1
-            continue
 
         mov = {
-            "sezione": sezione,
+            "sezione": sezione_blocco,
             "conto": conto_corrente[0],
+            "valuta": conto_corrente[1],
+            "categoria_banca": cella(colonne["categoria"]).strip()[:40]
+                               if colonne["categoria"] is not None
+                               and colonne["categoria"] not in colonne["firmati"] else "",
             "data": quando.isoformat(),
             "tipo": tipo,
             "importo": round(importo, 2),
             "descrizione": re.sub(r"\s+", " ", cella(colonne["desc"])).strip()[:200],
         }
-        impronta = (mov["sezione"], mov["conto"], mov["data"], mov["tipo"],
-                    mov["importo"], mov["descrizione"].lower())
+        if in_originale is not None:
+            mov["importo_valuta"] = round(abs(in_originale), 2)
+        impronta = _impronta_movimento(mov)
         n = viste.get(impronta, 0)
         viste[impronta] = n + 1
         mov["chiave"] = _chiave_movimento(mov, n)
@@ -461,7 +562,7 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
     if not dettaglio:
         raise ValueError(
             "Non ho trovato nessun saldo di chiusura. È l'estratto conto "
-            "consolidato di Revolut in formato Excel?")
+            "consolidato di Revolut (Excel o CSV)?")
 
     conto = round(sum(d["saldo"] for d in dettaglio if d["sezione"] == "conto"), 2)
     risparmi = round(sum(d["saldo"] for d in dettaglio if d["sezione"] == "risparmi"), 2)
@@ -473,8 +574,6 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
     # di conto, e non dopo.
     quadrature = []
     for d in dettaglio:
-        if d["valuta"] != "EUR":
-            continue
         chiave = (d["sezione"], d["nome"])
         propri = [m for m in movimenti
                   if (m["sezione"], m["conto"]) == chiave]
@@ -483,16 +582,29 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
         entrate = round(sum(m["importo"] for m in propri if m["tipo"] == "entrata"), 2)
         uscite = round(sum(m["importo"] for m in propri if m["tipo"] == "uscita"), 2)
         apertura = aperture.get(chiave)
+        nota = None
+        if chiave in blocchi_interessi:
+            # Il deposito, nell'estratto, elenca SOLO gli interessi: i
+            # versamenti e i prelievi compaiono dall'altra parte (sul conto
+            # corrente, «A EUR Casa», «Da EUR Vacanze»). La quadratura non
+            # si puo' fare, e dire «non torna» sarebbe un falso allarme.
+            apertura, nota = None, "l'estratto elenca solo gli interessi del deposito"
         calcolato = (round(apertura + entrate - uscite, 2)
                      if apertura is not None else None)
         scarto = (round(d["saldo"] - calcolato, 2)
                   if calcolato is not None else None)
+        # Sui conti in valuta i movimenti sono al controvalore del giorno,
+        # la chiusura al cambio di fine periodo: qualche euro di differenza
+        # e' il cambio, non una riga che manca.
+        tolleranza = 0.01 if d["valuta"] == "EUR" else 5.0
+        if d["valuta"] != "EUR" and nota is None:
+            nota = f'conto in {d["valuta"]}: movimenti al controvalore in euro'
         quadrature.append({
-            "sezione": d["sezione"], "nome": d["nome"],
+            "sezione": d["sezione"], "nome": d["nome"], "valuta": d["valuta"],
             "apertura": apertura, "entrate": entrate, "uscite": uscite,
             "movimenti": len(propri), "chiusura": d["saldo"],
-            "calcolato": calcolato, "scarto": scarto,
-            "ok": scarto is not None and abs(scarto) < 0.01,
+            "calcolato": calcolato, "scarto": scarto, "nota": nota,
+            "ok": scarto is not None and abs(scarto) < tolleranza,
         })
 
     if investimenti_trovati:
@@ -517,6 +629,11 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
             f"{illeggibili} righe con una data ma senza un importo leggibile "
             "sono state saltate.")
     storte = [q for q in quadrature if q["scarto"] is not None and not q["ok"]]
+    in_valuta_letti = sorted({m["valuta"] for m in movimenti if m.get("valuta") != "EUR"})
+    if in_valuta_letti:
+        avvisi.append(
+            "Movimenti su conti in " + ", ".join(in_valuta_letti) + ": letti al "
+            "controvalore in euro che la banca ha applicato quel giorno.")
     if storte:
         avvisi.append(
             "I movimenti letti non tornano con il saldo dichiarato su "
@@ -532,6 +649,210 @@ def parse_estratto(file_bytes: bytes, nome_file: str = "") -> dict:
         "movimenti": movimenti,
         "quadrature": quadrature,
         "investimenti_nel_file": investimenti_trovati,
+        "avvisi": avvisi,
+    }
+
+
+def _salvadanaio_da_descrizione(desc: str) -> str | None:
+    """
+    La chiave del salvadanaio nominato in una descrizione del deposito:
+    «A EUR Casa», «Da EUR Vacanze», «Interessi netti pagati nel conto
+    "Emergenze"…». None se non ne nomina nessuno.
+    """
+    m = (re.search(r'nel conto\s+"([^"]+)"', desc or "", re.I)
+         or re.search(r"^\s*(?:a|da)\s+eur\s+(.+?)\s*$", desc or "", re.I)
+         or re.search(r"accredita\s+eur\s+(.+?)\s+da\s+eur", desc or "", re.I))
+    return _chiave_salvadanaio(m.group(1)) if m else None
+
+
+def parse_movimenti_revolut(righe: list[list[str]], nome_file: str = "") -> dict:
+    """
+    Legge l'export dei movimenti di Revolut («account-statement», una riga
+    per operazione: Tipo, Prodotto, Data di inizio, Data di completamento,
+    Descrizione, Importo, Costo, Valuta, State, Saldo) e restituisce la
+    stessa forma di `parse_estratto`.
+
+    E' il formato PIU' COMPLETO: il consolidato del deposito elenca solo
+    gli interessi, questo anche i versamenti e i prelievi («A EUR Casa»,
+    «Da EUR Vacanze»). Con quelli il saldo del deposito torna al centesimo
+    e i salvadanai si ricostruiscono dai movimenti, senza scriverli a mano.
+
+    Tre cose che il formato non dice e che qui si ricavano:
+      * l'importo e' lordo: il netto e' Importo − Costo (la ritenuta sugli
+        interessi, la commissione sul versamento al conto investimenti);
+      * i conti in valuta non hanno il controvalore in euro: si usa il
+        cambio che Revolut ha applicato davvero, ricavato dalle conversioni
+        dello stesso file («Conversione in JPY»: −161,80 € e +26.335 ¥
+        con lo stesso orario);
+      * le operazioni annullate non sono movimenti: si saltano.
+    """
+    import csv as _csv
+    testa = [c.strip().lower() for c in righe[0]]
+    col = {n: testa.index(n) for n in ("tipo", "prodotto", "data di inizio",
+                                        "data di completamento", "descrizione",
+                                        "importo", "costo", "valuta", "state", "saldo")
+           if n in testa}
+    if "importo" not in col or "descrizione" not in col:
+        raise ValueError("Export dei movimenti Revolut senza le colonne attese.")
+
+    def val(r, n):
+        i = col.get(n)
+        return r[i].strip() if i is not None and i < len(r) else ""
+
+    def num(t):
+        try:
+            return float(t.replace(",", ".")) if t else 0.0
+        except ValueError:
+            return None
+
+    grezze = []
+    annullate = 0
+    for r in righe[1:]:
+        if not any(c.strip() for c in r):
+            continue
+        stato = val(r, "state").upper()
+        if stato and stato != "COMPLETATO" and stato != "COMPLETED":
+            annullate += 1
+            continue
+        quando = (val(r, "data di completamento") or val(r, "data di inizio"))[:10]
+        imp, costo = num(val(r, "importo")), num(val(r, "costo"))
+        if imp is None or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", quando):
+            continue
+        grezze.append({"r": r, "data": quando, "inizio": val(r, "data di inizio"),
+                       "netto": round(imp - (costo or 0.0), 2),
+                       "prodotto": val(r, "prodotto"), "valuta": val(r, "valuta") or "EUR",
+                       "saldo": num(val(r, "saldo")), "tipo_banca": val(r, "tipo"),
+                       "descrizione": re.sub(r"\s+", " ", val(r, "descrizione")).strip()})
+
+    # Il cambio di ogni valuta dalle conversioni: stessa ora di inizio, una
+    # riga in euro e una nella valuta, di segno opposto.
+    per_ora: dict = {}
+    for g in grezze:
+        if g["tipo_banca"].lower().startswith("cambia"):
+            per_ora.setdefault(g["inizio"], []).append(g)
+    euro_per: dict = {}
+    for gruppo in per_ora.values():
+        eur = [g for g in gruppo if g["valuta"] == "EUR"]
+        altre = [g for g in gruppo if g["valuta"] != "EUR"]
+        for a in altre:
+            for e in eur:
+                if (a["netto"] > 0) != (e["netto"] > 0) and a["netto"] and e["netto"]:
+                    t = euro_per.setdefault(a["valuta"], [0.0, 0.0])
+                    t[0] += abs(e["netto"])
+                    t[1] += abs(a["netto"])
+                    break
+    cambio = {v: e / f for v, (e, f) in euro_per.items() if f}
+
+    movimenti, viste, avvisi = [], {}, []
+    senza_cambio = 0
+    sezioni = {"attuale": "conto", "current": "conto", "risparmi": "risparmi",
+               "savings": "risparmi", "deposito": "risparmi", "deposit": "risparmi"}
+    for g in grezze:
+        prodotto = g["prodotto"].lower()
+        sezione = sezioni.get(prodotto, "conto")
+        netto = g["netto"]
+        if g["valuta"] != "EUR":
+            if g["valuta"] not in cambio:
+                senza_cambio += 1
+                continue
+            netto = round(netto * cambio[g["valuta"]], 2)
+        if not netto:
+            continue
+        nome = {"attuale": "Conto personale", "deposito": "Deposito senza vincoli",
+                "risparmi": "Salvadanai"}.get(prodotto, g["prodotto"] or "Revolut")
+        if g["valuta"] != "EUR":
+            nome = f'{nome} ({g["valuta"]})'
+        mov = {
+            "sezione": sezione, "conto": nome, "valuta": g["valuta"],
+            "categoria_banca": g["tipo_banca"][:40],
+            "data": g["data"], "tipo": "entrata" if netto > 0 else "uscita",
+            "importo": abs(netto), "descrizione": g["descrizione"][:200],
+            "_prodotto": (g["prodotto"], g["valuta"]),
+        }
+        if g["valuta"] != "EUR":
+            mov["importo_valuta"] = round(abs(g["netto"]), 2)
+        impronta = _impronta_movimento(mov)
+        n = viste.get(impronta, 0)
+        viste[impronta] = n + 1
+        mov["chiave"] = _chiave_movimento(mov, n)
+        movimenti.append(mov)
+
+    # La quadratura per prodotto e valuta, con il saldo progressivo che il
+    # file porta su ogni riga: saldo prima della prima riga + movimenti =
+    # saldo dopo l'ultima. I conti in valuta si controllano nella valuta.
+    quadrature, chiusure = [], {}
+    per_conto: dict = {}
+    for g in grezze:
+        per_conto.setdefault((g["prodotto"], g["valuta"]), []).append(g)
+    for (prodotto, valuta), gg in per_conto.items():
+        gg = [g for g in gg if g["saldo"] is not None]
+        if not gg:
+            continue
+        apertura = round(gg[0]["saldo"] - gg[0]["netto"], 2)
+        calcolato = round(apertura + sum(g["netto"] for g in gg), 2)
+        chiusura = round(gg[-1]["saldo"], 2)
+        chiusure[(prodotto, valuta)] = chiusura
+        nome = {"Attuale": "Conto personale", "Deposito": "Deposito senza vincoli",
+                "Risparmi": "Salvadanai"}.get(prodotto, prodotto)
+        quadrature.append({
+            "sezione": sezioni.get(prodotto.lower(), "conto"),
+            "nome": nome if valuta == "EUR" else f"{nome} ({valuta})", "valuta": valuta,
+            "apertura": apertura, "entrate": round(sum(g["netto"] for g in gg if g["netto"] > 0), 2),
+            "uscite": round(-sum(g["netto"] for g in gg if g["netto"] < 0), 2),
+            "movimenti": len(gg), "chiusura": chiusura, "calcolato": calcolato,
+            "scarto": round(chiusura - calcolato, 2),
+            "ok": abs(chiusura - calcolato) < 0.01,
+            "nota": None if valuta == "EUR" else f"controllata in {valuta}",
+        })
+
+    conto = round(sum(v for (p, val_), v in chiusure.items()
+                      if val_ == "EUR" and sezioni.get(p.lower(), "conto") == "conto"), 2)
+    risparmi = round(sum(v for (p, val_), v in chiusure.items()
+                         if val_ == "EUR" and sezioni.get(p.lower()) == "risparmi"), 2)
+
+    # I salvadanai, dai movimenti del deposito: ogni versamento e ogni
+    # interesse nomina il suo («A EUR Casa», «… nel conto "Emergenze"»).
+    salvadanai: dict = {}
+    for g in grezze:
+        if g["prodotto"].lower() not in ("deposito", "deposit"):
+            continue
+        k = _salvadanaio_da_descrizione(g["descrizione"])
+        if k:
+            salvadanai[k] = round(salvadanai.get(k, 0.0) + g["netto"], 2)
+    ripartiti = round(sum(salvadanai.values()), 2)
+    deposito = chiusure.get(("Deposito", "EUR"))
+    if salvadanai and deposito is not None and abs(ripartiti - deposito) >= 0.01:
+        avvisi.append(f"I salvadanai ricostruiti dai movimenti sommano € {eur(ripartiti)} "
+                      f"su € {eur(deposito)} del deposito: il resto non nomina un salvadanaio.")
+
+    if cambio:
+        avvisi.append("Movimenti in " + ", ".join(sorted(cambio)) + ": convertiti in euro al "
+                      "cambio che Revolut ha applicato nelle conversioni dello stesso file.")
+    if senza_cambio:
+        avvisi.append(f"{senza_cambio} movimenti in valuta senza una conversione da cui "
+                      "ricavare il cambio: non letti.")
+    if annullate:
+        avvisi.append(f"{annullate} operazioni annullate: saltate.")
+    storte = [q for q in quadrature if not q["ok"]]
+    if storte:
+        avvisi.append("I movimenti non tornano con il saldo progressivo su "
+                      + ", ".join(f'«{q["nome"]}» (scarto € {eur(q["scarto"])})' for q in storte)
+                      + ": meglio non salvare finché non torna.")
+    for m in movimenti:
+        m.pop("_prodotto", None)
+    quando = _data_estratto([], nome_file) if re.search(r"20\d{2}-?\d{2}-?\d{2}", nome_file or "") \
+        else date.fromisoformat(max(m["data"] for m in movimenti)) if movimenti else date.today()
+    return {
+        "data": quando.isoformat(),
+        "conto": conto,
+        "risparmi": risparmi,
+        "salvadanai": salvadanai,
+        "dettaglio": [{"sezione": q["sezione"], "nome": q["nome"], "valuta": q["valuta"],
+                       "saldo": q["chiusura"]} for q in quadrature if q["valuta"] == "EUR"],
+        "movimenti": movimenti,
+        "quadrature": quadrature,
+        "investimenti_nel_file": False,
+        "formato": "movimenti",
         "avvisi": avvisi,
     }
 
@@ -1046,9 +1367,9 @@ def revolut_importa():
       <div class="notice warn mt-2" id="avvisoData" style="display:none"></div>
       <details class="explain mt-3">
         <summary>Come sono divisi i risparmi (facoltativo)</summary>
-        <p class="small muted">L'estratto dà solo il totale del deposito: dal 15
-          aprile 2026 i salvadanai vivono dentro un unico «Deposito senza
-          vincoli». Servono alla pagina Risparmi per dire, secchiello per
+        <p class="small muted">Dal 15 aprile 2026 i salvadanai vivono dentro un
+          unico «Deposito senza vincoli». L'estratto consolidato ne dà solo il
+          totale; l'export dei movimenti li ricostruisce e li scrive qui. Servono alla pagina Risparmi per dire, secchiello per
           secchiello, quanto c'è contro quanto dovrebbe esserci.</p>
         <div class="field-group mt-2">{campi_salvadanai}</div>
         <div class="small muted mt-2" id="sommaSalvadanai"></div>
@@ -1104,6 +1425,13 @@ def revolut_importa():
         document.getElementById('f_data').value = j.data;
         document.getElementById('f_conto').value = j.conto;
         document.getElementById('f_risparmi').value = j.risparmi;
+        // L'export dei movimenti ricostruisce i salvadanai dalle
+        // descrizioni del deposito: li scrive nei campi e apre il riquadro.
+        const sv = j.salvadanai || {{}};
+        if (Object.keys(sv).length) {{
+          for (const [k] of SALVADANAI) document.getElementById('sv_'+k).value = sv[k] != null ? sv[k] : '';
+          document.getElementById('sommaSalvadanai').closest('details').open = true;
+        }}
         sommaSalvadanai(); controllaData();
         document.getElementById('dettaglioImport').innerHTML = (j.dettaglio || []).map(d =>
           '<div class="row"><span class="t">' + escS(d.nome) + '<span class="sub">' +

@@ -270,15 +270,26 @@ Il terzo conto: liquidità, risparmi e investimenti. Non è una sezione a
 parte per capriccio — **è dove finisce il risparmio**, e senza di lei
 quel denaro usciva da un conto senza entrare in nessuno.
 
-I numeri arrivano dall'**estratto conto consolidato** che Revolut esporta
-in .xlsx (Menu → Estratti conto → Consolidato). Si carica, l'app legge i
-saldi di chiusura e li mostra, e si salva — niente viene scritto prima
-della conferma. Due cose l'estratto non le contiene e vanno scritte a mano:
+I numeri arrivano da un file di Revolut, in uno dei due formati che l'app
+esporta (in .xlsx o .csv, italiano o inglese):
 
-- **il valore del portafoglio investimenti.** L'estratto dà dividendi,
-  vendite e PnL del periodo, nessuna valorizzazione delle posizioni.
-- **la ripartizione dei salvadanai.** Dal 15 aprile 2026 vivono dentro un
-  unico "Deposito senza vincoli" e l'estratto ne dà solo il totale.
+| Formato | Dove si scarica | Cosa porta in più |
+|---|---|---|
+| **Export dei movimenti** («account-statement») — *consigliato* | Conto → Estratto conto → Excel/CSV, *tutti i prodotti* | i versamenti e i prelievi dei salvadanai: il deposito quadra al centesimo e **i salvadanai si ricostruiscono da soli** |
+| Estratto consolidato («consolidated-statement») | Menu → Estratti conto → Consolidato | il controvalore in euro dei movimenti in valuta, quello del giorno |
+
+Si carica, l'app legge saldi e movimenti e li mostra, e si salva — niente
+viene scritto prima della conferma. L'export dei movimenti non dà il
+controvalore dei movimenti in valuta: si usa il cambio che Revolut ha
+applicato nelle conversioni dello stesso file («Conversione in JPY»).
+Il consolidato del deposito elenca solo gli interessi, non i versamenti:
+la sua quadratura non si può fare, e la pagina lo dice invece di dare un
+falso allarme.
+
+Resta da scrivere a mano **il valore del portafoglio investimenti**:
+nessuno dei due formati valorizza le posizioni. Con il consolidato va
+scritta a mano anche la ripartizione dei salvadanai (ne dà solo il
+totale); con l'export dei movimenti arriva già compilata.
 
 Il saldo è la **fotografia più i movimenti registrati dopo**: l'app
 mostra sempre a quando risale la fotografia, e da 45 giorni in su lo
@@ -347,7 +358,7 @@ Tre conti, tre file, **una sola procedura** (`shared/importazione.py`):
 |---|---|---|
 | WeBank Personale | `/conti/webank/personale/importa` | export .xlsx di WeBank |
 | WeBank P.IVA | `/conti/webank/piva/importa` | lo stesso formato, dal conto P.IVA |
-| Revolut | `/conti/revolut/importa` | estratto consolidato .xlsx (saldi **e** movimenti) |
+| Revolut | `/conti/revolut/importa` | export dei movimenti o estratto consolidato, .xlsx o .csv (saldi **e** movimenti) |
 
 Si carica il file, e prima di scrivere qualunque cosa la revisione mostra
 ogni riga con: se è **già registrata** (spenta, non si salva), se
@@ -361,6 +372,24 @@ gli stessi sulle tre pagine.
 due righe identiche anche a database: il secondo del file è «già
 registrato» solo se a database ce ne sono due. Prima il controllo usava un
 insieme, e il secondo caffè di un file nuovo spariva come doppione del primo.
+
+**Lo stesso movimento scritto in un altro modo è lo stesso movimento.** Chi
+non ha l'impronta identica passa un secondo controllo: stessa data
+(contabile **o valuta**, su WeBank), stessa direzione, stesso importo, e
+una descrizione molto simile oppure un importo da almeno 100 €. Così un
+estratto WeBank riscaricato (la banca tronca le descrizioni in modo
+diverso) e i due formati di Revolut non raddoppiano niente. Su Revolut:
+- l'impronta non contiene il nome del conto («Emergenze» contro
+  «Risparmi») né la data ripetuta negli interessi («in data …»);
+- per i movimenti in valuta conta l'importo **nella valuta** (−428 ¥),
+  perché i due formati li convertono in euro con cambi diversi;
+- «Revolut Bank UAB» (l'export dei movimenti al posto di «Pagamento da
+  parte di MARIO ROSSI») non smentisce nessuna descrizione.
+
+Provato sui file veri: il consolidato salvato (976 movimenti) e poi
+l'export dei movimenti dello stesso periodo (1.001) → 976 già registrati,
+25 nuovi (i versamenti ai salvadanai e il trasloco del conto di aprile,
+che il consolidato non elenca).
 
 **Sulla P.IVA due cose non si importano dal file**: i giroconti verso il
 personale (li scrive la ripartizione della fattura, al netto) e gli incassi
@@ -2355,11 +2384,12 @@ la fotografia **più i movimenti registrati dopo**, cioè la stessa
 formula del personale (apertura + movimenti) con la fotografia al posto
 dell'apertura. Senza movimenti successivi il numero è identico a prima.
 
-**Dopo averla lanciata**: carica su `/conti/revolut` l'estratto
-consolidato **dall'apertura del conto** (Menu → Estratti conto →
-Consolidato, formato Excel). Prima di salvare la pagina mostra per ogni
-conto la quadratura *saldo di apertura + entrate − uscite = saldo di
-chiusura*: se torna al centesimo, nel file non manca nessuna riga.
+**Dopo averla lanciata**: carica su `/conti/revolut/importa` l'export
+dei movimenti **dall'apertura del conto** (Conto → Estratto conto, tutti
+i prodotti; va bene anche il consolidato). Prima di salvare la pagina
+mostra per ogni conto la quadratura *saldo di apertura + entrate − uscite
+= saldo di chiusura*: se torna al centesimo, nel file non manca nessuna
+riga.
 Reimportare un periodo che si sovrappone non crea doppioni e non tocca
 le categorie già corrette a mano.
 
@@ -2467,7 +2497,15 @@ il telefono e di rete verso il database.
 - **Le domande indipendenti al database partono insieme**
   (`shared/parallelo.py`): home, Conti, conto personale e Revolut. Con
   80 ms di rete per domanda, la home passa da ~1,5 s a ~0,3 s.
-- **Le categorie si leggono una volta per richiesta**, non a ogni menu.
+- **Le categorie si leggono una volta per richiesta**, non a ogni menu,
+  e restano in memoria 60 secondi fra una richiesta e l'altra.
+- **Il server risponde a più richieste insieme** (gunicorn `gthread`, un
+  processo con otto thread): il prefetch delle pagine e le chiamate API
+  della stessa pagina non si mettono più in coda una dietro l'altra. Con
+  80 ms di rete simulata un click passa da 0,6–1 s a 0,25–0,5 s.
+- **La shell non chiede lo stato a ogni pagina**: `/api/status` parte solo
+  sulla pagina bloccata, e il service worker usa il *navigation preload*
+  (la pagina parte mentre il worker si sveglia).
 
 ### In locale
 

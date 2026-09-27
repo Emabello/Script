@@ -1175,10 +1175,16 @@ window.b2fBufferToBase64url = function(buf) {
     return res;
   };
 
-  fetch('/api/status', {credentials:'same-origin'})
-    .then(r => r.ok ? r.json() : null)
-    .then(s => { if (s && s.needs_pin && !s.unlocked) { show(); tryShowBioButton(); } })
-    .catch(() => {});
+  // Chiedere al server se serve il PIN ha senso solo sulla shell vuota:
+  // una pagina con i dati dentro e' gia' la prova che la sessione e'
+  // sbloccata (il server non l'avrebbe resa, vedi xs_server._gate). Prima
+  // la domanda partiva a ogni pagina, un giro in piu' a ogni click.
+  if (document.body && document.body.hasAttribute('data-bloccata')) {
+    fetch('/api/status', {credentials:'same-origin'})
+      .then(r => r.ok ? r.json() : null)
+      .then(s => { if (s && s.needs_pin && !s.unlocked) { show(); tryShowBioButton(); } })
+      .catch(() => {});
+  }
 })();
 </script>
 """
@@ -1202,7 +1208,7 @@ def locked_shell() -> str:
     di sempre, semplicemente senza `content`.
     """
     return (page_head("B2F Hub")
-            + f"<body>{tenda_html()}{_PIN_GATE}</body></html>")
+            + f"<body data-bloccata>{tenda_html()}{_PIN_GATE}</body></html>")
 
 
 # ---------------------------------------------------------------------------
