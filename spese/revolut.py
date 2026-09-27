@@ -806,7 +806,6 @@ def revolut_pagina():
 
     rev = saldo_revolut(client)
     passato = storico(client)
-    oggi = date.today().isoformat()
 
     if not rev["disponibile"]:
         corpo = f'''<div class="empty">{icon("wallet")}
@@ -940,29 +939,6 @@ def revolut_pagina():
     movimenti = RM.tutti(client)
     blocco_mov = _card_movimenti(movimenti)
     blocco_ponte = RM.card_ponte(RM.ponte(client, movimenti)) if movimenti else ""
-    # Le voci del menu categoria nell'anteprima dell'import: le stesse del
-    # conto personale, in ordine alfabetico per quello che si legge.
-    voci_menu = ordina([{"link_id": v["link_id"],
-                         "nome": v["categoria"] + (f' › {v["sottocategoria"]}'
-                                                   if v["sottocategoria"] else "")}
-                        for v in RM.voci_categoria(client)],
-                       per=lambda v: v["nome"])
-
-    # --- Il form: la data parte da OGGI ---------------------------------
-    # Prima partiva dalla data dell'ultimo snapshot, e `salva()` fa un
-    # upsert su quella colonna: aggiornare i salvadanai a mano
-    # SOSTITUIVA la lettura precedente, senza un avviso. Adesso la data
-    # e' quella di oggi — una lettura nuova e' un giorno nuovo — e se il
-    # giorno scelto ha gia' uno snapshot la pagina lo dice prima.
-    date_note = json.dumps([str(x.get("data") or "")[:10] for x in passato])
-    correnti = rev.get("salvadanai") or {}
-    campi_salvadanai = "".join(f'''
-      <div class="field">
-        <label>{lbl}</label>
-        <input type="number" step="0.01" min="0" inputmode="decimal"
-               id="sv_{chiave}" value="{correnti.get(chiave, "")}">
-      </div>''' for chiave, _r, lbl, _p, _c, _a in SALVADANAI)
-
     righe_storico = "".join(f'''
       <div class="row">
         <span class="k">{data_it(s.get("data"))}</span>
@@ -990,138 +966,115 @@ def revolut_pagina():
     <div class="grid split">
       <div class="stack">
         {corpo}
-        {blocco_mov}
-        {blocco_ponte}
         {blocco_storico}
       </div>
-
       <div class="stack">
-        <div class="card" id="cardImport">
-          <div class="card-head">
-            <div class="eyebrow">Nuova lettura</div>
-            <span class="chip">1 di 2</span>
-          </div>
-          <p class="small muted">
-            Carica l'estratto conto consolidato .xlsx di Revolut.
-            {info("Non scrive niente: legge i saldi di chiusura, te li mostra "
-                  "qui sotto, e salvi tu. L&apos;estratto non &egrave; un vero "
-                  "xlsx — &egrave; un CSV dentro un foglio, con gli accenti "
-                  "passati due volte per la codifica sbagliata. Il parser se ne "
-                  "occupa.")}
-          </p>
-          <div class="field mt-4">
-            <label>Estratto consolidato (.xlsx)</label>
-            <input type="file" id="f_file" class="input" accept=".xlsx">
-          </div>
-          <div class="actions">
-            <button type="button" class="btn" onclick="onLeggi()">Leggi il file</button>
-          </div>
-          <div class="notice err mt-3" id="errImport" style="display:none"></div>
-          <div class="rows detail mt-3" id="dettaglioImport"></div>
-          <div id="avvisiImport"></div>
-        </div>
-
         <div class="card">
-          <div class="card-head">
-            <div class="eyebrow">Conferma e salva</div>
-            <span class="chip">2 di 2</span>
-          </div>
-          <div class="field-group">
-            <div class="field"><label>Data della lettura</label>
-              <input type="date" id="f_data" value="{oggi}" onchange="controllaData()"></div>
-            <div class="field"><label>Liquidità (€)</label>
-              <input type="number" step="0.01" inputmode="decimal" id="f_conto"
-                     value="{rev.get("conto") or 0}"></div>
-          </div>
-          <div class="notice warn mt-2" id="avvisoData" style="display:none"></div>
-          <div class="field-group">
-            <div class="field"><label>Risparmi (€)</label>
-              <input type="number" step="0.01" inputmode="decimal" id="f_risparmi"
-                     value="{rev.get("risparmi") or 0}"></div>
-            <div class="field"><label>Investimenti (€)</label>
-              <input type="number" step="0.01" inputmode="decimal" id="f_investimenti"
-                     value="{rev.get("investimenti") or 0}"></div>
-          </div>
-
-          <div class="eyebrow mt-4 mb-2">Come sono divisi i risparmi</div>
-          <p class="small muted">Facoltativo, da scrivere a mano.
-            {info("L&apos;estratto d&agrave; solo il totale del deposito: dal 15 "
-                  "aprile 2026 i salvadanai vivono dentro un unico "
-                  "&laquo;Deposito senza vincoli&raquo;. Servono alla pagina "
-                  "Risparmi per dire, secchiello per secchiello, quanto c&apos;&egrave; "
-                  "contro quanto dovrebbe esserci.")}
-          </p>
-          <div class="mt-3">{campi_salvadanai}</div>
-          <div class="small muted mt-2" id="sommaSalvadanai"></div>
-
-          <div class="actions mt-4">
-            <button type="button" class="btn block" onclick="onSalva()">Salva la lettura</button>
-          </div>
+          <div class="card-head"><div class="eyebrow">Aggiorna da estratto</div></div>
+          <p class="small muted">Carica l'estratto consolidato di Revolut: legge i
+            saldi (la nuova fotografia) e tutti i movimenti, con le categorie
+            proposte dallo storico. Stessa procedura dell'import WeBank.</p>
+          <a class="btn block mt-3" href="/conti/revolut/importa">{icon("download")}Importa l'estratto</a>
         </div>
+        {blocco_mov}
+        {blocco_ponte}
+      </div>
+    </div>'''
+    return _render(body, breadcrumb)
 
-        <div class="card" id="cardMovimenti" style="display:none">
-          <div class="card-head">
-            <div class="eyebrow">Movimenti letti</div>
-            <span class="chip" id="chipMovimenti"></span>
-          </div>
-          <div class="rows detail" id="quadrature"></div>
-          <p class="small muted mt-2" id="riassuntoMovimenti"></p>
-          <div class="rows detail mt-2" id="gruppiMovimenti"></div>
-          <div class="actions mt-4">
-            <button type="button" class="btn block" id="btnSalvaMovimenti"
-                    onclick="onSalvaMovimenti()">Salva i movimenti nuovi</button>
-          </div>
-        </div>
+
+@spese_bp.get("/conti/revolut/importa")
+def revolut_importa():
+    """
+    L'import dell'estratto consolidato: la stessa pagina degli altri conti
+    (carica → revisione comune di shared/importazione.py), piu' la card
+    che e' solo di Revolut — la fotografia dei saldi, con la quadratura
+    dei movimenti letti e la ripartizione dei salvadanai scritta a mano.
+    """
+    breadcrumb = [("Conti", "/conti"), ("Revolut", "/conti/revolut"),
+                  ("Importa l'estratto", "")]
+    client = D.sb()
+    if client is None:
+        return _render('<div class="notice warn">Supabase non configurato.</div>',
+                       breadcrumb)
+    from shared import importazione as IM
+    from .importa import pagina_upload
+
+    rev = saldo_revolut(client)
+    passato = storico(client)
+    oggi = date.today().isoformat()
+    movimenti_ok = RM.tutti(client) is not None
+    date_note = json.dumps([str(x.get("data") or "")[:10] for x in passato])
+    correnti = rev.get("salvadanai") or {}
+    campi_salvadanai = "".join(f'''
+      <div class="field">
+        <label>{lbl}</label>
+        <input type="number" step="0.01" min="0" inputmode="decimal"
+               id="sv_{chiave}" value="{correnti.get(chiave, "")}">
+      </div>''' for chiave, _r, lbl, _p, _c, _a in SALVADANAI)
+
+    # La fotografia: si compila da sola alla lettura del file, e si puo'
+    # anche scrivere a mano (una lettura dall'app di Revolut, senza file).
+    saldi = f'''
+    <div class="card mb-3" id="cardSaldi">
+      <div class="card-head">
+        <div class="eyebrow">2 · la fotografia dei saldi</div>
+        <span class="chip" id="chipSaldi">a mano</span>
+      </div>
+      <div class="rows detail" id="dettaglioImport"></div>
+      <div class="rows detail mt-2" id="quadrature"></div>
+      <div class="field-group mt-3">
+        <div class="field"><label>Data della lettura</label>
+          <input type="date" id="f_data" value="{oggi}" onchange="controllaData()"></div>
+        <div class="field"><label>Liquidità (€)</label>
+          <input type="number" step="0.01" inputmode="decimal" id="f_conto"
+                 value="{rev.get("conto") or 0}"></div>
+        <div class="field"><label>Risparmi (€)</label>
+          <input type="number" step="0.01" inputmode="decimal" id="f_risparmi"
+                 value="{rev.get("risparmi") or 0}"></div>
+        <div class="field"><label>Investimenti (€)</label>
+          <input type="number" step="0.01" inputmode="decimal" id="f_investimenti"
+                 value="{rev.get("investimenti") or 0}"></div>
+      </div>
+      <div class="notice warn mt-2" id="avvisoData" style="display:none"></div>
+      <details class="explain mt-3">
+        <summary>Come sono divisi i risparmi (facoltativo)</summary>
+        <p class="small muted">L'estratto dà solo il totale del deposito: dal 15
+          aprile 2026 i salvadanai vivono dentro un unico «Deposito senza
+          vincoli». Servono alla pagina Risparmi per dire, secchiello per
+          secchiello, quanto c'è contro quanto dovrebbe esserci.</p>
+        <div class="field-group mt-2">{campi_salvadanai}</div>
+        <div class="small muted mt-2" id="sommaSalvadanai"></div>
+      </details>
+      <div class="actions mt-3">
+        <button type="button" class="btn" onclick="onSalvaSaldi()">Salva la fotografia</button>
       </div>
     </div>
-
-    <div id="toast" class="toast"></div>
     <script>
-      const SALVADANAI = {json.dumps([[s[0], s[2]] for s in SALVADANAI], ensure_ascii=False)};
+      const SALVADANAI = {json.dumps([[x[0], x[2]] for x in SALVADANAI], ensure_ascii=False)};
       const DATE_NOTE = {date_note};
-      const VOCI = {json.dumps(voci_menu, ensure_ascii=False)};
-      let MOVIMENTI = [];
-
+      let DA_ESTRATTO = false;
+      function euroS(v) {{
+        return new Intl.NumberFormat('it-IT', {{minimumFractionDigits:2, maximumFractionDigits:2}}).format(Number(v) || 0);
+      }}
+      function escS(s) {{ const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }}
+      function dataIt(iso) {{ if (!iso) return ''; const [y, m, g] = iso.slice(0, 10).split('-'); return g + '/' + m + '/' + y; }}
       function toast(msg, cls) {{
         const t = document.getElementById('toast');
         t.textContent = msg; t.className = 'toast show ' + (cls || '');
         setTimeout(()=>{{ t.className = 'toast ' + (cls || ''); }}, 3000);
       }}
-      function euro(v) {{
-        return new Intl.NumberFormat('it-IT',
-          {{minimumFractionDigits:2, maximumFractionDigits:2}}).format(Number(v) || 0);
-      }}
-      function esc(s) {{
-        const d = document.createElement('div'); d.textContent = s == null ? '' : s;
-        return d.innerHTML;
-      }}
-      function dataIt(iso) {{
-        if (!iso) return '';
-        const [y, m, g] = iso.slice(0, 10).split('-');
-        return g + '/' + m + '/' + y;
-      }}
-
       // Salvare con una data gia' presente SOSTITUISCE quella lettura:
-      // `salva()` fa un upsert sulla data. Prima non lo diceva nessuno, e
-      // il campo partiva perfino dalla data dell'ultimo snapshot.
+      // `salva()` fa un upsert sulla data.
       function controllaData() {{
         const d = document.getElementById('f_data');
         const box = document.getElementById('avvisoData');
-        if (!d || !box) return;
         if (DATE_NOTE.indexOf(d.value) >= 0) {{
-          // Virgolette doppie, non l'apostrofo sfuggito: in una f-string
-          // Python `\'` diventa `'` e la stringa JS si chiude a meta'
-          // frase, spegnendo TUTTO lo script (vedi verifica_js.py).
           box.innerHTML = "<strong>C&apos;è già una lettura del " + dataIt(d.value) +
-            ".</strong> Salvando la sostituisci: quella di prima non resta da " +
-            "nessuna parte. Se stai registrando una lettura nuova, metti la " +
-            "data di oggi.";
+            ".</strong> Salvando la sostituisci: quella di prima non resta da nessuna parte.";
           box.style.display = '';
-        }} else {{
-          box.style.display = 'none';
-        }}
+        }} else {{ box.style.display = 'none'; }}
       }}
-
       function sommaSalvadanai() {{
         let s = 0;
         for (const [k] of SALVADANAI) s += Number(document.getElementById('sv_'+k).value || 0);
@@ -1129,138 +1082,39 @@ def revolut_pagina():
         const tot = Number(document.getElementById('f_risparmi').value || 0);
         if (!s) {{ box.textContent = ''; return; }}
         const d = Math.round((s - tot) * 100) / 100;
-        box.textContent = 'Somma dei secchielli € ' + euro(s) + ' su € ' + euro(tot)
+        box.textContent = 'Somma dei secchielli € ' + euroS(s) + ' su € ' + euroS(tot)
           + (Math.abs(d) < 0.01 ? ' — combaciano.'
-             : (d < 0 ? ' — ne restano € ' + euro(-d) + ' non ripartiti.'
-                      : ' — € ' + euro(d) + ' in più del deposito.'));
+             : (d < 0 ? ' — ne restano € ' + euroS(-d) + ' non ripartiti.'
+                      : ' — € ' + euroS(d) + ' in più del deposito.'));
       }}
-      for (const [k] of SALVADANAI) {{
-        document.getElementById('sv_'+k).addEventListener('input', sommaSalvadanai);
-      }}
+      for (const [k] of SALVADANAI) document.getElementById('sv_'+k).addEventListener('input', sommaSalvadanai);
       document.getElementById('f_risparmi').addEventListener('input', sommaSalvadanai);
-      sommaSalvadanai();
-      controllaData();
+      sommaSalvadanai(); controllaData();
 
-      async function onLeggi() {{
-        const inp = document.getElementById('f_file');
-        const err = document.getElementById('errImport');
-        err.style.display = 'none';
-        if (!inp.files.length) {{ toast('Scegli il file', 'err'); return; }}
-        const fd = new FormData();
-        fd.append('file', inp.files[0]);
-        try {{
-          const r = await fetch('/spese/api/revolut/leggi', {{method:'POST', body: fd}});
-          const j = await r.json();
-          if (!r.ok) {{ err.textContent = j.error || 'Errore'; err.style.display = 'block'; return; }}
-
-          document.getElementById('f_data').value = j.data;
-          document.getElementById('f_conto').value = j.conto;
-          document.getElementById('f_risparmi').value = j.risparmi;
-          sommaSalvadanai();
-          controllaData();
-
-          document.getElementById('avvisiImport').innerHTML =
-            (j.avvisi || []).map(a => '<div class="notice info small mt-2">' + esc(a) + '</div>').join('');
-          document.getElementById('dettaglioImport').innerHTML =
-            (j.dettaglio || []).map(d =>
-              '<div class="row"><span class="t">' + esc(d.nome) +
-              '<span class="sub">' + (d.sezione === 'risparmi' ? 'deposito' : 'conto corrente') +
-              ' · ' + esc(d.valuta) + '</span></span>' +
-              '<span class="v tnum">€ ' + euro(d.saldo) + '</span></div>').join('');
-          mostraMovimenti(j.movimenti || [], j.quadrature || []);
-          toast('Letto: liquidità € ' + euro(j.conto) + ', risparmi € ' + euro(j.risparmi), 'ok');
-        }} catch (e) {{
-          err.textContent = 'Errore rete: ' + e.message; err.style.display = 'block';
-        }}
-      }}
-
-      // I movimenti letti si rivedono A GRUPPI: stessa descrizione, stessa
-      // direzione, stessa parte del conto e stessa categoria proposta. Un
-      // estratto dall'apertura del conto ha un migliaio di righe, e la
-      // stessa pizzeria compare trenta volte: una tendina per riga
-      // vorrebbe dire trenta scelte uguali. Si sceglie una volta per
-      // gruppo; il singolo movimento si ritocca poi dall'elenco.
-      let GRUPPI = [];
-      function opzioniCategoria(scelta) {{
-        return '<option value="">— da categorizzare —</option>' + VOCI.map(v =>
-          '<option value="' + esc(v.link_id) + '"' + (String(v.link_id) === String(scelta) ? ' selected' : '') +
-          '>' + esc(v.nome) + '</option>').join('');
-      }}
-      function mostraMovimenti(righe, quadrature) {{
-        MOVIMENTI = righe;
-        const card = document.getElementById('cardMovimenti');
-        if (!righe.length) {{ card.style.display = 'none'; return; }}
-        card.style.display = '';
-        const nuove = righe.filter(r => !r.presente);
-        document.getElementById('chipMovimenti').textContent =
-          nuove.length + ' nuovi su ' + righe.length;
-        document.getElementById('quadrature').innerHTML = quadrature.map(q =>
-          '<div class="row"><span class="t">' + esc(q.nome) +
-          '<span class="sub">' + (q.apertura === null
-             ? q.movimenti + ' movimenti · saldo di apertura non trovato, niente controllo'
-             : 'apertura € ' + euro(q.apertura) + ' + entrate € ' + euro(q.entrate) +
-               ' − uscite € ' + euro(q.uscite) + ' = € ' + euro(q.calcolato) +
-               ' · la banca dichiara € ' + euro(q.chiusura)) +
+      function mostraSaldi(j) {{
+        DA_ESTRATTO = true;
+        document.getElementById('chipSaldi').textContent = 'dall\u2019estratto';
+        document.getElementById('f_data').value = j.data;
+        document.getElementById('f_conto').value = j.conto;
+        document.getElementById('f_risparmi').value = j.risparmi;
+        sommaSalvadanai(); controllaData();
+        document.getElementById('dettaglioImport').innerHTML = (j.dettaglio || []).map(d =>
+          '<div class="row"><span class="t">' + escS(d.nome) + '<span class="sub">' +
+          (d.sezione === 'risparmi' ? 'deposito' : 'conto corrente') + ' · ' + escS(d.valuta) +
+          '</span></span><span class="v tnum">€ ' + euroS(d.saldo) + '</span></div>').join('');
+        // Per ogni conto: apertura + entrate − uscite deve dare la
+        // chiusura dichiarata. Se torna, nel file non manca nessuna riga.
+        document.getElementById('quadrature').innerHTML = (j.quadrature || []).map(q =>
+          '<div class="row"><span class="t">Quadratura · ' + escS(q.nome) + '<span class="sub">' +
+          (q.apertura === null ? q.movimenti + ' movimenti · saldo di apertura non trovato'
+            : 'apertura € ' + euroS(q.apertura) + ' + entrate € ' + euroS(q.entrate) +
+              ' − uscite € ' + euroS(q.uscite) + ' = € ' + euroS(q.calcolato) +
+              ' · la banca dichiara € ' + euroS(q.chiusura)) +
           '</span></span><span class="v tnum ' + (q.ok ? 'pos' : (q.scarto === null ? '' : 'neg')) + '">' +
-          (q.ok ? '✓ torna' : (q.scarto === null ? '—' : 'scarto € ' + euro(q.scarto))) +
-          '</span></div>').join('');
-        const gemelle = nuove.filter(r => r.gemella).length;
-        document.getElementById('riassuntoMovimenti').textContent =
-          (righe.length - nuove.length ? (righe.length - nuove.length) +
-             ' erano già stati salvati da un estratto precedente e restano come sono. ' : '') +
-          (gemelle ? gemelle + ' hanno il loro bonifico «Risparmi» su WeBank e sono già ' +
-             'categorizzati così. ' : '') +
-          'Scegli la categoria per gruppo: vale per tutte le righe del gruppo.';
-        const mappa = new Map();
-        for (const r of nuove) {{
-          const k = [r.tipo, r.sezione, (r.descrizione || '').toLowerCase(), r.categoria_link_id || ''].join('|');
-          if (!mappa.has(k)) mappa.set(k, {{righe: [], link: r.categoria_link_id || ''}});
-          mappa.get(k).righe.push(r);
-        }}
-        GRUPPI = Array.from(mappa.values()).sort((a, b) => b.righe.length - a.righe.length);
-        document.getElementById('gruppiMovimenti').innerHTML = GRUPPI.map((g, i) => {{
-          const r0 = g.righe[0];
-          const tot = g.righe.reduce((s, r) => s + Number(r.importo || 0), 0);
-          const segno = r0.tipo === 'entrata' ? '+' : '−';
-          return '<div class="row"><span class="t">' + esc((r0.descrizione || '—').slice(0, 50)) +
-            '<span class="sub">' + g.righe.length + (g.righe.length === 1 ? ' movimento' : ' movimenti') +
-            ' · ' + (r0.sezione === 'risparmi' ? 'deposito' : 'liquidità') +
-            ' · dal ' + dataIt(g.righe[0].data) + '</span>' +
-            '<select class="input mt-2" aria-label="Categoria del gruppo" data-gruppo="' + i + '" ' +
-            'onchange="GRUPPI[' + i + '].link = this.value">' + opzioniCategoria(g.link) +
-            '</select></span><span class="v tnum ' + (r0.tipo === 'entrata' ? 'pos' : 'neg') + '">' +
-            segno + ' € ' + euro(tot) + '</span></div>';
-        }}).join('');
-        document.getElementById('btnSalvaMovimenti').disabled = !nuove.length;
+          (q.ok ? '✓ torna' : (q.scarto === null ? '—' : 'scarto € ' + euroS(q.scarto))) + '</span></div>').join('');
       }}
 
-      async function onSalvaMovimenti() {{
-        const storte = Array.from(document.querySelectorAll('#quadrature .neg')).length;
-        if (storte && !confirm('I movimenti letti non tornano con il saldo che la banca ' +
-            'dichiara: probabilmente manca qualche riga. Salvo lo stesso?')) return;
-        const righe = [];
-        for (const g of GRUPPI) {{
-          for (const r of g.righe) {{
-            righe.push({{chiave: r.chiave, data: r.data, tipo: r.tipo, importo: r.importo,
-                        descrizione: r.descrizione, sezione: r.sezione,
-                        categoria_link_id: g.link || null}});
-          }}
-        }}
-        if (!righe.length) {{ toast('Nessun movimento nuovo da salvare', 'err'); return; }}
-        try {{
-          const r = await fetch('/spese/api/revolut/movimenti/importa', {{
-            method: 'POST', headers: {{'Content-Type':'application/json'}},
-            body: JSON.stringify({{righe}}),
-          }});
-          const j = await r.json();
-          if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
-          toast('Salvati ' + j.inseriti + ' movimenti' +
-                (j.gia_presenti ? ' (' + j.gia_presenti + ' già presenti)' : ''), 'ok');
-          setTimeout(()=>location.reload(), 900);
-        }} catch (e) {{ toast('Errore rete: ' + e.message, 'err'); }}
-      }}
-
-      async function onSalva() {{
+      async function onSalvaSaldi() {{
         const salvadanai = {{}};
         for (const [k] of SALVADANAI) {{
           const v = Number(document.getElementById('sv_'+k).value || 0);
@@ -1269,29 +1123,38 @@ def revolut_pagina():
         const quando = document.getElementById('f_data').value;
         if (!quando) {{ toast('Manca la data della lettura', 'err'); return; }}
         if (DATE_NOTE.indexOf(quando) >= 0 &&
-            !confirm('Esiste già una lettura del ' + dataIt(quando) +
-                     '. Salvando la sostituisci. Procedo?')) return;
-        const body = {{
-          data: quando,
-          conto: Number(document.getElementById('f_conto').value || 0),
-          risparmi: Number(document.getElementById('f_risparmi').value || 0),
-          investimenti: Number(document.getElementById('f_investimenti').value || 0),
-          salvadanai,
-          fonte: document.getElementById('dettaglioImport').innerHTML ? 'estratto' : 'manuale',
-        }};
+            !confirm('Esiste già una lettura del ' + dataIt(quando) + '. Salvando la sostituisci. Procedo?')) return;
         try {{
           const r = await fetch('/spese/api/revolut', {{
             method: 'POST', headers: {{'Content-Type':'application/json'}},
-            body: JSON.stringify(body),
+            body: JSON.stringify({{
+              data: quando,
+              conto: Number(document.getElementById('f_conto').value || 0),
+              risparmi: Number(document.getElementById('f_risparmi').value || 0),
+              investimenti: Number(document.getElementById('f_investimenti').value || 0),
+              salvadanai, fonte: DA_ESTRATTO ? 'estratto' : 'manuale',
+            }}),
           }});
           const j = await r.json();
           if (!r.ok) {{ toast(j.error || 'Errore', 'err'); return; }}
-          toast('Lettura salvata', 'ok');
-          setTimeout(()=>location.reload(), 700);
+          if (DATE_NOTE.indexOf(quando) < 0) DATE_NOTE.push(quando);
+          toast('Fotografia salvata', 'ok');
         }} catch (e) {{ toast('Errore rete: ' + e.message, 'err'); }}
       }}
     </script>'''
 
+    body = pagina_upload(
+        "1 · l'estratto consolidato",
+        "Da Revolut: Menu → Estratti conto → Consolidato, formato Excel. Dallo "
+        "stesso file leggo i saldi di chiusura e tutti i movimenti.",
+        ".xlsx", "/spese/api/revolut/leggi",
+        extra_html=saldi, dopo_lettura_js="mostraSaldi(j);")
+    if movimenti_ok:
+        body += IM.pannello(RM.voci_pannello(client), "/spese/api/revolut/movimenti/importa",
+                            obbligatoria=False)
+    else:
+        body += RM.avviso_migrazione()
+    body += '<div id="toast" class="toast"></div>'
     return _render(body, breadcrumb)
 
 
@@ -1314,11 +1177,15 @@ def api_revolut_leggi():
     # Le categorie proposte e i doppioni chiedono il database; se non
     # risponde (o manca la tabella) i saldi si leggono lo stesso.
     client = D.sb()
+    avvisi = [{"testo": a, "classe": "warn" if "non tornano" in a else "info"}
+              for a in letto.get("avvisi") or []]
     try:
         if client is not None:
-            letto["movimenti"] = RM.prepara_import(client, letto["movimenti"])
+            letto["movimenti"], altri = RM.prepara_import(client, letto["movimenti"])
+            avvisi += altri
     except Exception:
         pass
+    letto["avvisi"] = avvisi
     return jsonify(letto)
 
 

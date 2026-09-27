@@ -71,7 +71,8 @@ PAGINE = ["/", "/saldi", "/fatture/", "/fatture/storico", "/fatture/nuova",
           "/fatture/spese-piva/nuova", "/spese/", "/spese/movimenti",
           "/spese/movimenti/nuovo", "/spese/risparmi", "/spese/revolut",
           "/spese/importa", "/conti/revolut/movimenti",
-          "/conti/revolut/movimenti/nuovo", "/health"]
+          "/conti/revolut/movimenti/nuovo", "/conti/revolut/importa",
+          "/conti/webank/piva/importa", "/health"]
 
 VUOTI = [
     ("database completamente vuoto",
@@ -107,6 +108,11 @@ MALFORMATI = [
     ("POST",  "/spese/api/revolut/movimenti/importa", {"righe": "non una lista"}),
     ("POST",  "/spese/api/revolut/movimenti/importa", {"righe": [{"chiave": "k", "importo": "?"}]}),
     ("PATCH", "/spese/api/revolut/movimenti/999999", {"tipo": "giroconto"}),
+    ("POST",  "/spese/api/importa/salva", {"righe": "no"}),
+    ("POST",  "/spese/api/importa/salva", {"righe": [{"idx": 0, "importo": "x", "categoria": 1}]}),
+    ("POST",  "/fatture/api/spese-piva/importa/salva", {}),
+    ("POST",  "/fatture/api/spese-piva/importa/salva", {"righe": [{"idx": 0, "importo": "x", "categoria": "pec"}]}),
+    ("POST",  "/fatture/api/spese-piva/importa/carica", {}),
     ("POST",  "/spese/api/importa/salva", {}),
     ("POST",  "/fatture/api/fatture", {}),
     ("POST",  "/fatture/api/fatture", {"anno": "abc", "progressivo": "x", "data": "y",

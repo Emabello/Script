@@ -40,6 +40,7 @@ from .costanti import (CATEGORIE_SPESE_PIVA, MESI_NOMI, STATI_EMESSE,
                        TIPI_SPESE_PIVA)
 from shared.theme import render_page
 from shared.design import icon as _icon, info as _info
+from shared.importazione import suggerimento_form as _suggerimento_form
 from shared.supabase_client import get_client, is_configured
 from shared.fmt import eur as _fmt_eur, data_it as _fmt_date, pct
 
@@ -1554,6 +1555,7 @@ def spese_piva_list():
         onchange="const u=new URL(location.href);if(this.value){{u.searchParams.set('tipo',this.value)}}else{{u.searchParams.delete('tipo')}};location.href=u">
         <option value="">Tutti i tipi</option>{tipo_opts}
       </select>
+      <a class="btn ghost" href="/conti/webank/piva/importa">{_icon("download")}Importa da banca</a>
     </div>
     '''
 
@@ -1701,6 +1703,7 @@ def _movimento_form_html(m: dict | None = None, collegamento: dict | None = None
       </div>
     </div>
     </div>
+    {"" if bloccato else _suggerimento_form("piva")}
     <div id="toast" class="toast"></div>
     <script>
     function toast(msg, cls) {{

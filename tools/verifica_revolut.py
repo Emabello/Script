@@ -163,49 +163,59 @@ def main():
                         "tipo": "uscita", "descrizione": "Bonifico a Revolut",
                         "categoria": "Risparmi", "sottocategoria": None})
     DB["v_spese"].append(preview._riga_v_spese(DB["spese"][-1]))
-    pronti = {m["descrizione"]: m for m in RM.prepara_import(client, mov)}
-    controlla(pronti["Bonifico da Emanuele Bellotti"]["categoria"] == "Risparmi"
+    link = lambda cat, sub=None: preview._link_id(cat, sub)  # noqa: E731
+    righe_pronte, avvisi = RM.prepara_import(client, mov)
+    pronti = {m["descrizione"]: m for m in righe_pronte}
+    controlla(pronti["Bonifico da Emanuele Bellotti"]["categoria"] == link("Risparmi")
               and pronti["Bonifico da Emanuele Bellotti"]["gemella"],
               "l'entrata con la gemella su WeBank -> Risparmi")
-    controlla(pronti["Al Deposito senza vincoli"]["categoria"] == RM.CATEGORIA_INTERNO,
+    controlla(pronti["Al Deposito senza vincoli"]["categoria"] == link(RM.CATEGORIA_INTERNO),
               "verso il deposito -> Giroconto Revolut")
-    controlla(pronti["Dal conto personale"]["categoria"] == RM.CATEGORIA_INTERNO,
+    controlla(pronti["Dal conto personale"]["categoria"] == link(RM.CATEGORIA_INTERNO),
               "arrivo nel deposito -> Giroconto Revolut")
-    controlla(pronti["Interessi maturati"]["categoria"] == RM.CATEGORIA_INTERESSI,
+    controlla(pronti["Interessi maturati"]["categoria"] == link(RM.CATEGORIA_INTERESSI),
               "interessi -> Interessi")
-    controlla(pronti["Trattoria Da Nino"]["categoria"] is None,
-              "la cena resta da categorizzare (niente indovinelli)")
-    controlla(all(p["categoria_link_id"] for p in pronti.values() if p["categoria"]),
-              "ogni categoria proposta ha il suo link")
+    # La cena: nessun fatto la riconosce, ma lo storico si' — la stessa
+    # trattoria, gia' categorizzata a luglio.
+    cena = pronti["Trattoria Da Nino"]
+    controlla(cena["categoria"] == link("Personale", "Ristoranti")
+              and "simil" in cena["suggerimento"]["motivo"],
+              f'la cena prende la categoria dallo storico ({cena.get("suggerimento")})')
+    controlla(pronti["Amazon"]["categoria"] is None,
+              "un esercente mai visto resta senza categoria")
+    controlla(any("storico" in a["testo"] for a in avvisi), "l'avviso dice quante dallo storico")
 
     print("\n== salvataggio e reimport")
     prima = len(DB["b2f_revolut_movimenti"])
-    righe = [{**m, "categoria_link_id": m["categoria_link_id"]}
-             for m in RM.prepara_import(client, mov)]
+    righe = [{**m, "idx": i} for i, m in enumerate(righe_pronte)]
     esito = RM.importa(client, righe)
-    controlla(esito.get("inseriti") == 8, f"8 inseriti ({esito})")
+    controlla(len(esito.get("salvate", [])) == 8, f"8 salvati ({esito})")
     # Correggo a mano una categoria, poi reimporto lo stesso estratto: la
     # correzione deve restare, e niente deve raddoppiare.
     cena = next(r for r in DB["b2f_revolut_movimenti"]
-                if r.get("descrizione") == "Trattoria Da Nino")
-    RM.aggiorna(client, cena["id"], {"categoria_link_id": preview._link_id("Personale", "Ristoranti")})
-    esito2 = RM.importa(client, RM.prepara_import(client, mov))
-    controlla(esito2.get("inseriti") == 0 and esito2.get("gia_presenti") == 8,
-              f"reimport: 0 nuovi, 8 già presenti ({esito2})")
+                if r.get("descrizione") == "Trattoria Da Nino" and r.get("fonte") == "estratto")
+    RM.aggiorna(client, cena["id"], {"categoria_link_id": link("Viaggi", "Hotel")})
+    di_nuovo, _ = RM.prepara_import(client, mov)
+    controlla(all(r.get("presente") for r in di_nuovo), "al reimport tutte risultano già registrate")
+    esito2 = RM.importa(client, [{**m, "idx": i} for i, m in enumerate(di_nuovo)])
+    controlla(not esito2.get("salvate") and len(esito2.get("duplicati", [])) == 8,
+              f"reimport: 0 nuovi, 8 già presenti")
     controlla(len(DB["b2f_revolut_movimenti"]) == prima + 8, "nessun doppione in tabella")
-    cena = next(r for r in DB["b2f_revolut_movimenti"]
-                if r.get("descrizione") == "Trattoria Da Nino")
-    controlla(cena["categoria_link_id"] == preview._link_id("Personale", "Ristoranti"),
+    cena = next(r for r in DB["b2f_revolut_movimenti"] if r.get("id") == cena["id"])
+    controlla(cena["categoria_link_id"] == link("Viaggi", "Hotel"),
               "la categoria corretta a mano resta dopo il reimport")
     controlla(RM.importa(client, []).get("error"), "lista vuota -> errore, non 500")
-    controlla(RM.importa(client, [{"chiave": "x", "tipo": "boh", "importo": 1,
-                                   "data": "2026-08-01"}]).get("scartate") == 1,
-              "riga con tipo non valido scartata")
+    controlla(len(RM.importa(client, [{"idx": 0, "chiave": "x", "tipo": "boh", "importo": 1,
+                                       "data": "2026-08-01"}]).get("errori", [])) == 1,
+              "riga con tipo non valido -> errore sulla riga")
+    controlla(len(RM.importa(client, [{"idx": 0, "chiave": "y", "tipo": "uscita", "importo": 1,
+                                       "data": "2026-08-01", "categoria": "inventata"}])
+                  .get("errori", [])) == 1, "categoria inesistente -> errore sulla riga")
 
     print("\n== totali: i giroconti interni restano fuori")
     tutte = RM.tutti(client)
     agosto = RM.filtra(tutte, anno=2026, mese=8)
-    t = RM.totali([r for r in agosto if (r.get("chiave") or "").startswith("finta") is False])
+    t = RM.totali([r for r in agosto if not (r.get("chiave") or "").startswith("finta")])
     controlla(t["interni"] == 500.0, f"500 spostati nel deposito, contati a parte ({t['interni']})")
     controlla(t["entrate"] == round(770.98 + 3.21, 2),
               f"entrate senza il giroconto interno ({t['entrate']})")

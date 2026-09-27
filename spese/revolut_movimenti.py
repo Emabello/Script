@@ -76,6 +76,7 @@ from . import spese_bp
 from shared.design import icon, info
 from shared.fmt import data_it, eur, eur_segno
 from shared.ordina import ordina, ordina_coppie
+from shared import importazione as IM
 from shared.theme import render_page
 
 
@@ -478,15 +479,34 @@ def suggerisci(mov: dict, gemella: bool = False) -> str | None:
     return None
 
 
-def prepara_import(client, letti: list[dict]) -> list[dict]:
+def voci_pannello(client) -> list[dict]:
+    """Le categorie di Revolut per il pannello di import comune."""
+    return ordina([{"valore": v["link_id"],
+                    "nome": v["categoria"] + (f' › {v["sottocategoria"]}'
+                                              if v["sottocategoria"] else "")}
+                   for v in voci_categoria(client)], per=lambda v: v["nome"])
+
+
+def prepara_import(client, letti: list[dict]) -> tuple[list[dict], list[dict]]:
     """
-    Le righe dell'estratto pronte per la revisione: con la categoria
-    proposta (e il suo link), e con `presente` per quelle gia' salvate da
-    un import precedente — che al salvataggio verrebbero comunque saltate,
-    ma e' meglio vederlo prima.
+    Le righe dell'estratto pronte per il pannello di revisione comune
+    (shared/importazione.py), piu' gli avvisi da mostrare sopra.
+
+    La categoria arriva da due fonti, in quest'ordine:
+      1. i **fatti** di `suggerisci()` — la gemella su WeBank, la sezione
+         deposito, le parole degli interessi: valgono piu' dello storico;
+      2. lo **storico** dei movimenti gia' categorizzati, di WeBank e di
+         Revolut insieme (`shared/suggerimenti.py`): la pizzeria sotto
+         casa e' la stessa qualunque carta si usi.
+
+    `presente` sono le righe con un'impronta gia' salvata da un import
+    precedente; `sospetto` quelle che somigliano a un movimento scritto a
+    mano (che un'impronta non ce l'ha).
     """
+    from shared import importazione as IM
+    from shared import suggerimenti as SG
     if not letti:
-        return []
+        return [], []
     dal = min(m["data"] for m in letti)
     al = max(m["data"] for m in letti)
     try:
@@ -504,12 +524,31 @@ def prepara_import(client, letti: list[dict]) -> list[dict]:
         nome = suggerisci(m, m.get("chiave") in gemelle)
         if nome and nome not in link:
             link[nome] = _link_di(client, nome)
-        out.append({**m,
-                    "categoria": nome if link.get(nome) else None,
-                    "categoria_link_id": link.get(nome),
-                    "gemella": m.get("chiave") in gemelle,
-                    "presente": m.get("chiave") in presenti})
-    return out
+        riga = {**m, "categoria": link.get(nome), "gemella": m.get("chiave") in gemelle}
+        if riga["gemella"]:
+            riga["nota"] = "ha il suo bonifico «Risparmi» su WeBank"
+        if m.get("chiave") in presenti:
+            riga["presente"] = True
+            riga["nota"] = "già registrato da un estratto precedente"
+        out.append(riga)
+
+    avvisi = []
+    nuove = [r for r in out if not r.get("presente")]
+    manuali = [r for r in (tutti(client, dal_w, al_w) or []) if r.get("fonte") == "manuale"]
+    if manuali:
+        IM.segna_doppioni(manuali, nuove)
+    ammesse = {v["valore"] for v in voci_pannello(client)}
+    proposte = IM.proponi(SG.storico_personale(client), nuove, ammesse)
+    n_presenti = len(out) - len(nuove)
+    if n_presenti:
+        avvisi.append({"testo": f"{n_presenti} movimenti erano già stati salvati da un "
+                                f"estratto precedente: restano come sono."})
+    if gemelle:
+        avvisi.append({"testo": f"{len(gemelle)} entrate hanno il loro bonifico «Risparmi» "
+                                f"su WeBank, e sono già categorizzate così."})
+    if proposte:
+        avvisi.append({"testo": f"{proposte} righe hanno la categoria proposta dallo storico."})
+    return out, avvisi
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +595,8 @@ def _normalizza(dati: dict) -> tuple[dict, str | None]:
             return {}, "importo mancante"
     if "tipo" in out and out["tipo"] not in D.TIPI_CHIAVI:
         return {}, "tipo non valido: entrata o uscita"
+    if "sezione" in out and out["sezione"] is None:
+        del out["sezione"]
     if "sezione" in out and out["sezione"] not in SEZIONI_CHIAVI:
         return {}, "sezione non valida"
     if "descrizione" in out:
@@ -612,48 +653,68 @@ def elimina(client, mid: int) -> dict:
 
 def importa(client, righe: list) -> dict:
     """
-    Salva le righe lette dall'estratto. Quelle con un'impronta gia'
-    presente si saltano **senza toccarle**: reimportare un estratto che
-    si sovrappone al precedente non deve rimettere la categoria proposta
-    su una riga che nel frattempo hai corretto a mano.
+    Salva le righe lette dall'estratto, nella forma del pannello comune:
+    ogni riga ha `idx` (la sua posizione nel pannello), `chiave`, e la
+    categoria in `categoria` (il link `cfg_*`). Ritorna {salvate: [idx],
+    duplicati: [{idx, nota}], errori: [{idx, errore}]}, come l'import WeBank.
+
+    Quelle con un'impronta gia' presente si saltano **senza toccarle**:
+    reimportare un estratto che si sovrappone al precedente non deve
+    rimettere la categoria proposta su una riga che nel frattempo hai
+    corretto a mano.
     """
     if not isinstance(righe, list) or not righe:
         return {"error": "nessuna riga da salvare"}
-    pulite, scartate = [], 0
-    for x in righe:
-        if not isinstance(x, dict) or not x.get("chiave"):
-            scartate += 1
+    validi = {v["link_id"] for v in voci_categoria(client)}
+    pulite, errori = [], []
+    for n, x in enumerate(righe):
+        if not isinstance(x, dict):
             continue
+        idx = x.get("idx", n)
+        if not x.get("chiave"):
+            errori.append({"idx": idx, "errore": "riga senza impronta"})
+            continue
+        x = dict(x)
+        if "categoria" in x and "categoria_link_id" not in x:
+            x["categoria_link_id"] = x.get("categoria")
         d, err = _normalizza(x)
         if err or not d.get("data") or not d.get("importo") or not d.get("tipo"):
-            scartate += 1
+            errori.append({"idx": idx, "errore": err or "data, importo o tipo mancanti"})
+            continue
+        if d.get("categoria_link_id") and d["categoria_link_id"] not in validi:
+            errori.append({"idx": idx, "errore": "categoria non valida"})
             continue
         d.setdefault("sezione", "conto")
+        if not d.get("sezione"):
+            d["sezione"] = "conto"
         d.setdefault("descrizione", "")
         d["chiave"] = str(x["chiave"])[:64]
         d["fonte"] = "estratto"
-        pulite.append(d)
+        pulite.append((idx, d))
 
-    gia = chiavi_presenti(client, [d["chiave"] for d in pulite])
-    nuove = [d for d in pulite if d["chiave"] not in gia]
-    # Anche dentro lo stesso invio: una chiave ripetuta due volte e' lo
-    # stesso movimento spedito due volte, non due movimenti.
-    viste, uniche = set(), []
-    for d in nuove:
-        if d["chiave"] in viste:
+    gia = chiavi_presenti(client, [d["chiave"] for _i, d in pulite])
+    duplicati, nuove, viste = [], [], set()
+    for idx, d in pulite:
+        # Anche dentro lo stesso invio: una chiave ripetuta due volte e'
+        # lo stesso movimento spedito due volte, non due movimenti.
+        if d["chiave"] in gia or d["chiave"] in viste:
+            duplicati.append({"idx": idx, "nota": "già registrato"})
             continue
         viste.add(d["chiave"])
-        uniche.append(d)
+        nuove.append((idx, d))
 
-    inseriti = 0
-    for i in range(0, len(uniche), 200):
+    salvate = []
+    for i in range(0, len(nuove), 200):
+        blocco = nuove[i:i + 200]
         try:
-            client.table(TABELLA).insert(uniche[i:i + 200]).execute()
-            inseriti += len(uniche[i:i + 200])
+            client.table(TABELLA).insert([d for _i, d in blocco]).execute()
+            salvate.extend(idx for idx, _d in blocco)
         except Exception as e:
-            return {"error": _errore(e), "inseriti": inseriti}
-    return {"ok": True, "inseriti": inseriti, "gia_presenti": len(pulite) - len(uniche),
-            "scartate": scartate}
+            return {"error": _errore(e), "salvate": salvate,
+                    "duplicati": duplicati, "errori": errori}
+    return {"ok": True, "salvate": salvate, "duplicati": duplicati, "errori": errori,
+            "inseriti": len(salvate), "gia_presenti": len(duplicati),
+            "scartate": len(errori)}
 
 
 # ---------------------------------------------------------------------------
@@ -821,6 +882,7 @@ def revolut_movimenti_lista():
       </select>
       <input class="select-pill" style="min-width:150px" placeholder="Cerca…"
              value="{_esc(cerca)}" onchange="filtra('q', this.value)">
+      <a class="btn ghost" href="/conti/revolut/importa">{icon("download")}Importa da banca</a>
     </div>'''
 
     da_cat = ""
@@ -968,6 +1030,7 @@ def _form(client, m: dict | None = None) -> str:
       </div>
     </div>
     </div>
+    {IM.suggerimento_form("revolut")}
     <div id="toast" class="toast"></div>
     <script>
       const ALBERO = {json.dumps(albero, ensure_ascii=False)};

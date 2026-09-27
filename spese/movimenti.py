@@ -20,6 +20,7 @@ from flask import Response, request, jsonify
 
 from . import spese_bp
 from . import dati as D
+from shared import importazione as IM
 from shared.theme import render_page
 from shared.design import icon
 from shared.fmt import eur, eur_segno, data_it
@@ -473,6 +474,7 @@ def _form(client, m: dict | None = None) -> str:
       </div>
     </div>
     </div>
+    {"" if collegato else IM.suggerimento_form("personale")}
     <div id="toast" class="toast"></div>
     <script>
       const ALBERO = {json.dumps(albero_scelta, ensure_ascii=False)};
