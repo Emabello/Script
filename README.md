@@ -295,6 +295,29 @@ Il saldo è la **fotografia più i movimenti registrati dopo**: l'app
 mostra sempre a quando risale la fotografia, e da 45 giorni in su lo
 segnala se nel frattempo non è stato registrato niente.
 
+#### Gli interessi dei salvadanai, fra un estratto e l'altro
+
+Il deposito paga ogni giorno, su ogni salvadanaio, *saldo × tasso lordo
+÷ 365 − 26% di ritenuta* (Casa con 5.328 € all'1,38%: 0,15 € al giorno).
+Fra un estratto e l'altro questi centesimi si accumulano, e il tasso ogni
+tanto cambia (1,50% da aprile a giugno 2026, 1,38% da luglio).
+`spese/interessi.py`:
+
+- **ricava il tasso da solo** dagli interessi veri degli ultimi 30
+  giorni, solo sui salvadanai sopra i 500 € (su Regali il maturato del
+  giorno è meno di un centesimo e Revolut lo paga ogni 3–4 giorni), e
+  segnala quando cambia da un mese all'altro;
+- **stima gli interessi maturati** dall'ultimo giorno pagato a oggi,
+  salvadanaio per salvadanaio. La stima si mostra con «≈» accanto al
+  saldo (tessera Revolut, pagina Revolut, pagina Risparmi) e **non entra
+  nel saldo né nel database**: quando importi l'estratto arrivano gli
+  interessi veri e la stima riparte da lì. Provata a ritroso sul file
+  vero: vista dal 27/09, la stima del 28/09 fa 0,22 €, come Revolut;
+- accetta un **tasso scritto a mano** («da questa data il tasso è X»,
+  migrazione [§ 8.20](#820--il-tasso-dei-salvadanai-quando-cambia--applicata-il-28092026)),
+  per quando Revolut annuncia un cambio prima che un estratto lo mostri.
+  Vale solo se è più recente degli interessi da cui l'app ricava il suo.
+
 #### I movimenti, come sugli altri due conti
 
 Dallo stesso estratto si leggono anche **i movimenti** (migrazione
@@ -2409,6 +2432,34 @@ mostra per ogni conto la quadratura *saldo di apertura + entrate − uscite
 riga.
 Reimportare un periodo che si sovrappone non crea doppioni e non tocca
 le categorie già corrette a mano.
+
+### 8.20 — Il tasso dei salvadanai, quando cambia ✅ applicata il 28/09/2026
+
+Il deposito paga gli interessi ogni giorno, al tasso che Revolut decide
+e ogni tanto cambia (1,50% da aprile a giugno 2026, 1,38% da luglio).
+L'app il tasso lo **ricava da sola** dagli interessi veri degli ultimi
+30 giorni (`spese/interessi.py`); questa tabella serve solo per dirle
+«da questa data il tasso è X» quando Revolut lo annuncia prima che un
+estratto lo mostri. Una riga vale se è più recente degli interessi da
+cui l'app ricava il suo: il dato vero vince sempre.
+
+```sql
+create table if not exists b2f_revolut_tassi (
+  dal         date          primary key,
+  tasso_lordo numeric(6,3)  not null check (tasso_lordo >= 0 and tasso_lordo <= 20),
+  note        text,
+  created_at  timestamptz   not null default now(),
+  updated_at  timestamptz   not null default now()
+);
+
+alter table b2f_revolut_tassi enable row level security;
+
+drop trigger if exists trg_b2f_revolut_tassi_updated on b2f_revolut_tassi;
+create trigger trg_b2f_revolut_tassi_updated before update on b2f_revolut_tassi
+  for each row execute function b2f_touch_updated_at();
+```
+
+Senza la tabella l'app funziona lo stesso: usa solo il tasso ricavato.
 
 ---
 

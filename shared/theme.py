@@ -1371,6 +1371,11 @@ def _blocco_saldi(saldi: dict) -> str:
         elif quando:
             pezzi.append(f'fotografia del {quando}'
                          + (f' + {n_dopo} movimenti' if n_dopo else ""))
+        # Gli interessi maturati dopo l'ultimo estratto: una stima, detta
+        # come tale, perche' il numero grande resta quello registrato.
+        maturati = float((rev.get("interessi") or {}).get("totale") or 0)
+        if maturati >= 0.01:
+            pezzi.append(f'≈ € {eur(maturati)} di interessi maturati')
         tiles += tile(rev, "Revolut", "/conti/revolut", " · ".join(pezzi))
 
     # Il totale ha senso solo se tutti i saldi in gioco sono veri:

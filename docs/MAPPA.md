@@ -619,6 +619,23 @@ stessi campi (`conto`, `tipo`, `segno`, `categoria` come nome,
 `trasferimento`). Il «giroconto» della P.IVA diventa un'uscita. Alimenta il
 foglio «Tutti i movimenti» dell'export.
 
+### `spese/interessi.py` · gli interessi dei salvadanai
+
+Tutto calcolato, niente scritto nei movimenti.
+- `saldo_salvadanai(foto, foto_data, deltas, giorno)`: i salvadanai a fine
+  giorno, dalla fotografia in avanti o all'indietro con i movimenti del
+  deposito che li nominano (`revolut._salvadanaio_da_descrizione`).
+- `tasso_dagli_interessi(...)`: tasso lordo degli ultimi 30 giorni di
+  interessi (salvadanai ≥ 500 €), mese per mese e `cambio` se si sposta
+  di ≥ 0,05 punti.
+- `tassi_manuali`, `salva_tasso`, `cancella_tasso`: tabella
+  `b2f_revolut_tassi` (§8.20). `tasso_del_giorno` sceglie: il manuale se
+  più recente degli interessi veri, altrimenti il ricavato.
+- `stima(...)`: maturati dal giorno dopo l'ultimo interesse (o la
+  fotografia) ad `al`. `saldo_revolut` la restituisce in `interessi`,
+  fuori da `saldo`. `resa(saldi, tasso, giorni)`: proiezione netta.
+- API: `POST /spese/api/revolut/tassi`, `DELETE /spese/api/revolut/tassi/<dal>`.
+
 ### `spese/importa.py` — 435 righe · import da estratto conto
 
 `GET /importa`, `POST /api/importa/carica`, `POST /api/importa/salva`.

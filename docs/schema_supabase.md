@@ -2,7 +2,7 @@
 
 Foto dello schema reale su Supabase, presa con la query di [README §8.5](../README.md#85--ispezionare-lo-schema). **Va rigenerata dopo ogni migrazione**: si aggiorna qui, non a mano.
 
-Ultimo aggiornamento: 2026-09-28 (dopo la migrazione § 8.19, applicata al database vivo; prima: § 8.14–8.18 il 2026-09-03).
+Ultimo aggiornamento: 2026-09-28 (dopo le migrazioni § 8.19 e § 8.20, applicate al database vivo; prima: § 8.14–8.18 il 2026-09-03).
 
 
 > **Nota**: questa foto è stata riverificata campo per campo contro il database
@@ -29,6 +29,7 @@ Ultimo aggiornamento: 2026-09-28 (dopo la migrazione § 8.19, applicata al datab
 - [`b2f_parametri_fiscali`](#b2fparametrifiscali)
 - [`b2f_revolut`](#b2frevolut)
 - [`b2f_revolut_movimenti`](#b2frevolutmovimenti)
+- [`b2f_revolut_tassi`](#b2frevoluttassi)
 - [`b2f_saldi_verifica`](#b2fsaldiverifica)
 - [`b2f_spese_piva`](#b2fspesepiva)
 - [`b2f_webauthn_credentials`](#b2fwebauthncredentials)
@@ -298,6 +299,29 @@ policy, come `b2f_revolut`: ci scrive solo il backend con la chiave di servizio.
 - `CREATE INDEX idx_b2f_revolut_movimenti_data ON public.b2f_revolut_movimenti USING btree (data)`
 
 **Trigger:** `trg_b2f_revolut_movimenti_updated` (BEFORE UPDATE → `b2f_touch_updated_at()`).
+
+---
+
+## `b2f_revolut_tassi`
+
+Creata dalla migrazione § 8.20 (applicata il 28/09/2026). RLS attiva, senza
+policy. Una riga = «da questa data il tasso lordo dei salvadanai è X» (in %).
+
+| colonna | tipo | null | identity | default |
+|---|---|---|---|---|
+| `dal` | date | NO | NO |  |
+| `tasso_lordo` | numeric(6,3) | NO | NO |  |
+| `note` | text | YES | NO |  |
+| `created_at` | timestamp with time zone | NO | NO | now() |
+| `updated_at` | timestamp with time zone | NO | NO | now() |
+
+**Vincoli:**
+
+- `b2f_revolut_tassi_pkey`: PRIMARY KEY (dal)
+- `b2f_revolut_tassi_tasso_lordo_check`: CHECK (((tasso_lordo >= (0)::numeric) AND (tasso_lordo <= (20)::numeric)))
+
+**Trigger:** `trg_b2f_revolut_tassi_updated` (BEFORE UPDATE → `b2f_touch_updated_at()`).
+
 
 **Categorie aggiunte** da § 8.19 in `cfg_categorie`, ognuna con la sua riga
 senza sottocategoria in `cfg_categoria_sottocategoria`: *Giroconto Revolut*,

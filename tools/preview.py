@@ -346,6 +346,14 @@ DB["b2f_revolut_movimenti"] = [
          "Caffè", fonte="manuale"),
 ]
 
+# Il tasso dei salvadanai scritto a mano (migrazione §8.20). I movimenti
+# qui sopra non hanno interessi che nominano un salvadanaio, quindi l'app
+# non puo' ricavarlo da sola: vale questo, e la pagina mostra la stima
+# degli interessi maturati dopo la fotografia.
+DB["b2f_revolut_tassi"] = [
+    {"dal": "2026-07-01", "tasso_lordo": 1.38, "note": "annunciato da Revolut"},
+]
+
 # v_risparmi_mese: i nomi delle colonne hanno spazi e maiuscole come nella
 # vista vera (spese/dati.py::periodi_risparmio li traduce).
 #
