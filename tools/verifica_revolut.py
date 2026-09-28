@@ -380,8 +380,7 @@ def main():
     rev_i = R.saldo_revolut(client, "2026-09-30")
     controlla(rev_i["interessi"]["totale"] > 0 and rev_i["interessi"]["fonte_tasso"] == "manuale",
               f"saldo_revolut porta la stima (preview: tasso a mano) → € {rev_i['interessi']['totale']}")
-    controlla(rev_i["saldo"] == round(rev_i["conto"] + rev_i["risparmi"] + rev_i["investimenti"]
-                                      + rev_i["dopo"]["conto"] + rev_i["dopo"]["risparmi"], 2),
+    controlla(rev_i["saldo"] == round(rev_i["conto"] + rev_i["risparmi"] + rev_i["investimenti"], 2),
               "la stima non entra nel saldo")
     with preview.application.test_client() as cl:
         pagina = cl.get("/conti/revolut").get_data(as_text=True)
@@ -399,14 +398,56 @@ def main():
 
     print("\n== saldo: fotografia + movimenti dopo")
     rev = R.saldo_revolut(client, "2026-09-30")
-    foto = round(rev["conto"] + rev["risparmi"] + rev["investimenti"], 2)
+    foto = round(rev["foto"]["conto"] + rev["foto"]["risparmi"] + rev["investimenti"], 2)
     dopo = rev["dopo"]
     controlla(dopo["n"] > 0, f'{dopo["n"]} movimenti dopo la fotografia del {rev["data"]}')
     controlla(rev["saldo"] == round(foto + dopo["conto"] + dopo["risparmi"], 2),
               "saldo = fotografia + movimenti dopo")
+    controlla(rev["conto"] == round(rev["foto"]["conto"] + dopo["conto"], 2)
+              and rev["risparmi"] == round(rev["foto"]["risparmi"] + dopo["risparmi"], 2)
+              and rev["saldo"] == round(rev["conto"] + rev["risparmi"] + rev["investimenti"], 2),
+              "liquidità e risparmi sono ad oggi, e sommano al saldo senza contare due volte")
     rev_foto = R.saldo_revolut(client, rev["data"])
     controlla(rev_foto["dopo"]["n"] == 0 and rev_foto["saldo"] == foto,
               "il giorno della fotografia il saldo è la fotografia")
+
+    print("\n== i salvadanai seguono i movimenti, e la procedura scrive anche Revolut")
+    from spese import dati as Dd
+    ultima = max(DB["b2f_revolut"], key=lambda x: x["data"])
+    prima_sv = R.saldo_revolut(client, "2026-09-30")["salvadanai"]
+    app_t = preview.application.test_client()
+    n_prima = len(DB["b2f_revolut_movimenti"])
+    r = app_t.post("/spese/api/risparmi/esegui", json={"importo": 1269.67, "data": "2026-09-28"})
+    j = r.get_json() or {}
+    nuovi = DB["b2f_revolut_movimenti"][n_prima:]
+    perc = Dd.impostazioni_alla(Dd.impostazioni_storiche(client), "2026-09-28")
+    rip = RM.ripartizione(1269.67, perc)
+    controlla(r.status_code == 200 and j.get("revolut", {}).get("righe") == 1 + 2 * len(rip["quote"]),
+              f"procedura: WeBank + {len(nuovi)} movimenti Revolut (arrivo e quote)")
+    controlla(round(sum(rip["quote"].values()) + rip["resto"], 2) == 1269.67 and rip["resto"] >= 0,
+              f"le quote più il resto (investimenti) fanno il bonifico ({rip})")
+    arrivo = [m for m in nuovi if m["tipo"] == "entrata" and m["sezione"] == "conto"]
+    controlla(len(arrivo) == 1 and arrivo[0]["descrizione"] == RM.DA_WEBANK
+              and arrivo[0]["categoria_link_id"] == link("Risparmi"),
+              "l'arrivo del bonifico su Revolut è «Risparmi», con la descrizione di Revolut")
+    dopo_sv = R.saldo_revolut(client, "2026-09-30")["salvadanai"]
+    controlla(all(round(dopo_sv.get(k, 0) - prima_sv.get(k, 0), 2) == q
+                  for k, q in rip["quote"].items()),
+              f"i salvadanai dell'app si spostano subito delle quote ({ultima['data']} → oggi)")
+    netto_conto = round(sum(m["importo"] if m["tipo"] == "entrata" else -m["importo"]
+                            for m in nuovi if m["sezione"] == "conto"), 2)
+    controlla(netto_conto == rip["resto"], f"in liquidità resta la quota investimenti ({netto_conto})")
+    controlla(not j.get("revolut", {}).get("avviso"), "nessuna fotografia lo stesso giorno: nessun avviso")
+    n_prima = len(DB["b2f_revolut_movimenti"])
+    r = app_t.post("/spese/api/risparmi/esegui",
+                   json={"importo": 100, "data": "2026-09-29", "revolut": False})
+    controlla(r.status_code == 200 and len(DB["b2f_revolut_movimenti"]) == n_prima,
+              "con la casella tolta, su Revolut non scrive niente")
+    DB["b2f_revolut"].append({**ultima, "data": "2026-09-30"})
+    r = app_t.post("/spese/api/risparmi/esegui", json={"importo": 10, "data": "2026-09-30"})
+    controlla("fotografia" in ((r.get_json() or {}).get("revolut") or {}).get("avviso", ""),
+              "fotografia dello stesso giorno: la procedura lo dice")
+    DB["b2f_revolut"].pop()
 
     print("\n== il ponte con WeBank")
     p = RM.ponte(client)

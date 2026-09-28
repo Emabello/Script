@@ -665,6 +665,90 @@ def crea(client, dati: dict) -> dict:
         return {"error": _errore(e)}
 
 
+# Come Revolut chiama oggi i salvadanai nelle descrizioni del deposito
+# («A EUR Casa»): le stesse parole, cosi' al prossimo estratto questi
+# movimenti scritti dalla procedura risultano gia' registrati.
+NOMI_DEPOSITO = {"casa": "Casa", "emergenze": "Emergenze", "vacanze": "Vacanze",
+                 "regali": "Regali"}
+DA_WEBANK = "Pagamento da BELLOTTI EMANUELE"
+
+
+def ripartizione(importo: float, percentuali: dict) -> dict:
+    """
+    Come si divide un bonifico ai salvadanai: la quota di ogni salvadanaio
+    (importo × percentuale, al centesimo) e il resto, che non va in un
+    salvadanaio ma negli investimenti e intanto resta in liquidita'.
+    """
+    from .revolut import SALVADANAI
+    quote = {}
+    for chiave, _rev, _app, campo_perc, _col, _alias in SALVADANAI:
+        if chiave not in NOMI_DEPOSITO:
+            continue
+        try:
+            p = float(percentuali.get(campo_perc) or 0)
+        except (TypeError, ValueError):
+            p = 0.0
+        q = round(importo * p, 2)
+        if q > 0:
+            quote[chiave] = q
+    return {"quote": quote, "resto": round(importo - sum(quote.values()), 2)}
+
+
+def registra_risparmio(client, importo: float, quando: str, percentuali: dict) -> dict:
+    """
+    Il lato Revolut del bonifico ai salvadanai, come succede davvero: il
+    bonifico arriva sul conto («Risparmi», l'altra meta' dell'uscita
+    WeBank), e da li' ogni quota passa nel suo salvadanaio (due righe per
+    quota, conto → deposito, «Giroconto Revolut»). Il resto — la quota
+    degli investimenti — resta in liquidita' finche' non lo sposti: quello
+    arriva con l'estratto («Al conto di investimento»).
+
+    Senza questo la procedura scriveva solo WeBank: i soldi risultavano
+    usciti dal personale e mai arrivati, e i salvadanai dell'app restavano
+    fermi all'ultima fotografia.
+    """
+    try:
+        importo = round(abs(float(importo)), 2)
+    except (TypeError, ValueError):
+        return {"error": "importo non valido"}
+    rip = ripartizione(importo, percentuali)
+    risparmio = _link_di(client, D.CATEGORIA_RISPARMIO)
+    interno = _link_di(client, CATEGORIA_INTERNO)
+    nota = "registrato dalla procedura di fine periodo"
+    righe = [{"data": quando, "tipo": "entrata", "importo": importo, "sezione": "conto",
+              "descrizione": DA_WEBANK, "categoria_link_id": risparmio, "note": nota}]
+    for chiave, q in rip["quote"].items():
+        desc = f"A EUR {NOMI_DEPOSITO[chiave]}"
+        righe.append({"data": quando, "tipo": "uscita", "importo": q, "sezione": "conto",
+                      "descrizione": desc, "categoria_link_id": interno, "note": nota})
+        righe.append({"data": quando, "tipo": "entrata", "importo": q, "sezione": "risparmi",
+                      "descrizione": desc, "categoria_link_id": interno, "note": nota})
+    pulite = []
+    for r in righe:
+        d, err = _normalizza(r)
+        if err:
+            return {"error": err}
+        d["fonte"] = "manuale"
+        pulite.append(d)
+    try:
+        client.table(TABELLA).insert(pulite).execute()
+    except Exception as e:
+        return {"error": _errore(e)}
+    esito = {"righe": len(pulite), **rip}
+    # Una fotografia con la stessa data e' il saldo di fine giornata: i
+    # movimenti di quel giorno si considerano gia' dentro, e questi non
+    # sposterebbero niente. Va detto, non taciuto.
+    try:
+        foto = _righe(client.table("b2f_revolut").select("data").eq("data", quando).execute())
+    except Exception:
+        foto = []
+    if foto:
+        esito["avviso"] = (f"C'è già una fotografia Revolut del {quando[8:10]}/{quando[5:7]}: "
+                           "i movimenti di quel giorno si considerano già dentro. "
+                           "Aggiornala con i saldi di fine giornata.")
+    return esito
+
+
 def aggiorna(client, mid: int, dati: dict) -> dict:
     d, err = _normalizza(dati)
     if err:

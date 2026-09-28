@@ -18,6 +18,12 @@ come), **Stato**.
 
 ## Aperti
 
+### [2026-09-28] «Dovrebbe esserci» nei salvadanai somma le quote di sempre e non toglie mai i prelievi
+**Cosa**: sulla pagina Risparmi, per ogni salvadanaio, il «dovrebbe» è la somma delle quote di tutti i periodi (`v_risparmi_mese`), il «c'è» il saldo Revolut di oggi. Al 28/09/2026: Vacanze 3.388,36 contro 630,43, Emergenze 5.082,51 contro 2.342,11, Regali 847,08 contro 148,20, Casa 4.235,45 contro 5.646,05.
+**Perché si rompe**: dai salvadanai si preleva apposta — 785 € dalle Vacanze per un viaggio l'08/09, 1.200 € dalle Emergenze il 16/11/2025, e ad aprile 2026 i vecchi pocket confluiti in Casa — e ogni prelievo allarga lo scarto per sempre. Il confronto serviva a vedere un periodo dimenticato; con due anni di prelievi legittimi lo scarto è dominato dalla storia, e un periodo dimenticato (qualche centinaio di euro) non si vede più. Il danno concreto: la scheda dice «in meno» su tre salvadanai su quattro anche quando tutto è stato fatto bene.
+**Proposta**: confrontare periodo per periodo (la quota del periodo contro lo spostamento «A EUR X» dei giorni del bonifico, ora che la procedura li scrive), oppure togliere dal «dovrebbe» i prelievi registrati («Da EUR X»).
+**Stato**: aperto.
+
 ### [2026-09-27] Undici esercenti hanno due categorie allo stesso importo
 **Cosa**: `tools/verifica_suggerimenti.py` trova 11 gruppi (42 movimenti) con stesso esercente, stesso importo, stessa direzione e categorie diverse — McDonald's 2,20 € Caffè ×13 e Cibo ×2, Iper Portello 1,90 € Caffè ×3 e Cibo ×2, Cless Ticket ATM 2,20 € una volta Personale e una volta Viaggi.
 **Perché si rompe**: non è la formula a sbagliare — la memoria esatta le riproduce tutte (100%) —, sono i dati a dire due cose. La conseguenza concreta è a valle: la ripartizione per sottocategoria di un mese dipende da quale delle due scelte è stata fatta quel giorno, e «quanto spendo in caffè» non ha una risposta stabile. Per la categoria principale conta poco (sono quasi tutte dentro Personale), tranne il biglietto ATM, che sposta 2,20 € fra Personale e Viaggi.
@@ -279,6 +285,9 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 ---
 
 ## Fatti (storico — per non riproporli)
+
+### [2026-09-28] Dopo il bonifico ai salvadanai, i salvadanai dell'app restavano quelli del giorno prima
+La procedura di fine periodo scriveva solo l'uscita WeBank; su Revolut non arrivava niente, e comunque `saldo_revolut` dava i salvadanai (e liquidità e risparmi) della fotografia, ignorando i movimenti successivi. Spostati 1.015,73 € nei salvadanai, l'app mostrava ancora quelli di ieri. Ora `saldo_revolut` restituisce `conto`, `risparmi` e `salvadanai` ad oggi (fotografia + movimenti dopo, la fotografia sta in `foto`), e la procedura scrive anche il lato Revolut (`revolut_movimenti.registra_risparmio`: arrivo + quote, con le descrizioni di Revolut; avvisa se c'è una fotografia dello stesso giorno). Dati del 28/09 allineati al centesimo con l'app Revolut.
 
 ### [2026-09-28] Uno storno e l'addebito che annulla finivano in due categorie diverse
 All'import ogni riga riceveva la sua proposta dallo storico da sola: il 14/09 «Civico 105» (3,00) in Cibo e il suo storno in Bar, con Bar 3 € più alto e Cibo 3 € più basso per una spesa mai avvenuta. Ora `shared/importazione.py::accoppia_storni` (sui tre import) dà a ogni storno o rimborso la categoria dell'uscita che annulla — stesso esercente, fino a 30 giorni prima, stesso importo prima e rimborso parziale poi —, cercandola nel file e fra i movimenti registrati; nel pannello lo storno segue l'addebito finché non lo cambi a mano. `tools/verifica_import.py` lo prova, anche nel browser.

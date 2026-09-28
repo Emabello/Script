@@ -412,6 +412,12 @@ def _card_procedura(client, periodo, dal: str, al: str, consigliato: float,
       </div>
       {avviso_data}
       <div class="rows detail mt-3">{anteprima}</div>
+      <label class="small mt-3" style="display:flex;gap:var(--sp-2);align-items:flex-start">
+        <input type="checkbox" id="f_revolut" checked>
+        <span>Registra anche l'arrivo su Revolut e lo spostamento nei salvadanai,
+          con queste quote. La quota degli investimenti resta in liquidità finché
+          non la sposti.</span>
+      </label>
       <div class="actions mt-4">
         <button type="button" class="btn block" id="btnEsegui"
                 onclick="onEsegui()">Registra il bonifico ai salvadanai</button>
@@ -1114,11 +1120,14 @@ def risparmi_pagina():
         try {{
           const r = await fetch('/spese/api/risparmi/esegui', {{
             method: 'POST', headers: {{'Content-Type': 'application/json'}},
-            body: JSON.stringify({{importo: v, data: quando}}),
+            body: JSON.stringify({{importo: v, data: quando,
+                                   revolut: document.getElementById('f_revolut').checked}}),
           }});
           const j = await r.json();
           if (!r.ok) {{ toast(j.error || 'Errore', 'err'); btn.disabled = false; return; }}
-          toast('Bonifico registrato', 'ok');
+          const rv = j.revolut || {{}};
+          toast(rv.error ? 'Bonifico registrato su WeBank; su Revolut no: ' + rv.error
+                : (rv.avviso || 'Bonifico registrato'), rv.error || rv.avviso ? 'err' : 'ok');
           setTimeout(()=>location.reload(), 800);
         }} catch (e) {{
           toast('Errore rete: ' + e.message, 'err'); btn.disabled = false;
@@ -1165,7 +1174,17 @@ def api_risparmi_esegui():
         descrizione="Bonifico ai salvadanai (Revolut)")
     if esito.get("error"):
         return jsonify(esito), 400
-    return jsonify({"ok": True, **esito})
+    # Il lato Revolut, se richiesto (default si'): l'arrivo del bonifico e
+    # le quote nei salvadanai. Se non riesce, il movimento WeBank resta:
+    # e' quello vero sul conto personale, e la risposta dice cosa manca.
+    rev = None
+    if body.get("revolut", True) is not False:
+        from . import revolut_movimenti as RM
+        perc = D.impostazioni_alla(D.impostazioni_storiche(client),
+                                   quando or date.today().isoformat())
+        rev = RM.registra_risparmio(client, body.get("importo"),
+                                    quando or date.today().isoformat(), perc)
+    return jsonify({"ok": True, **esito, "revolut": rev})
 
 
 @spese_bp.patch("/spese/api/risparmi")
