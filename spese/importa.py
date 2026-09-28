@@ -343,9 +343,11 @@ def api_importa_carica():
     client = D.sb()
     if client is not None:
         try:
-            conti = IM.segna_doppioni(_esistenti(client, righe), righe)
+            esistenti = _esistenti(client, righe)
+            conti = IM.segna_doppioni(esistenti, righe)
             ammesse = {v["valore"] for v in _voci(client)}
             proposte = IM.proponi(SG.storico_personale(client), righe, ammesse)
+            storni = IM.accoppia_storni(righe, esistenti)
             if conti["presenti"]:
                 avvisi.append({"testo": f'{conti["presenti"]} righe sono già registrate: '
                                         f'restano spente e non si salvano.'})
@@ -356,6 +358,9 @@ def api_importa_carica():
             if proposte:
                 avvisi.append({"testo": f"{proposte} righe hanno già la categoria, "
                                         f"proposta dallo storico."})
+            if storni:
+                avvisi.append({"testo": f"{storni} storni hanno la categoria della spesa "
+                                        f"che annullano."})
         except Exception:
             pass
     return jsonify({"movimenti": righe, "avvisi": avvisi})

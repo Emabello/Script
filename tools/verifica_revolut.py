@@ -322,6 +322,72 @@ def main():
     DB["spese"].pop()
     DB["v_spese"].pop()
 
+    print("\n== interessi dei salvadanai")
+    from spese import interessi as I
+    from datetime import date as _d, timedelta as _td
+
+    def interessi_giornalieri(k_nome, saldo, tasso, dal, giorni):
+        """Un salvadanaio che prende ogni giorno saldo × tasso ÷ 365 × 0,74."""
+        righe, s = [], saldo
+        for n in range(giorni):
+            g = _d.fromisoformat(dal) + _td(days=n)
+            imp = round(s * tasso / 100 / 365 * (1 - I.RITENUTA), 2)
+            if imp:
+                s = round(s + imp, 2)
+                righe.append({"data": g.isoformat(), "tipo": "entrata", "importo": imp,
+                              "sezione": "risparmi",
+                              "descrizione": f'Interessi netti pagati nel conto "{k_nome}" '
+                                             f'in data {g.isoformat()}'})
+        return righe, s
+
+    casa_ago, casa_fine_ago = interessi_giornalieri("Casa", 5000.0, 1.50, "2026-08-01", 31)
+    casa_set, casa_fine = interessi_giornalieri("Casa", casa_fine_ago, 1.38, "2026-09-01", 30)
+    regali, regali_fine = interessi_giornalieri("Regali", 80.0, 1.38, "2026-09-01", 30)
+    mov_i = casa_ago + casa_set + regali + [
+        {"data": "2026-09-30", "tipo": "uscita", "importo": 200.0, "sezione": "risparmi",
+         "descrizione": "Da EUR Casa"}]
+    casa_fine = round(casa_fine - 200.0, 2)
+    foto_i = {"casa": casa_fine, "regali": regali_fine}
+    ric = I.saldo_salvadanai(foto_i, "2026-09-30", I._deltas(mov_i), _d(2026, 8, 31))
+    controlla(ric["casa"] == casa_fine_ago,
+              f"salvadanaio ricostruito all'indietro dalla fotografia ({ric['casa']} = {casa_fine_ago})")
+    t = I.tasso_dagli_interessi(foto_i, "2026-09-30", mov_i, "2026-09-30")
+    controlla(t and abs(t["tasso"] - 1.38) <= 0.02, f"tasso ricavato ≈ 1,38% ({t and t['tasso']})")
+    controlla(t and t["cambio"] and t["cambio"]["da"] > 1.45,
+              f"cambio di tasso riconosciuto: da ~1,50% a ~1,38% ({t and t['cambio']})")
+    st = I.stima(foto_i, "2026-09-30", mov_i, "2026-10-10")
+    attesa = I.resa(foto_i, t["tasso"], 10)
+    controlla(st["giorni"] == 10 and st["dal"] == "2026-10-01" and abs(st["totale"] - attesa) <= 0.01,
+              f"stima dal giorno dopo l'ultimo interesse: 10 giorni ≈ € {st['totale']}")
+    st0 = I.stima(foto_i, "2026-09-30", mov_i, "2026-09-30")
+    controlla(st0["totale"] == 0 and st0["giorni"] == 0, "il giorno della fotografia non c'è niente da stimare")
+    vecchio = [{"dal": "2026-06-01", "tasso": 3.0, "note": None}]
+    nuovo = [{"dal": "2026-10-05", "tasso": 1.0, "note": None}]
+    controlla(I.stima(foto_i, "2026-09-30", mov_i, "2026-10-10", vecchio)["fonte_tasso"] == "estratto",
+              "un tasso a mano più vecchio degli interessi veri non vale")
+    st_n = I.stima(foto_i, "2026-09-30", mov_i, "2026-10-10", nuovo)
+    controlla(st_n["fonte_tasso"] == "manuale" and st_n["tasso"] == 1.0 and st_n["totale"] < st["totale"],
+              "un tasso a mano più recente vale dal suo giorno in poi")
+    controlla(I.stima({}, None, [], "2026-10-10")["totale"] == 0, "senza dati: nessuna stima, nessun errore")
+    controlla(I.salva_tasso(client, {"dal": "2026-10-01", "tasso": "1,25"}).get("ok")
+              and any(str(x["dal"]) == "2026-10-01" for x in DB["b2f_revolut_tassi"]),
+              "tasso scritto a mano salvato («1,25» con la virgola)")
+    controlla(I.salva_tasso(client, {"dal": "2026-10-01", "tasso": 125}).get("error"),
+              "125 invece di 1,25 → rifiutato")
+    controlla(I.cancella_tasso(client, "2026-10-01").get("ok")
+              and not any(str(x["dal"]) == "2026-10-01" for x in DB["b2f_revolut_tassi"]),
+              "tasso cancellato")
+    rev_i = R.saldo_revolut(client, "2026-09-30")
+    controlla(rev_i["interessi"]["totale"] > 0 and rev_i["interessi"]["fonte_tasso"] == "manuale",
+              f"saldo_revolut porta la stima (preview: tasso a mano) → € {rev_i['interessi']['totale']}")
+    controlla(rev_i["saldo"] == round(rev_i["conto"] + rev_i["risparmi"] + rev_i["investimenti"]
+                                      + rev_i["dopo"]["conto"] + rev_i["dopo"]["risparmi"], 2),
+              "la stima non entra nel saldo")
+    with preview.application.test_client() as cl:
+        pagina = cl.get("/conti/revolut").get_data(as_text=True)
+    controlla("Interessi dei salvadanai" in pagina and "Salva il tasso" in pagina,
+              "la pagina Revolut mostra la scheda degli interessi")
+
     print("\n== totali: i giroconti interni restano fuori")
     tutte = RM.tutti(client)
     agosto = RM.filtra(tutte, anno=2026, mese=8)

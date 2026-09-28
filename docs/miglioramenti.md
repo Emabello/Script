@@ -280,6 +280,9 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 
 ## Fatti (storico — per non riproporli)
 
+### [2026-09-28] Uno storno e l'addebito che annulla finivano in due categorie diverse
+All'import ogni riga riceveva la sua proposta dallo storico da sola: il 14/09 «Civico 105» (3,00) in Cibo e il suo storno in Bar, con Bar 3 € più alto e Cibo 3 € più basso per una spesa mai avvenuta. Ora `shared/importazione.py::accoppia_storni` (sui tre import) dà a ogni storno o rimborso la categoria dell'uscita che annulla — stesso esercente, fino a 30 giorni prima, stesso importo prima e rimborso parziale poi —, cercandola nel file e fra i movimenti registrati; nel pannello lo storno segue l'addebito finché non lo cambi a mano. `tools/verifica_import.py` lo prova, anche nel browser.
+
 ### [2026-09-28] Su /conti un quadratino a caso diceva «saldo non disponibile» a ogni refresh
 Da quando i tre saldi si calcolano in parallelo usavano tutti l'unica connessione HTTP/2 che supabase-py apre di default (`httpx.Client(http2=True)`), e ogni tanto una richiesta moriva con un errore di protocollo: non una risposta 503 (quelle postgrest le ripete), un'eccezione che le funzioni di saldo intercettano restituendo «non disponibile». Ora il client usa un pool HTTP/1.1 (`shared/supabase_client.py::_opzioni`), sicuro fra thread; `in_parallelo` riprova una volta e scrive l'errore nel log invece di ingoiarlo; `_saldi_conti` ricalcola una volta il conto che torna non disponibile.
 

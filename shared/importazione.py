@@ -24,6 +24,7 @@ Ogni pagina ci mette solo quello che e' suo: come si legge il file e dove
 si salva.
 """
 import json
+import re
 from collections import Counter
 from datetime import date
 
@@ -201,6 +202,118 @@ def proponi(storico, righe: list[dict], ammesse: set | None = None,
 
 
 # ---------------------------------------------------------------------------
+# Gli storni: un'entrata che annulla un'uscita prende la sua categoria
+# ---------------------------------------------------------------------------
+
+# Come le banche chiamano un'entrata che restituisce una spesa: WeBank
+# «storno scritture - carta *2058-civico 105 milano», Revolut «Rimborso su
+# carta» nel tipo di movimento (la descrizione e' solo l'esercente).
+_STORNO = re.compile(r"\bstorn|\brimbors|\brefund|\breversal|\bchargeback", re.I)
+_PREFISSO_STORNO = re.compile(
+    r"^\s*(storno(\s+scritture)?|rimborso(\s+su\s+carta)?|refund|reversal)\s*[-:]?\s*"
+    r"(carta\s*\*?\s*\d+\s*-?\s*)?", re.I)
+GIORNI_STORNO = 30
+
+
+def e_storno(r: dict) -> bool:
+    """Un'entrata che restituisce una spesa, a giudicare da come la chiama la banca."""
+    if r.get("tipo") != "entrata":
+        return False
+    return bool(_STORNO.search(r.get("descrizione") or "")
+                or _STORNO.search(r.get("categoria_banca") or ""))
+
+
+def _esercente_storno(descrizione) -> str:
+    return _esercente(_PREFISSO_STORNO.sub("", str(descrizione or "")))
+
+
+def accoppia_storni(righe: list[dict], esistenti: list[dict] | None = None,
+                    categoria_di=None, campo: str = "categoria") -> int:
+    """
+    Dà a ogni storno la categoria dell'uscita che annulla, e ritorna
+    quanti ne ha accoppiati.
+
+    Il 14/09/2026 «Civico 105» (uscita 3,00) era finito in Cibo e il suo
+    storno dello stesso giorno in Bar: il saldo tornava, ma Bar risultava
+    3 € piu' alto e Cibo 3 € piu' basso, per una spesa mai avvenuta. Ogni
+    riga riceveva la sua proposta dallo storico, da sola.
+
+    L'uscita si cerca fino a `GIORNI_STORNO` giorni prima (o il giorno
+    dopo, per le date contabili sfalsate), con lo stesso esercente: prima
+    nello stesso file — e allora le due righe restano legate
+    (`storno_di`), e nel pannello lo storno segue la categoria che scegli
+    per l'addebito —, poi fra i movimenti gia' registrati, con la loro
+    categoria. A parita', vince lo stesso importo, poi la data piu' vicina;
+    un rimborso parziale (importo minore) si accoppia solo se non c'e' di
+    meglio. Ogni uscita annulla uno storno solo.
+
+    `categoria_di(riga_esistente)` legge la categoria di un movimento gia'
+    registrato (il link `cfg_*`, o la chiave della P.IVA).
+    """
+    from .suggerimenti import somiglianza, trigrammi
+    categoria_di = categoria_di or (lambda e: e.get("categoria_link_id"))
+    usate: set = set()
+    accoppiati = 0
+
+    def candidati(storno, pool, nel_file):
+        g = _giorno(storno.get("data"))
+        imp = _num(storno.get("importo"))
+        es = _esercente_storno(storno.get("descrizione"))
+        if g is None or imp is None or not es:
+            return []
+        out = []
+        for i, u in pool:
+            if u.get("tipo") != "uscita" or (nel_file, i) in usate:
+                continue
+            gu = _giorno(u.get("data"))
+            iu = _num(u.get("importo"))
+            if gu is None or iu is None or iu + 0.005 < imp:
+                continue
+            scarto = (g - gu).days
+            if not -1 <= scarto <= GIORNI_STORNO:
+                continue
+            eu = _esercente(u.get("descrizione"))
+            if not eu or (eu != es and somiglianza(trigrammi(eu), trigrammi(es)) < 0.75):
+                continue
+            out.append((abs(iu - imp) >= 0.01, abs(scarto), nel_file, i, u))
+        return out
+
+    nel_file = [(i, u) for i, u in enumerate(righe) if not u.get("presente")]
+    registrati = list(enumerate(esistenti or []))
+    for s in righe:
+        if s.get("presente") or not e_storno(s):
+            continue
+        tutti = candidati(s, nel_file, True) + candidati(s, registrati, False)
+        if not tutti:
+            continue
+        # Stesso importo prima, poi la data piu' vicina, poi lo stesso file.
+        _diverso, _scarto, da_file, i, u = min(tutti, key=lambda c: (c[0], c[1], not c[2]))
+        usate.add((da_file, i))
+        quando = str(u.get("data") or "")[:10]
+        s["nota"] = (f"storno di «{(u.get('descrizione') or '').strip()[:40]}» "
+                     f"del {quando[8:10]}/{quando[5:7]}")
+        if da_file:
+            # Parte uguale all'addebito, anche vuota: nel pannello lo segue.
+            s["storno_di"] = i
+            s[campo] = u.get(campo)
+            s.pop("suggerimento", None)
+        else:
+            cat = categoria_di(u)
+            if cat:
+                s[campo] = cat
+                s.pop("suggerimento", None)
+        accoppiati += 1
+    return accoppiati
+
+
+def _giorno(v):
+    try:
+        return date.fromisoformat(str(v or "")[:10])
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Il pannello di revisione
 # ---------------------------------------------------------------------------
 
@@ -371,8 +484,21 @@ def pannello(voci: list[dict], salva_url: str, obbligatoria: bool,
       // Le righe si disegnano a blocchi: un estratto dall'apertura del
       // conto ne ha piu' di mille, e mille tendine in un colpo solo
       // bloccano il telefono per un paio di secondi.
+      // Ogni storno legato a un addebito del file ne prende la categoria,
+      // qualunque sia la strada da cui e' arrivata (la tendina, «applica
+      // alle selezionate», «accetta tutte le proposte»), finche' non lo
+      // cambi tu.
+      function seguiStorni() {{
+        for (const x of R) {{
+          if (x.storno_di == null || x.presente || x.salvata || x.toccataAMano) continue;
+          const u = R[x.storno_di];
+          if (u && x.categoria !== u.categoria) x.categoria = u.categoria;
+        }}
+      }}
+
       let giro = 0;
       function disegna() {{
+        seguiStorni();
         const corpo = document.getElementById('impCorpo');
         const mie = R.filter(visibile);
         const questo = ++giro;
@@ -408,6 +534,14 @@ def pannello(voci: list[dict], salva_url: str, obbligatoria: bool,
         r.categoria = v; r.toccata = true;
         if (v && !r.presente) r.scelta = true;
         ridisegna(r);
+        // Gli storni di questa riga la seguono (accoppia_storni): uno
+        // storno in una categoria diversa dall'addebito sposterebbe il
+        // budget di una spesa mai avvenuta.
+        for (const x of R) {{
+          if (x.storno_di !== r.idx || x.presente || x.salvata || x.toccataAMano) continue;
+          x.categoria = v;
+          ridisegna(x);
+        }}
         if (daPropagare === false || !v) {{ conteggio(); return; }}
         // Le righe con la stessa descrizione e la stessa direzione, ancora
         // senza una scelta tua, prendono la stessa categoria.
@@ -465,7 +599,7 @@ def pannello(voci: list[dict], salva_url: str, obbligatoria: bool,
 
       return {{
         carica, filtro, salva,
-        categoria: (i, v) => categoria(i, v),
+        categoria: (i, v) => {{ R[i].toccataAMano = true; categoria(i, v); }},
         usa: i => categoria(i, String(R[i].suggerimento.valore)),
         spunta: (i, v) => {{ R[i].scelta = v; ridisegna(R[i]); conteggio(); }},
         descrizione: (i, v) => {{ R[i].descrizione = v; }},

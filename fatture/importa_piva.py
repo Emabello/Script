@@ -60,7 +60,7 @@ def _esistenti(sb, righe: list[dict]) -> list[dict]:
     out, offset = [], 0
     while True:
         try:
-            r = (sb.table("b2f_spese_piva").select("data,tipo,importo,descrizione")
+            r = (sb.table("b2f_spese_piva").select("data,tipo,importo,descrizione,categoria")
                  .gte("data", dal).lte("data", al).order("data").order("id")
                  .range(offset, offset + 999).execute())
             pagina = r.data or []
@@ -164,10 +164,13 @@ def api_piva_importa_carica():
     sb = _sb()
     if sb is not None:
         try:
-            conti = IM.segna_doppioni(_esistenti(sb, righe), righe)
+            esistenti = _esistenti(sb, righe)
+            conti = IM.segna_doppioni(esistenti, righe)
             speciali = _blocca_e_segnala(sb, righe)
             proposte = IM.proponi(SG.storico_piva(sb), righe,
                                   {k for k, _l in CATEGORIE_SPESE_PIVA})
+            storni = IM.accoppia_storni(righe, esistenti,
+                                        categoria_di=lambda e: e.get("categoria"))
             if conti["presenti"]:
                 avvisi.append({"testo": f'{conti["presenti"]} righe sono già registrate.'})
             if speciali["giroconti"]:
@@ -179,6 +182,9 @@ def api_piva_importa_carica():
                     f'registrale dalla fattura, così restano collegate.'})
             if proposte:
                 avvisi.append({"testo": f"{proposte} righe hanno la categoria proposta dallo storico."})
+            if storni:
+                avvisi.append({"testo": f"{storni} storni hanno la categoria della spesa "
+                                        f"che annullano."})
         except Exception:
             pass
     return jsonify({"movimenti": righe, "avvisi": avvisi})

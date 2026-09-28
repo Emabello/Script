@@ -57,7 +57,7 @@ import csv
 import io
 import json
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import openpyxl
 from flask import Response, jsonify, request
@@ -941,8 +941,21 @@ def saldo_revolut(client, al: str | None = None) -> dict:
     # risparmio dichiarato) li confronta alla data della fotografia; il
     # movimento successivo sta in `dopo`, e il `saldo` li somma.
     from .revolut_movimenti import dopo_la_fotografia
-    dopo = dopo_la_fotografia(client, quando, al) or {"conto": 0.0,
-                                                      "risparmi": 0.0, "n": 0}
+    from . import interessi as I
+    from shared.parallelo import in_parallelo
+    # Gli interessi maturati dopo l'ultimo giorno pagato: servono i
+    # movimenti del deposito dell'ultimo mese e mezzo (per ricavare il
+    # tasso) e i tassi scritti a mano. Tre letture indipendenti, insieme.
+    try:
+        da = (date.fromisoformat(quando) - timedelta(days=I.FINESTRA_GIORNI + 15)).isoformat()
+    except ValueError:
+        da = quando
+    dopo, deposito, manuali = in_parallelo(
+        lambda: dopo_la_fotografia(client, quando, al),
+        lambda: I.movimenti_deposito(client, da, al),
+        lambda: I.tassi_manuali(client))
+    dopo = dopo or {"conto": 0.0, "risparmi": 0.0, "n": 0}
+    maturati = I.stima(salvadanai, quando, deposito or [], al, manuali or [])
 
     return {
         "al": al,
@@ -956,6 +969,9 @@ def saldo_revolut(client, al: str | None = None) -> dict:
         "saldo": round(conto + risparmi + investimenti
                        + dopo["conto"] + dopo["risparmi"], 2),
         "salvadanai": salvadanai,
+        # Stima, non saldo: si mostra accanto, con «≈», e sparisce quando
+        # arrivano gli interessi veri (spese/interessi.py).
+        "interessi": maturati,
         "fonte": s.get("fonte") or "estratto",
         "note": s.get("note"),
     }
@@ -1142,6 +1158,164 @@ def _card_movimenti(movimenti: list[dict] | None) -> str:
     </div>'''
 
 
+def _card_interessi(rev: dict) -> str:
+    """
+    Gli interessi dei salvadanai: il tasso (ricavato o scritto a mano),
+    quanto e' maturato dopo l'ultimo interesse registrato, quanto
+    renderanno. Fuori dalla composizione del saldo apposta: sono stime,
+    e la composizione deve quadrare con numeri veri.
+    """
+    from . import interessi as I
+    st = rev.get("interessi") or {}
+    ricavato = st.get("ricavato")
+    manuali = st.get("manuali") or []
+    tasso = st.get("tasso")
+    if tasso is None and ricavato:
+        tasso = ricavato["tasso"]
+    oggi = date.today()
+
+    def pct(v):
+        return f"{float(v):.2f}".replace(".", ",") + "%"
+
+    if tasso is None:
+        riga_tasso = f"""
+          <div class="row">
+            <span class="t">Tasso lordo
+              <span class="sub">non ancora noto: servono gli interessi di un estratto,
+                oppure scrivilo qui sotto</span></span>
+            <span class="v tnum">—</span>
+          </div>"""
+    else:
+        if st.get("fonte_tasso") == "manuale":
+            da_dove = "scritto a mano"
+        elif ricavato:
+            da_dove = (f"ricavato dagli interessi pagati dal {data_it(ricavato['dal'])} "
+                       f"al {data_it(ricavato['al'])}")
+        else:
+            da_dove = ""
+        riga_tasso = f"""
+          <div class="row">
+            <span class="t">Tasso lordo
+              <span class="sub">{da_dove}</span></span>
+            <span class="v tnum">{pct(tasso)}</span>
+          </div>"""
+
+    tot = float(st.get("totale") or 0)
+    if tot >= 0.01:
+        per = " · ".join(f"{nome} € {eur(st['per_salvadanaio'][k])}"
+                         for k, _r, nome, _p, _c, _a in SALVADANAI
+                         if st.get("per_salvadanaio", {}).get(k))
+        riga_maturati = f"""
+          <div class="row">
+            <span class="t">Maturati, non ancora nell'estratto
+              <span class="sub">dal {data_it(st['dal'])} a oggi, {st['giorni']}
+                giorn{'o' if st['giorni'] == 1 else 'i'} · {per}</span></span>
+            <span class="v tnum">≈ € {eur(tot)}</span>
+          </div>"""
+    else:
+        riga_maturati = """
+          <div class="row">
+            <span class="t">Maturati, non ancora nell'estratto
+              <span class="sub">nessuno: gli interessi fino a oggi sono già registrati</span></span>
+            <span class="v tnum">€ 0,00</span>
+          </div>"""
+
+    riga_resa = ""
+    if tasso:
+        saldi = {k: float(v or 0) + float((st.get("per_salvadanaio") or {}).get(k) or 0)
+                 for k, v in (rev.get("salvadanai") or {}).items()}
+        fine_anno = (date(oggi.year, 12, 31) - oggi).days
+        riga_resa = f"""
+          <div class="row">
+            <span class="t">Nei prossimi 30 giorni
+              <span class="sub">al tasso di oggi, netti</span></span>
+            <span class="v tnum">≈ € {eur(I.resa(saldi, tasso, 30))}</span>
+          </div>
+          <div class="row">
+            <span class="t">Fino al 31/12
+              <span class="sub">{fine_anno} giorni, netti</span></span>
+            <span class="v tnum">≈ € {eur(I.resa(saldi, tasso, fine_anno))}</span>
+          </div>"""
+
+    avviso = ""
+    cambio = (ricavato or {}).get("cambio")
+    if cambio:
+        avviso = (f'<div class="notice warn mt-3">Il tasso è cambiato: '
+                  f'da {pct(cambio["da"])} a {pct(cambio["a"])} nel mese '
+                  f'{cambio["mese"][5:7]}/{cambio["mese"][:4]}. La stima usa già quello nuovo.</div>')
+
+    mesi = ""
+    if ricavato and ricavato.get("mesi"):
+        mesi = ('<div class="small muted mt-3">Mese per mese: '
+                + " · ".join(f'{m[5:7]}/{m[2:4]} {pct(t)}' for m, t in ricavato["mesi"])
+                + "</div>")
+
+    righe_man = "".join(f"""
+          <div class="row">
+            <span class="t">Dal {data_it(m['dal'])}
+              <span class="sub">{m.get('note') or 'scritto a mano'}</span></span>
+            <span class="v tnum">{pct(m['tasso'])}
+              <button type="button" class="btn ghost sm" data-dal="{m['dal']}"
+                      onclick="cancellaTasso(this.dataset.dal)">Togli</button></span>
+          </div>""" for m in reversed(manuali))
+
+    return f"""
+    <div class="card">
+      <div class="card-head">
+        <div class="eyebrow">Interessi dei salvadanai</div>
+        {info("Revolut paga gli interessi ogni giorno su ogni salvadanaio: saldo "
+              "&times; tasso lordo &divide; 365, meno la ritenuta del 26%. "
+              "L&apos;app ricava il tasso dagli interessi veri degli ultimi 30 giorni, "
+              "guardando solo i salvadanai sopra i 500 &euro; (sotto, il maturato "
+              "del giorno &egrave; meno di un centesimo e Revolut lo paga ogni tanto). "
+              "Quello che &egrave; maturato dopo l&apos;ultimo estratto &egrave; una "
+              "<strong>stima</strong>: non entra nel saldo, e sparisce quando "
+              "importi gli interessi veri.")}
+      </div>
+      <div class="rows detail">{riga_tasso}{riga_maturati}{riga_resa}</div>
+      {avviso}{mesi}
+      <details class="explain mt-3">
+        <summary>Revolut ha cambiato il tasso?</summary>
+        <p class="small muted">Scrivi da quando vale e quanto (lordo, come lo
+          mostra l&apos;app). Vale finché un estratto non porta interessi più
+          recenti: da lì il tasso torna a essere quello pagato davvero.</p>
+        <div class="rows detail mt-2">{righe_man}</div>
+        <div class="field-group mt-2">
+          <div class="field"><label for="t_dal">Dal</label>
+            <input type="date" id="t_dal" value="{oggi.isoformat()}"></div>
+          <div class="field"><label for="t_tasso">Tasso lordo (%)</label>
+            <input type="number" step="0.01" min="0" max="20" inputmode="decimal"
+                   id="t_tasso" value="{f'{tasso:.2f}' if tasso else ''}"></div>
+          <div class="field"><label for="t_note">Nota</label>
+            <input type="text" id="t_note" placeholder="es. annunciato da Revolut"></div>
+        </div>
+        <div class="actions mt-3">
+          <button type="button" class="btn" onclick="salvaTasso()">Salva il tasso</button>
+        </div>
+        <div class="small mt-2" id="t_esito"></div>
+      </details>
+    </div>
+    <script>
+      async function salvaTasso() {{
+        const corpo = {{dal: document.getElementById("t_dal").value,
+                       tasso: document.getElementById("t_tasso").value,
+                       note: document.getElementById("t_note").value}};
+        const r = await fetch("/spese/api/revolut/tassi", {{method: "POST",
+          headers: {{"Content-Type": "application/json"}}, body: JSON.stringify(corpo)}});
+        const j = await r.json().catch(() => ({{}}));
+        if (!r.ok || j.error) {{
+          document.getElementById("t_esito").textContent = j.error || "Non salvato.";
+          return;
+        }}
+        location.reload();
+      }}
+      async function cancellaTasso(dal) {{
+        const r = await fetch("/spese/api/revolut/tassi/" + dal, {{method: "DELETE"}});
+        if (r.ok) location.reload();
+      }}
+    </script>"""
+
+
 @spese_bp.get("/conti/revolut")
 def revolut_pagina():
     breadcrumb = [("Conti", "/conti"), ("Revolut", "")]
@@ -1177,6 +1351,9 @@ def revolut_pagina():
                        f'moviment{"o" if dopo["n"] == 1 else "i"} registrati dopo')
     else:
         hint_totale = f'fotografia del {data_it(rev["data"])}, non un saldo dal vivo'
+    maturati = float((rev.get("interessi") or {}).get("totale") or 0)
+    hint_interessi = (f'<div class="hint">≈ € {eur(maturati)} di interessi maturati</div>'
+                      if maturati >= 0.01 else "")
     if rev["disponibile"]:
         giorni = rev.get("giorni") or 0
         eta = (f'<span class="chip warn">fermo da {giorni} giorni</span>'
@@ -1200,7 +1377,7 @@ def revolut_pagina():
             <div class="lbl">Liquidità</div></div></div>
           <div class="card"><div class="stat sm">
             <div class="val tnum pos">€ {eur(rev["risparmi"] + float(dopo.get("risparmi") or 0))}</div>
-            <div class="lbl">Risparmi</div></div></div>
+            <div class="lbl">Risparmi</div>{hint_interessi}</div></div>
           <div class="card"><div class="stat sm">
             <div class="val tnum">€ {eur(rev["investimenti"])}</div>
             <div class="lbl">Investimenti</div>
@@ -1319,6 +1496,7 @@ def revolut_pagina():
     <div class="grid split">
       <div class="stack">
         {corpo}
+        {_card_interessi(rev) if rev["disponibile"] else ""}
         {blocco_storico}
       </div>
       <div class="stack">
@@ -1563,6 +1741,26 @@ def api_revolut_salva():
     if client is None:
         return jsonify({"error": "supabase not configured"}), 503
     esito = salva(client, request.get_json(silent=True) or {})
+    return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
+
+
+@spese_bp.post("/spese/api/revolut/tassi")
+def api_revolut_tasso_salva():
+    from . import interessi as I
+    client = D.sb()
+    if client is None:
+        return jsonify({"error": "supabase not configured"}), 503
+    esito = I.salva_tasso(client, request.get_json(silent=True) or {})
+    return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
+
+
+@spese_bp.delete("/spese/api/revolut/tassi/<dal>")
+def api_revolut_tasso_cancella(dal):
+    from . import interessi as I
+    client = D.sb()
+    if client is None:
+        return jsonify({"error": "supabase not configured"}), 503
+    esito = I.cancella_tasso(client, dal)
     return (jsonify(esito), 400) if esito.get("error") else jsonify(esito)
 
 

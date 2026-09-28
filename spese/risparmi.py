@@ -821,6 +821,20 @@ def risparmi_pagina():
           </div>'''
         if righe_sv:
             tot_reale = round(sum(n(v) for v in reali.values()), 2)
+            # Quanto rendono, al tasso che Revolut paga adesso: la parte del
+            # risparmio che cresce da sola (spese/interessi.py).
+            from . import interessi as I
+            st = rev.get("interessi") or {}
+            tasso = st.get("tasso") or (st.get("ricavato") or {}).get("tasso")
+            riga_resa = ""
+            if tasso:
+                al_mese = I.resa(reali, tasso, 30)
+                tasso_txt = f"{tasso:.2f}".replace(".", ",")
+                riga_resa = (f'<p class="small muted mt-2">Al tasso di {tasso_txt}% lordo i '
+                             f'salvadanai rendono ≈ € {eur(al_mese)} netti al mese'
+                             + (f' · ≈ € {eur(st["totale"])} maturati dopo l\'ultimo '
+                                f'estratto' if float(st.get("totale") or 0) >= 0.01 else "")
+                             + '.</p>')
             blocco_salvadanai = f'''
         <div class="card">
           <div class="card-head">
@@ -835,6 +849,7 @@ def risparmi_pagina():
             scarto non è di per sé un errore — dai salvadanai si preleva —
             ma è l'unico posto in cui si vede.
           </p>
+          {riga_resa}
         </div>'''
     elif rev.get("disponibile"):
         blocco_salvadanai = f'''
