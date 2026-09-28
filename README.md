@@ -2304,6 +2304,15 @@ l'aggancio va per categoria e non per id, la fattura si riaggancia da sola.
 
 ### 8.19 — I movimenti di Revolut (**necessaria**)
 
+> **Applicata il 28/09/2026.** Subito dopo sono stati importati i 1.001
+> movimenti dall'apertura del conto al 27/09/2026 (export dei movimenti):
+> la somma per sezione dà al centesimo i saldi di Revolut (liquidità
+> 245,65 €, deposito 7.750,84 €), e le fotografie del 13/08, del 25/08 e
+> del 27/09 coincidono con i movimenti fino a quella data, salvadanai
+> compresi. La fotografia del 25/08 aveva la liquidità del 28/08 (756,26,
+> col bonifico di 201,71 arrivato il 28): corretta a 554,55, altrimenti
+> quel bonifico si contava due volte fra il 26/08 e il 26/09.
+
 Fino a oggi Revolut era solo una fotografia (`b2f_revolut`): i saldi di
 chiusura dell'estratto, nessuna riga. Un'entrata su Revolut non aveva un
 tipo, non aveva una categoria e non esisteva da nessuna parte. Da qui i
@@ -2499,6 +2508,11 @@ il telefono e di rete verso il database.
   80 ms di rete per domanda, la home passa da ~1,5 s a ~0,3 s.
 - **Le categorie si leggono una volta per richiesta**, non a ogni menu,
   e restano in memoria 60 secondi fra una richiesta e l'altra.
+- **Il client Supabase usa un pool HTTP/1.1** (`shared/supabase_client.py`),
+  non l'unica connessione HTTP/2 che supabase-py apre di default: con le
+  domande in parallelo quella connessione ogni tanto perdeva una
+  richiesta, e su /conti un saldo a caso diventava «non disponibile».
+  `tools/verifica_concorrenza.py` lo prova.
 - **Il server risponde a più richieste insieme** (gunicorn `gthread`, un
   processo con otto thread): il prefetch delle pagine e le chiamate API
   della stessa pagina non si mettono più in coda una dietro l'altra. Con

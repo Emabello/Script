@@ -777,6 +777,31 @@ def parse_movimenti_revolut(righe: list[list[str]], nome_file: str = "") -> dict
         mov["chiave"] = _chiave_movimento(mov, n)
         movimenti.append(mov)
 
+    # Gli arrotondamenti del cambio. Ogni movimento in valuta si converte
+    # e si arrotonda al centesimo da solo: su 37 movimenti in yen gli
+    # arrotondamenti sommati fanno 5 centesimi, e il conto in euro non
+    # torna piu' con il saldo vero di Revolut. Ma il totale convertito di
+    # una valuta e' noto (saldo finale nella valuta × cambio): lo scarto
+    # va sul movimento piu' grande di quella valuta, dove pesa meno.
+    finali: dict = {}
+    for g in grezze:
+        if g["valuta"] != "EUR" and g["saldo"] is not None:
+            finali[(g["prodotto"], g["valuta"])] = g["saldo"]
+    for (prodotto, valuta), chiusura_valuta in finali.items():
+        if valuta not in cambio:
+            continue
+        suoi = [m for m in movimenti if m["_prodotto"] == (prodotto, valuta)]
+        if not suoi:
+            continue
+        atteso = round(chiusura_valuta * cambio[valuta], 2)
+        firmato = lambda m: m["importo"] if m["tipo"] == "entrata" else -m["importo"]  # noqa: E731
+        scarto = round(atteso - sum(firmato(m) for m in suoi), 2)
+        if scarto:
+            m = max(suoi, key=lambda x: x["importo"])
+            nuovo = round(firmato(m) + scarto, 2)
+            m["tipo"] = "entrata" if nuovo > 0 else "uscita"
+            m["importo"] = abs(nuovo)
+
     # La quadratura per prodotto e valuta, con il saldo progressivo che il
     # file porta su ogni riga: saldo prima della prima riga + movimenti =
     # saldo dopo l'ultima. I conti in valuta si controllano nella valuta.

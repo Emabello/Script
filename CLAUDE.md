@@ -47,5 +47,11 @@ Se una proposta viene esplicitamente rifiutata dall'utente, spostala in
   realistici) per verificare le modifiche senza toccare il database
   reale, prima di proporle o committarle.
 - **Migrazioni SQL**: vanno in README §8, numerate in sequenza, sempre
-  idempotenti (rilanciabili senza danni). Non lanciarle tu: l'utente le
-  esegue lui nell'SQL Editor di Supabase.
+  idempotenti (rilanciabili senza danni). **Le lanci tu** (strumento
+  Supabase `apply_migration`, progetto `fkeihvmzcfaguvevtwlw`): l'utente
+  non vuole eseguire migrazioni né altri passaggi a mano (deciso il
+  28/09/2026). Prima di lanciarle controlla che tutto quello che usano
+  esista già; dopo, verifica il risultato con una query e aggiorna
+  docs/schema_supabase.md. Lo stesso vale per i dati: import e
+  correzioni si fanno da qui, verificando che i saldi tornino al
+  centesimo prima e dopo.
