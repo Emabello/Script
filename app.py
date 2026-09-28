@@ -241,10 +241,19 @@ def _saldi_conti(sb, al: str) -> dict:
     from fatture.fiscale import saldo_piva
     from spese import dati as personale
     from spese.revolut import saldo_revolut
-    piva, pers, rev = _in_parallelo(lambda: saldo_piva(sb, al),
-                                    lambda: personale.saldo_conto(sb, al),
-                                    lambda: saldo_revolut(sb, al))
+    calcoli = (lambda: saldo_piva(sb, al),
+               lambda: personale.saldo_conto(sb, al),
+               lambda: saldo_revolut(sb, al))
+    risultati = _in_parallelo(*calcoli)
+    # Le tre funzioni non sollevano: se una lettura cade a meta' tornano
+    # «non disponibile». Un intoppo di rete isolato non deve svuotare un
+    # quadratino della pagina: chi non e' tornato si ricalcola una volta.
+    # (Revolut senza nessuna fotografia resta non disponibile anche al
+    # secondo giro, ed e' giusto: e' «da collegare».)
+    risultati = [r if (r or {}).get("disponibile") else (_in_parallelo(f)[0] or r)
+                 for r, f in zip(risultati, calcoli)]
     vuoto = {"al": al, "disponibile": False}
+    piva, pers, rev = risultati
     return {"piva": piva or vuoto, "personale": pers or vuoto,
             "revolut": rev or vuoto}
 

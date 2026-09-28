@@ -280,6 +280,15 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 
 ## Fatti (storico — per non riproporli)
 
+### [2026-09-28] Su /conti un quadratino a caso diceva «saldo non disponibile» a ogni refresh
+Da quando i tre saldi si calcolano in parallelo usavano tutti l'unica connessione HTTP/2 che supabase-py apre di default (`httpx.Client(http2=True)`), e ogni tanto una richiesta moriva con un errore di protocollo: non una risposta 503 (quelle postgrest le ripete), un'eccezione che le funzioni di saldo intercettano restituendo «non disponibile». Ora il client usa un pool HTTP/1.1 (`shared/supabase_client.py::_opzioni`), sicuro fra thread; `in_parallelo` riprova una volta e scrive l'errore nel log invece di ingoiarlo; `_saldi_conti` ricalcola una volta il conto che torna non disponibile.
+
+### [2026-09-28] I movimenti in valuta, arrotondati uno per uno, sfasavano il conto Revolut di 5 centesimi
+Nell'export dei movimenti ogni riga in yen si converte in euro e si arrotonda al centesimo da sola: sommati, i 37 arrotondamenti facevano 245,70 invece di 245,65. Ora lo scarto di ogni valuta (saldo finale nella valuta × cambio, meno la somma convertita) va sul movimento più grande di quella valuta: i movimenti sommano al saldo al centesimo. `tools/verifica_revolut.py` lo prova.
+
+### [2026-09-28] Una fotografia Revolut datata 25/08 aveva la liquidità del 28/08
+756,26 conteneva il bonifico di 201,71 arrivato il 28/08; con i movimenti registrati, «fotografia + movimenti dopo» lo contava due volte per tutte le date fra il 26/08 e il 26/09. Corretta a 554,55 (il saldo vero del 25/08 secondo l'estratto), con la spiegazione nella nota della fotografia.
+
 ### [2026-09-27] I due formati di Revolut avrebbero raddoppiato 25–47 movimenti a vicenda
 Consolidato ed export dei movimenti dello stesso periodo: 929 impronte comuni su 976. Il resto era lo stesso movimento scritto in due modi — gli yen e le sterline egiziane convertiti in euro con cambi diversi (e «13.600,00 EGP» non si leggeva proprio: `_importo` conosceva solo €/$/£/¥), e i bonifici fra persone che l'export chiama «Revolut Bank UAB». Ora in valuta l'impronta usa l'importo nella valuta, `_importo` toglie qualunque codice di tre lettere, e l'import Revolut passa anche il secondo controllo dei doppioni contro tutti i movimenti già salvati (non solo quelli manuali), sezione per sezione: 976 su 976 riconosciuti. «Balance migration…» (aprile 2026) è un giroconto interno.
 

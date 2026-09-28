@@ -451,6 +451,12 @@ _INTERNI = re.compile(r"accredita\s+eur|prelievo da pocket|^\s*(a|da)\s+eur\b|"
                       r"\bpocket\b|\bvault\b|conto di risparmio|savings", re.I)
 
 
+def _interno(mov: dict) -> bool:
+    """Uno spostamento fra le parti di Revolut: non entra ne' esce niente."""
+    return (bool(_INTERNI.search(mov.get("descrizione") or ""))
+            or (mov.get("categoria_banca") or "").lower() in ("cambio valuta", "cambia valuta"))
+
+
 def suggerisci(mov: dict, gemella: bool = False) -> str | None:
     """
     La categoria che l'import propone per una riga dell'estratto, quando
@@ -519,7 +525,14 @@ def prepara_import(client, letti: list[dict]) -> tuple[list[dict], list[dict]]:
         al_w = (date.fromisoformat(al) + timedelta(days=1)).isoformat()
     except ValueError:
         dal_w, al_w = dal, al
-    esito = abbina(risparmi_webank(client, dal_w, al_w), letti)
+    # Solo i movimenti che escono o entrano davvero da Revolut possono essere
+    # l'altra meta' di un bonifico WeBank. Il 03/08/2026 il prelievo «Da
+    # EUR Emergenze» (salvadanaio → conto, 150) si e' preso la gemella del
+    # bonifico vero «To Emanuele Bellotti» (conto → WeBank, 150, stesso
+    # giorno): il prelievo e' finito in Risparmi e il bonifico in Hype, e
+    # quei 150 risultavano usciti due volte.
+    esito = abbina(risparmi_webank(client, dal_w, al_w),
+                   [m for m in letti if not _interno(m)])
     gemelle = {r.get("chiave") for _w, r in esito["coppie"]}
     presenti = chiavi_presenti(client, [m["chiave"] for m in letti])
 

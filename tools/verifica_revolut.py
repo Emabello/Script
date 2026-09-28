@@ -196,6 +196,25 @@ def main():
                                      "descrizione": "Diner NYC"})
               == R._impronta_movimento(diner), "in valuta l'impronta non dipende dal cambio")
 
+    # Tre spese da 10 $ comprati con 10 € (cambio 1/3): convertite una per
+    # una fanno 3,33 € ciascuna e il conto in euro non tornerebbe di un
+    # centesimo. Il conto in dollari chiude a zero, quindi i movimenti in
+    # dollari convertiti devono sommare a zero esatto.
+    csv_fx = "\n".join([
+        "Tipo,Prodotto,Data di inizio,Data di completamento,Descrizione,Importo,Costo,Valuta,State,Saldo",
+        "Ricarica,Attuale,2026-08-01 09:00:00,2026-08-01 09:00:00,Deposito,20,0,EUR,COMPLETATO,20",
+        "Cambia valuta,Attuale,2026-08-02 10:00:00,2026-08-02 10:00:00,Conversione in USD,-10,0,EUR,COMPLETATO,10",
+        "Cambia valuta,Attuale,2026-08-02 10:00:00,2026-08-02 10:00:00,Conversione in USD,30,0,USD,COMPLETATO,30",
+        "Pagamento con carta,Attuale,2026-08-03 10:00:00,2026-08-03 10:00:00,Deli A,-10,0,USD,COMPLETATO,20",
+        "Pagamento con carta,Attuale,2026-08-03 11:00:00,2026-08-03 11:00:00,Deli B,-10,0,USD,COMPLETATO,10",
+        "Pagamento con carta,Attuale,2026-08-03 12:00:00,2026-08-03 12:00:00,Deli C,-10,0,USD,COMPLETATO,0",
+    ])
+    lf = R.parse_estratto(csv_fx.encode("utf-8"), "account-statement_2026-08-01_2026-08-31_it-it.csv")
+    somma = round(sum(m["importo"] if m["tipo"] == "entrata" else -m["importo"]
+                      for m in lf["movimenti"] if m["sezione"] == "conto"), 2)
+    controlla(somma == lf["conto"] == 10.0,
+              f"arrotondamenti del cambio: i movimenti sommano al saldo al centesimo ({somma} / {lf['conto']})")
+
     print("\n== lo stesso estratto nell'altro formato non raddoppia")
     from shared import importazione as IM
     esistenti = [{"data": "2025-12-22", "tipo": "entrata", "importo": 60.0,
@@ -277,6 +296,31 @@ def main():
     controlla(len(RM.importa(client, [{"idx": 0, "chiave": "y", "tipo": "uscita", "importo": 1,
                                        "data": "2026-08-01", "categoria": "inventata"}])
                   .get("errori", [])) == 1, "categoria inesistente -> errore sulla riga")
+
+    print("\n== la gemella WeBank va al bonifico vero, non al salvadanaio")
+    # Il 03/08/2026, lo stesso giorno: 150 escono dal salvadanaio verso il
+    # conto (interno) e 150 dal conto verso WeBank (il bonifico vero), che
+    # su WeBank arrivano come entrata «Risparmi». Il prelievo interno non
+    # deve prendersi la gemella.
+    DB["spese"].append({"id": 901, "data": "2026-08-03", "importo": 150.0, "tipo": "entrata",
+                        "descrizione": "Bonifico da Revolut", "categoria": "Risparmi",
+                        "sottocategoria": None})
+    DB["v_spese"].append(preview._riga_v_spese(DB["spese"][-1]))
+    stesso_giorno = [
+        {"sezione": "risparmi", "data": "2026-08-03", "tipo": "uscita", "importo": 150.0,
+         "descrizione": "Da EUR Emergenze", "categoria_banca": "Trasferimento", "chiave": "g-1"},
+        {"sezione": "conto", "data": "2026-08-03", "tipo": "uscita", "importo": 150.0,
+         "descrizione": "To Emanuele Bellotti", "categoria_banca": "Trasferimento", "chiave": "g-2"},
+    ]
+    pronte_g, _ = RM.prepara_import(client, stesso_giorno)
+    per_chiave = {r["chiave"]: r for r in pronte_g}
+    controlla(per_chiave["g-2"]["gemella"] and per_chiave["g-2"]["categoria"] == link("Risparmi"),
+              "il bonifico verso WeBank prende la gemella → Risparmi")
+    controlla(not per_chiave["g-1"]["gemella"]
+              and per_chiave["g-1"]["categoria"] == link(RM.CATEGORIA_INTERNO),
+              "il prelievo dal salvadanaio resta Giroconto Revolut")
+    DB["spese"].pop()
+    DB["v_spese"].pop()
 
     print("\n== totali: i giroconti interni restano fuori")
     tutte = RM.tutti(client)

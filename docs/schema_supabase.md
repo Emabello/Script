@@ -2,7 +2,7 @@
 
 Foto dello schema reale su Supabase, presa con la query di [README §8.5](../README.md#85--ispezionare-lo-schema). **Va rigenerata dopo ogni migrazione**: si aggiorna qui, non a mano.
 
-Ultimo aggiornamento: 2026-09-03 (dopo le migrazioni § 8.14, § 8.15, § 8.16, § 8.17 e § 8.18, tutte applicate al database vivo).
+Ultimo aggiornamento: 2026-09-28 (dopo la migrazione § 8.19, applicata al database vivo; prima: § 8.14–8.18 il 2026-09-03).
 
 
 > **Nota**: questa foto è stata riverificata campo per campo contro il database
@@ -28,6 +28,7 @@ Ultimo aggiornamento: 2026-09-03 (dopo le migrazioni § 8.14, § 8.15, § 8.16, 
 - [`b2f_fatture`](#b2ffatture)
 - [`b2f_parametri_fiscali`](#b2fparametrifiscali)
 - [`b2f_revolut`](#b2frevolut)
+- [`b2f_revolut_movimenti`](#b2frevolutmovimenti)
 - [`b2f_saldi_verifica`](#b2fsaldiverifica)
 - [`b2f_spese_piva`](#b2fspesepiva)
 - [`b2f_webauthn_credentials`](#b2fwebauthncredentials)
@@ -256,6 +257,51 @@ Ultimo aggiornamento: 2026-09-03 (dopo le migrazioni § 8.14, § 8.15, § 8.16, 
 **Indici:**
 
 - `CREATE UNIQUE INDEX b2f_revolut_pkey ON public.b2f_revolut USING btree (data)`
+
+
+---
+
+## `b2f_revolut_movimenti`
+
+Creata dalla migrazione § 8.19 (applicata il 28/09/2026). RLS attiva, senza
+policy, come `b2f_revolut`: ci scrive solo il backend con la chiave di servizio.
+
+| colonna | tipo | null | identity | default |
+|---|---|---|---|---|
+| `id` | bigint | NO | NO | nextval('b2f_revolut_movimenti_id_seq'::regclass) |
+| `data` | date | NO | NO |  |
+| `importo` | numeric(12,2) | NO | NO |  |
+| `tipo` | text | NO | NO |  |
+| `descrizione` | text | NO | NO | ''::text |
+| `categoria_link_id` | uuid | YES | NO |  |
+| `sezione` | text | NO | NO | 'conto'::text |
+| `fonte` | text | NO | NO | 'estratto'::text |
+| `chiave` | text | YES | NO |  |
+| `note` | text | YES | NO |  |
+| `created_at` | timestamp with time zone | NO | NO | now() |
+| `updated_at` | timestamp with time zone | NO | NO | now() |
+
+**Vincoli:**
+
+- `b2f_revolut_movimenti_pkey`: PRIMARY KEY (id)
+- `b2f_revolut_movimenti_chiave_key`: UNIQUE (chiave)
+- `b2f_revolut_movimenti_categoria_link_id_fkey`: FOREIGN KEY (categoria_link_id) REFERENCES cfg_categoria_sottocategoria(id) ON DELETE SET NULL
+- `b2f_revolut_movimenti_importo_check`: CHECK ((importo > (0)::numeric))
+- `b2f_revolut_movimenti_tipo_check`: CHECK ((tipo = ANY (ARRAY['entrata'::text, 'uscita'::text])))
+- `b2f_revolut_movimenti_sezione_check`: CHECK ((sezione = ANY (ARRAY['conto'::text, 'risparmi'::text])))
+- `b2f_revolut_movimenti_fonte_check`: CHECK ((fonte = ANY (ARRAY['estratto'::text, 'manuale'::text])))
+
+**Indici:**
+
+- `CREATE UNIQUE INDEX b2f_revolut_movimenti_pkey ON public.b2f_revolut_movimenti USING btree (id)`
+- `CREATE UNIQUE INDEX b2f_revolut_movimenti_chiave_key ON public.b2f_revolut_movimenti USING btree (chiave)`
+- `CREATE INDEX idx_b2f_revolut_movimenti_data ON public.b2f_revolut_movimenti USING btree (data)`
+
+**Trigger:** `trg_b2f_revolut_movimenti_updated` (BEFORE UPDATE → `b2f_touch_updated_at()`).
+
+**Categorie aggiunte** da § 8.19 in `cfg_categorie`, ognuna con la sua riga
+senza sottocategoria in `cfg_categoria_sottocategoria`: *Giroconto Revolut*,
+*Interessi*, *Investimenti*.
 
 
 ---
