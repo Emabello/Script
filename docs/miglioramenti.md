@@ -18,6 +18,9 @@ come), **Stato**.
 
 ## Aperti
 
+### [2026-09-28] Uno storno e l'addebito che annulla possono finire in due categorie diverse
+All'import ogni riga riceve la sua proposta dallo storico, indipendentemente dalle altre: il 14/09 «Civico 105» (uscita 3,00) era stato messo in Cibo e il suo «storno scritture - carta *2058-civico 105» (entrata 3,00, stesso giorno) in Bar. Il saldo non cambia, ma il budget di Bar risultava 3 € più alto e quello di Cibo 3 € più basso, per una spesa mai avvenuta. Corretto a mano nel database (entrambi Cibo). Proposta: nell'import, una riga «storno scritture» prende la categoria dell'uscita dello stesso importo e dello stesso esercente nei giorni vicini, e le due si mostrano accoppiate nel pannello.
+
 ### [2026-09-27] Undici esercenti hanno due categorie allo stesso importo
 **Cosa**: `tools/verifica_suggerimenti.py` trova 11 gruppi (42 movimenti) con stesso esercente, stesso importo, stessa direzione e categorie diverse — McDonald's 2,20 € Caffè ×13 e Cibo ×2, Iper Portello 1,90 € Caffè ×3 e Cibo ×2, Cless Ticket ATM 2,20 € una volta Personale e una volta Viaggi.
 **Perché si rompe**: non è la formula a sbagliare — la memoria esatta le riproduce tutte (100%) —, sono i dati a dire due cose. La conseguenza concreta è a valle: la ripartizione per sottocategoria di un mese dipende da quale delle due scelte è stata fatta quel giorno, e «quanto spendo in caffè» non ha una risposta stabile. Per la categoria principale conta poco (sono quasi tutte dentro Personale), tranne il biglietto ATM, che sposta 2,20 € fra Personale e Viaggi.

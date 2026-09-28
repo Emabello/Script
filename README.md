@@ -2312,6 +2312,14 @@ l'aggancio va per categoria e non per id, la fattura si riaggancia da sola.
 > compresi. La fotografia del 25/08 aveva la liquidità del 28/08 (756,26,
 > col bonifico di 201,71 arrivato il 28): corretta a 554,55, altrimenti
 > quel bonifico si contava due volte fra il 26/08 e il 26/09.
+>
+> Il 28/09 i salvadanai nell'app Revolut valevano 0,22 € più dell'estratto
+> del 27/09: gli interessi del giorno (Casa 0,15, Emergenze 0,05, Vacanze
+> 0,01, Regali 0,01). Registrati come movimenti *Interessi* (`fonte`
+> manuale, stessa descrizione dell'estratto, così il prossimo import li
+> riconosce come già presenti) più la fotografia del 28/09 con i valori
+> dell'app: liquidità 245,65, risparmi 7.751,06. Le quattro fotografie
+> coincidono ciascuna con la somma dei movimenti fino alla sua data.
 
 Fino a oggi Revolut era solo una fotografia (`b2f_revolut`): i saldi di
 chiusura dell'estratto, nessuna riga. Un'entrata su Revolut non aveva un
