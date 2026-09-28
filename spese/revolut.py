@@ -936,10 +936,12 @@ def saldo_revolut(client, al: str | None = None) -> dict:
 
     # Fotografia + movimenti registrati dopo: la stessa forma del saldo
     # del conto personale (apertura + movimenti), con la fotografia al
-    # posto dell'apertura. `conto` e `risparmi` restano quelli della
-    # fotografia, perche' chi li confronta con altro (i salvadanai, il
-    # risparmio dichiarato) li confronta alla data della fotografia; il
-    # movimento successivo sta in `dopo`, e il `saldo` li somma.
+    # posto dell'apertura. `conto`, `risparmi` e `salvadanai` sono quelli
+    # **ad `al`**, movimenti dopo la fotografia compresi; la fotografia
+    # com'era sta in `foto`. Fino al 28/09/2026 restavano quelli della
+    # fotografia: spostati 1.015,73 € nei salvadanai il giorno dopo,
+    # l'app continuava a mostrare i salvadanai del giorno prima e il
+    # confronto «dovrebbe esserci / c'e'» sembrava sbagliato di tanto.
     from .revolut_movimenti import dopo_la_fotografia
     from . import interessi as I
     from shared.parallelo import in_parallelo
@@ -956,19 +958,24 @@ def saldo_revolut(client, al: str | None = None) -> dict:
         lambda: I.tassi_manuali(client))
     dopo = dopo or {"conto": 0.0, "risparmi": 0.0, "n": 0}
     maturati = I.stima(salvadanai, quando, deposito or [], al, manuali or [])
+    fine = date.fromisoformat(al) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", al or "") else date.today()
+    salvadanai_oggi = {k: v for k, v in I.saldo_salvadanai(
+        salvadanai, quando, I._deltas(deposito or []), fine).items()
+        if k in SALVADANAI_CHIAVI}
 
     return {
         "al": al,
         "disponibile": True,
         "data": quando,
         "giorni": giorni,
-        "conto": conto,
-        "risparmi": risparmi,
+        "conto": round(conto + dopo["conto"], 2),
+        "risparmi": round(risparmi + dopo["risparmi"], 2),
         "investimenti": investimenti,
         "dopo": dopo,
         "saldo": round(conto + risparmi + investimenti
                        + dopo["conto"] + dopo["risparmi"], 2),
-        "salvadanai": salvadanai,
+        "salvadanai": salvadanai_oggi,
+        "foto": {"conto": conto, "risparmi": risparmi, "salvadanai": salvadanai},
         # Stima, non saldo: si mostra accanto, con «≈», e sparisce quando
         # arrivano gli interessi veri (spese/interessi.py).
         "interessi": maturati,
@@ -1054,7 +1061,7 @@ def coerenza(client, rev: dict) -> dict | None:
     """
     if not rev.get("disponibile"):
         return None
-    dichiarato = D.risparmio_totale(client, rev.get("data"))
+    dichiarato = D.risparmio_totale(client, rev.get("al") or rev.get("data"))
     risparmi = float(rev.get("risparmi") or 0)
     investimenti = float(rev.get("investimenti") or 0)
     reale = round(risparmi + investimenti, 2)
@@ -1373,10 +1380,10 @@ def revolut_pagina():
                     "un errore dell&apos;app.")}</div>
           </div></div>
           <div class="card"><div class="stat sm">
-            <div class="val tnum">€ {eur(rev["conto"] + float(dopo.get("conto") or 0))}</div>
+            <div class="val tnum">€ {eur(rev["conto"])}</div>
             <div class="lbl">Liquidità</div></div></div>
           <div class="card"><div class="stat sm">
-            <div class="val tnum pos">€ {eur(rev["risparmi"] + float(dopo.get("risparmi") or 0))}</div>
+            <div class="val tnum pos">€ {eur(rev["risparmi"])}</div>
             <div class="lbl">Risparmi</div>{hint_interessi}</div></div>
           <div class="card"><div class="stat sm">
             <div class="val tnum">€ {eur(rev["investimenti"])}</div>
@@ -1419,16 +1426,15 @@ def revolut_pagina():
             <span class="v tnum {"" if residuo >= 0 else "neg"}">€ {eur(residuo)}</span>
           </div>'''
 
+        # Liquidita' e risparmi sono gia' ad oggi (fotografia + movimenti
+        # dopo): i movimenti dopo si dicono nella riga, non si sommano una
+        # seconda volta in una riga a parte.
+        def _da_foto(sez):
+            mosso = float(dopo.get(sez) or 0)
+            if not dopo.get("n") or abs(mosso) < 0.005:
+                return f"al {data_it(rev['data'])}"
+            return f"{data_it(rev['data'])} {eur_segno(mosso)} di movimenti registrati dopo"
         riga_dopo = ""
-        if dopo.get("n"):
-            netto = round(float(dopo.get("conto") or 0) + float(dopo.get("risparmi") or 0), 2)
-            riga_dopo = f'''
-            <div class="row">
-              <span class="t">Movimenti dopo il {data_it(rev["data"])}
-                <span class="sub">{dopo["n"]} registrati dopo la fotografia: il saldo
-                  non è più fermo al giorno dell'estratto</span></span>
-              <span class="v tnum">{eur_segno(netto)}</span>
-            </div>'''
         corpo = f'''
         <div class="card">
           <div class="card-head">
@@ -1438,13 +1444,13 @@ def revolut_pagina():
           <div class="rows detail">
             <div class="row">
               <span class="t">Liquidità
-                <span class="sub">il conto corrente Revolut</span></span>
+                <span class="sub">il conto corrente Revolut · {_da_foto("conto")}</span></span>
               <span class="v tnum">€ {eur(rev["conto"])}</span>
             </div>
             <div class="row">
               <span class="t">Risparmi
-                <span class="sub">il «Deposito senza vincoli», che dal 15 aprile 2026
-                  contiene tutti i salvadanai insieme</span></span>
+                <span class="sub">il «Deposito senza vincoli», con tutti i salvadanai
+                  · {_da_foto("risparmi")}</span></span>
               <span class="v tnum pos">€ {eur(rev["risparmi"])}</span>
             </div>
             {righe_sv}

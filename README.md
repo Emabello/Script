@@ -962,7 +962,15 @@ in cui il denaro si muove davvero.
    può correggere, e mentre lo si scrive l'anteprima mostra quanto
    finisce in ciascuno dei cinque salvadanai. Alla conferma l'app
    registra **un'uscita vera** dal conto personale, categoria *Risparmi*,
-   con la data del bonifico.
+   con la data del bonifico — e, con la casella attiva (è il default),
+   anche **il lato Revolut**: l'arrivo del bonifico sul conto
+   («Pagamento da BELLOTTI EMANUELE», *Risparmi*) e, per ogni salvadanaio,
+   lo spostamento della sua quota dalla liquidità al deposito («A EUR
+   Casa»…, *Giroconto Revolut*). La quota degli investimenti resta in
+   liquidità finché non la sposti. Sono le stesse descrizioni di
+   Revolut: al prossimo estratto risultano già registrati. Fino al
+   28/09/2026 la procedura scriveva solo WeBank, e i soldi risultavano
+   usciti dal personale senza arrivare da nessuna parte.
 
 > **La base non è lo stipendio, ed è il punto che si legge male.** È
 > tutto quello che hai sul conto a fine periodo — il residuo del periodo

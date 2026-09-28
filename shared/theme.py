@@ -1420,18 +1420,17 @@ def _blocco_saldi(saldi: dict) -> str:
         + entrate € {eur(pers["entrate"])} − uscite € {eur(pers["uscite"])}{meno_risp}</span></span>
         <span class="v tnum">€ {eur(pers["saldo"])}</span></div>'''
     if rev.get("disponibile"):
+        # Liquidita' e risparmi sono gia' ad oggi: i movimenti registrati
+        # dopo la fotografia ci sono dentro, qui si dice solo quanti sono.
         dopo = rev.get("dopo") or {}
-        netto_dopo = round(float(dopo.get("conto") or 0)
-                           + float(dopo.get("risparmi") or 0), 2)
-        piu_dopo = (f' {"+" if netto_dopo >= 0 else "−"} € {eur(abs(netto_dopo))} di '
-                    f'{dopo["n"]} movimenti registrati dopo'
+        piu_dopo = (f', con {dopo["n"]} movimenti registrati dopo'
                     if dopo.get("n") else "")
         righe += f'''
       <div class="row"><span class="t">Revolut
         <span class="sub">liquidità € {eur(rev["conto"])}
         + risparmi € {eur(rev["risparmi"])}
         + investimenti € {eur(rev["investimenti"])}
-        · saldi al {data_it(rev.get("data"))}{piu_dopo}</span></span>
+        · fotografia del {data_it(rev.get("data"))}{piu_dopo}</span></span>
         <span class="v tnum">€ {eur(rev["saldo"])}</span></div>'''
 
     nota_risparmi = ""
