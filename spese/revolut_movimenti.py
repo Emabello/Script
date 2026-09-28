@@ -570,6 +570,7 @@ def prepara_import(client, letti: list[dict]) -> tuple[list[dict], list[dict]]:
     nuove = [r for r in nuove if not r.get("presente")]
     ammesse = {v["valore"] for v in voci_pannello(client)}
     proposte = IM.proponi(SG.storico_personale(client), nuove, ammesse)
+    storni = IM.accoppia_storni(out, salvati)
     n_presenti = len(out) - len(nuove)
     if n_presenti:
         avvisi.append({"testo": f"{n_presenti} movimenti erano già registrati "
@@ -579,6 +580,9 @@ def prepara_import(client, letti: list[dict]) -> tuple[list[dict], list[dict]]:
                                 f"su WeBank, e sono già categorizzate così."})
     if proposte:
         avvisi.append({"testo": f"{proposte} righe hanno la categoria proposta dallo storico."})
+    if storni:
+        avvisi.append({"testo": f"{storni} rimborsi hanno la categoria della spesa "
+                                f"che annullano."})
     return out, avvisi
 
 

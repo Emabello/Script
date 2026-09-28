@@ -601,7 +601,11 @@ categorie diverse), le parole pesano per rarità. Il risultato porta anche
 `segna_doppioni(esistenti, righe)`: `presente` (conta le copie, impronta =
 data, tipo, importo, `chiave()` della descrizione) e `sospetto` (stesso
 importo entro 4 giorni). `proponi(storico, righe, ammesse)`: categoria
-applicata solo se sicura. `pannello(voci, salva_url, obbligatoria)`: la
+applicata solo se sicura. `accoppia_storni(righe, esistenti, categoria_di)`:
+dopo `proponi`, ogni storno/rimborso (`e_storno`) prende la categoria
+dell'uscita che annulla (stesso esercente, ≤ 30 giorni prima), dal file
+(`storno_di` = idx, e nel pannello `seguiStorni()` lo tiene allineato) o
+dai movimenti registrati. `pannello(voci, salva_url, obbligatoria)`: la
 revisione (JS `IMPORT.carica(righe, avvisi)`), salvataggio a blocchi da 100
 verso un endpoint che risponde `{salvate, duplicati, errori}` per `idx`.
 `suggerimento_form(conto)`: la proposta nei form manuali.

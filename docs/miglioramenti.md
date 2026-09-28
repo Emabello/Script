@@ -18,9 +18,6 @@ come), **Stato**.
 
 ## Aperti
 
-### [2026-09-28] Uno storno e l'addebito che annulla possono finire in due categorie diverse
-All'import ogni riga riceve la sua proposta dallo storico, indipendentemente dalle altre: il 14/09 «Civico 105» (uscita 3,00) era stato messo in Cibo e il suo «storno scritture - carta *2058-civico 105» (entrata 3,00, stesso giorno) in Bar. Il saldo non cambia, ma il budget di Bar risultava 3 € più alto e quello di Cibo 3 € più basso, per una spesa mai avvenuta. Corretto a mano nel database (entrambi Cibo). Proposta: nell'import, una riga «storno scritture» prende la categoria dell'uscita dello stesso importo e dello stesso esercente nei giorni vicini, e le due si mostrano accoppiate nel pannello.
-
 ### [2026-09-27] Undici esercenti hanno due categorie allo stesso importo
 **Cosa**: `tools/verifica_suggerimenti.py` trova 11 gruppi (42 movimenti) con stesso esercente, stesso importo, stessa direzione e categorie diverse — McDonald's 2,20 € Caffè ×13 e Cibo ×2, Iper Portello 1,90 € Caffè ×3 e Cibo ×2, Cless Ticket ATM 2,20 € una volta Personale e una volta Viaggi.
 **Perché si rompe**: non è la formula a sbagliare — la memoria esatta le riproduce tutte (100%) —, sono i dati a dire due cose. La conseguenza concreta è a valle: la ripartizione per sottocategoria di un mese dipende da quale delle due scelte è stata fatta quel giorno, e «quanto spendo in caffè» non ha una risposta stabile. Per la categoria principale conta poco (sono quasi tutte dentro Personale), tranne il biglietto ATM, che sposta 2,20 € fra Personale e Viaggi.
@@ -282,6 +279,9 @@ Resta aperto il pezzo per-periodo: una riga senza bonifico proprio continua a di
 ---
 
 ## Fatti (storico — per non riproporli)
+
+### [2026-09-28] Uno storno e l'addebito che annulla finivano in due categorie diverse
+All'import ogni riga riceveva la sua proposta dallo storico da sola: il 14/09 «Civico 105» (3,00) in Cibo e il suo storno in Bar, con Bar 3 € più alto e Cibo 3 € più basso per una spesa mai avvenuta. Ora `shared/importazione.py::accoppia_storni` (sui tre import) dà a ogni storno o rimborso la categoria dell'uscita che annulla — stesso esercente, fino a 30 giorni prima, stesso importo prima e rimborso parziale poi —, cercandola nel file e fra i movimenti registrati; nel pannello lo storno segue l'addebito finché non lo cambi a mano. `tools/verifica_import.py` lo prova, anche nel browser.
 
 ### [2026-09-28] Su /conti un quadratino a caso diceva «saldo non disponibile» a ogni refresh
 Da quando i tre saldi si calcolano in parallelo usavano tutti l'unica connessione HTTP/2 che supabase-py apre di default (`httpx.Client(http2=True)`), e ogni tanto una richiesta moriva con un errore di protocollo: non una risposta 503 (quelle postgrest le ripete), un'eccezione che le funzioni di saldo intercettano restituendo «non disponibile». Ora il client usa un pool HTTP/1.1 (`shared/supabase_client.py::_opzioni`), sicuro fra thread; `in_parallelo` riprova una volta e scrive l'errore nel log invece di ingoiarlo; `_saldi_conti` ricalcola una volta il conto che torna non disponibile.

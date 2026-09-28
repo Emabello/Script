@@ -284,6 +284,108 @@ def main():
         controlla("IMPORT.carica" in pagina and "impCorpo" in pagina,
                   f"{u}: stesso pannello di revisione")
 
+    print("\n== storni: la categoria della spesa che annullano")
+    civico = [
+        {"data": "2026-09-14", "tipo": "uscita", "importo": 3.0, "descrizione": "Civico 105 Milano",
+         "categoria": "cibo"},
+        {"data": "2026-09-14", "tipo": "entrata", "importo": 3.0, "categoria": "bar",
+         "descrizione": "storno scritture - carta *2058-civico 105  milano     mi   ita"},
+        {"data": "2026-09-15", "tipo": "uscita", "importo": 3.0, "descrizione": "Civico 105 Milano",
+         "categoria": "bar"},
+    ]
+    controlla(IM.accoppia_storni(civico) == 1 and civico[1]["categoria"] == "cibo"
+              and civico[1]["storno_di"] == 0 and "14/09" in civico[1]["nota"],
+              "il caso del 14/09: lo storno prende Cibo dal Civico 105 dello stesso giorno")
+    gia = [{"data": "2026-08-20", "tipo": "uscita", "importo": 57.84, "descrizione": "CarTrawler",
+            "categoria_link_id": "viaggi-altro"}]
+    rimborso = [{"data": "2026-09-02", "tipo": "entrata", "importo": 57.84, "descrizione": "CarTrawler",
+                 "categoria_banca": "Rimborso su carta"}]
+    controlla(IM.accoppia_storni(rimborso, gia) == 1 and rimborso[0]["categoria"] == "viaggi-altro"
+              and "storno_di" not in rimborso[0],
+              "rimborso Revolut: la spesa già registrata dà la categoria")
+    parziale = [{"data": "2026-06-12", "tipo": "uscita", "importo": 4.16, "descrizione": "EasyPark",
+                 "categoria": "parcheggio"},
+                {"data": "2026-06-12", "tipo": "entrata", "importo": 0.03, "descrizione": "EasyPark",
+                 "categoria_banca": "Rimborso su carta"}]
+    controlla(IM.accoppia_storni(parziale) == 1 and parziale[1]["categoria"] == "parcheggio",
+              "rimborso parziale (0,03 su 4,16) accoppiato alla spesa")
+    due = [{"data": "2026-09-01", "tipo": "uscita", "importo": 10.0, "descrizione": "Bar Globe",
+            "categoria": "bar"},
+           {"data": "2026-09-02", "tipo": "entrata", "importo": 10.0, "descrizione": "storno Bar Globe"},
+           {"data": "2026-09-03", "tipo": "entrata", "importo": 10.0, "descrizione": "storno Bar Globe"}]
+    controlla(IM.accoppia_storni(due) == 1 and due[1].get("categoria") == "bar"
+              and not due[2].get("categoria"),
+              "una spesa annulla uno storno solo")
+    lontano = [{"data": "2026-07-01", "tipo": "uscita", "importo": 10.0, "descrizione": "Bar Globe",
+                "categoria": "bar"},
+               {"data": "2026-09-02", "tipo": "entrata", "importo": 10.0, "descrizione": "storno Bar Globe"}]
+    altro = [{"data": "2026-09-01", "tipo": "uscita", "importo": 10.0, "descrizione": "Bar Globe",
+              "categoria": "bar"},
+             {"data": "2026-09-02", "tipo": "entrata", "importo": 10.0, "descrizione": "storno Lidl"},
+             {"data": "2026-09-02", "tipo": "entrata", "importo": 10.0,
+              "descrizione": "Bonifico da Bar Globe"}]
+    controlla(IM.accoppia_storni(lontano) == 0 and IM.accoppia_storni(altro) == 0,
+              "niente accoppiamento: spesa di 2 mesi prima, altro esercente, entrata che non è uno storno")
+    IM.accoppia_storni([{"tipo": "entrata", "descrizione": "storno", "importo": "x", "data": None}])
+    controlla(True, "input sbagliati: nessun crash")
+
+    # Il giro completo dal file: la spesa e' gia' registrata con una
+    # categoria, lo storno arriva nel file dopo.
+    link_cibo = preview._link_id("Personale", "Cibo") or preview._link_id("Personale", None)
+    DB["spese"].append({"id": 990, "data": "2026-09-14", "tipo": "uscita", "importo": 3.0,
+                        "descrizione": "Civico 105 Milano", "categoria_link_id": link_cibo,
+                        "metodo_pagamento": "Import banca"})
+    DB["v_spese"].append(preview._riga_v_spese(DB["spese"][-1]))
+    file = estratto_webank([
+        ["14/09/2026", "14/09/2026", 3.00,
+         "storno scritture - carta *2058-civico 105  milano     mi              ita"]])
+    r = app.post("/spese/api/importa/carica", data={"file": (io.BytesIO(file), "e.xlsx")},
+                 content_type="multipart/form-data")
+    j = r.get_json()
+    st = (j.get("movimenti") or [{}])[0]
+    controlla(st.get("categoria") == link_cibo and "storno di" in (st.get("nota") or ""),
+              f"dal file: lo storno prende la categoria della spesa già registrata ({st.get('nota')})")
+    controlla(any("storni" in a["testo"] for a in j.get("avvisi") or []), "l'avviso dice quanti storni")
+    DB["spese"].pop()
+    DB["v_spese"].pop()
+
+    # Nel pannello, lo storno segue la categoria che scegli per l'addebito.
+    import threading
+    import time
+    from verifica_js import CHROME
+    from playwright.sync_api import sync_playwright
+    threading.Thread(target=lambda: preview.application.run(
+        host="127.0.0.1", port=8794, use_reloader=False, threaded=True), daemon=True).start()
+    time.sleep(1.5)
+    with sync_playwright() as p:
+        b = p.chromium.launch(executable_path=CHROME)
+        pg = b.new_page()
+        pg.goto("http://127.0.0.1:8794/conti/webank/personale/importa")
+        valori = pg.evaluate("""() => {
+          const opz = [...document.querySelectorAll('#impBulk option')].map(o => o.value).filter(Boolean);
+          IMPORT.carica([
+            {data: '2026-09-14', tipo: 'uscita', importo: 3, descrizione: 'Civico 105 Milano', categoria: opz[0]},
+            {data: '2026-09-14', tipo: 'entrata', importo: 3, descrizione: 'storno scritture civico 105',
+             categoria: opz[0], storno_di: 0, nota: 'storno di Civico 105'},
+          ], []);
+          IMPORT.categoria(0, opz[1]);
+          const segue = document.querySelector('#impCorpo tr[data-i="1"] select').value;
+          document.getElementById('impBulk').value = opz[4];
+          IMPORT.seleziona(false); IMPORT.spunta(0, true); IMPORT.applica();
+          const bulk = document.querySelector('#impCorpo tr[data-i="1"] select').value;
+          IMPORT.categoria(1, opz[2]);
+          IMPORT.categoria(0, opz[3]);
+          const fermo = document.querySelector('#impCorpo tr[data-i="1"] select').value;
+          return {segue, bulk, fermo, attese: [opz[1], opz[2], opz[4]]};
+        }""")
+        b.close()
+    controlla(valori["segue"] == valori["attese"][0],
+              "pannello: cambiando la categoria dell'addebito, lo storno la segue")
+    controlla(valori["bulk"] == valori["attese"][2],
+              "pannello: anche con «applica alle selezionate» lo storno segue l'addebito")
+    controlla(valori["fermo"] == valori["attese"][1],
+              "pannello: uno storno cambiato a mano non viene più toccato")
+
     print()
     if PROBLEMI:
         print(f"{len(PROBLEMI)} cose da guardare.")

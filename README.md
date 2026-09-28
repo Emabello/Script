@@ -414,6 +414,16 @@ l'export dei movimenti dello stesso periodo (1.001) → 976 già registrati,
 25 nuovi (i versamenti ai salvadanai e il trasloco del conto di aprile,
 che il consolidato non elenca).
 
+**Uno storno prende la categoria della spesa che annulla.** Un'entrata
+«storno scritture…» (WeBank) o «Rimborso su carta» (Revolut) cerca
+l'uscita dello stesso esercente fino a 30 giorni prima — stesso importo
+prima, rimborso parziale poi —, nel file o fra i movimenti già
+registrati, e ne prende la categoria: senza, lo storno del Civico 105
+del 14/09 era finito in Bar e la spesa in Cibo, e il budget di Bar
+risultava 3 € più alto per una spesa mai avvenuta. Nel pannello le due
+righe restano legate: lo storno segue la categoria che scegli per
+l'addebito, finché non lo cambi a mano.
+
 **Sulla P.IVA due cose non si importano dal file**: i giroconti verso il
 personale (li scrive la ripartizione della fattura, al netto) e gli incassi
 delle fatture (si registrano dalla fattura, così restano collegati: dal
